@@ -24,10 +24,12 @@ use glow::HasContext;
 
 
 fn main() -> anyhow::Result<()> {
-    // Auto-switch to X11 backend on Wayland for full window management support
-    if std::env::var("WAYLAND_DISPLAY").is_ok() && std::env::var("WINIT_UNIX_BACKEND").is_err() {
+    // Auto-switch to X11 on Wayland: winit + GTK both need X11 backend
+    let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    if on_wayland && std::env::var("WINIT_UNIX_BACKEND").is_err() {
         std::env::set_var("WINIT_UNIX_BACKEND", "x11");
-        log::info!("Wayland detected: using X11 backend (WINIT_UNIX_BACKEND=x11) for tray + window control");
+        std::env::set_var("GDK_BACKEND", "x11");
+        log::info!("Wayland detected: using X11 backends for winit+GTK (tray + window control)");
     }
 
     env_logger::init();
@@ -341,8 +343,8 @@ fn main() -> anyhow::Result<()> {
                         // Minimize (tray on X11, floating circle on native Wayland)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            let on_x11 = std::env::var("WINIT_UNIX_BACKEND").as_deref() == Ok("x11")
-                                || std::env::var("WAYLAND_DISPLAY").is_err();
+                            // X11 backend = tray hide; native Wayland = floating circle
+                            let on_x11 = std::env::var("WINIT_UNIX_BACKEND").as_deref() == Ok("x11");
                             if on_x11 {
                                 let _ = window.set_visible(false);
                             } else {
