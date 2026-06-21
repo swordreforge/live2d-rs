@@ -308,6 +308,8 @@ fn main() -> anyhow::Result<()> {
                                         surface.resize(&gl_context, w, h);
                                     }
                                     unsafe { gl.viewport(0, 0, size.width as i32, size.height as i32); }
+                                    // Recalculate camera when window size actually changes
+                                    app.camera_needs_fit = true;
                                 }
                                 WindowEvent::KeyboardInput { event: ref ke, .. } => {
                                     if ke.state == ElementState::Pressed {
