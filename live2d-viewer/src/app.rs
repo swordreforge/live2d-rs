@@ -29,6 +29,7 @@ pub struct AppState {
     pub motion_queue: motion::MotionQueueManager,
     pub expression_manager: motion::ExpressionManager,
     pub eye_blink: motion::eye_blink::EyeBlink,
+    pub breath: motion::breath::Breath,
     /// Loaded motions by category (e.g. "Idle", "TapBody")
     pub loaded_motions: HashMap<String, Vec<motion::CubismMotion>>,
     /// Loaded expressions by name
@@ -92,6 +93,7 @@ impl AppState {
             motion_queue: motion::MotionQueueManager::new(),
             expression_manager: motion::ExpressionManager::new(),
             eye_blink: motion::eye_blink::EyeBlink::new(),
+            breath: motion::breath::Breath::new(),
             loaded_motions: HashMap::new(),
             loaded_expressions: HashMap::new(),
             eye_blink_param_ids: Vec::new(),
@@ -462,6 +464,9 @@ impl AppState {
                 }
             }
         }
+
+        // Apply Breath controller — subtle sinusoidal oscillation on angle/breath params
+        self.breath.update(delta_time, &mut self.parameter_values, &self.parameter_names);
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {

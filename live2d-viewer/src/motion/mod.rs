@@ -8,6 +8,7 @@
 //! 4. **Queue** (`queue`) — manages concurrent motion playback with fade in/out
 //! 5. **Expression** (`expression`) — static parameter overrides with blend modes
 
+pub mod breath;
 pub mod curve;
 pub mod eye_blink;
 mod expression;
