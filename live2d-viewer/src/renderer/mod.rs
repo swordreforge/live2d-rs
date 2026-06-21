@@ -154,7 +154,6 @@ impl Live2dRenderer {
                 gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
                 gl.enable(BLEND);
-                gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
 
                 for &mask_idx in mask_slice {
                     let mi = mask_idx as usize;
@@ -164,12 +163,10 @@ impl Live2dRenderer {
 
                     let is_inverted = constant_flags[mi] & ffi::csmIsInvertedMask as u8 != 0;
                     if is_inverted {
-                        gl.clear_color(1.0, 1.0, 1.0, 1.0);
-                        gl.clear(COLOR_BUFFER_BIT);
+                        // Inverted mask: zeros out alpha in the shape area (clips this region)
                         gl.blend_func_separate(ZERO, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
                     } else {
-                        gl.clear_color(0.0, 0.0, 0.0, 0.0);
-                        gl.clear(COLOR_BUFFER_BIT);
+                        // Normal mask: sets alpha=1 in the shape area (marks as visible)
                         gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
                     }
 
@@ -351,7 +348,6 @@ impl Live2dRenderer {
         gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
         gl.enable(BLEND);
-        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
 
         for &mask_idx in mask_indices {
             let mi = mask_idx as usize;
@@ -361,12 +357,8 @@ impl Live2dRenderer {
 
             let is_inverted = constant_flags[mi] & ffi::csmIsInvertedMask as u8 != 0;
             if is_inverted {
-                gl.clear_color(1.0, 1.0, 1.0, 1.0);
-                gl.clear(COLOR_BUFFER_BIT);
                 gl.blend_func_separate(ZERO, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
             } else {
-                gl.clear_color(0.0, 0.0, 0.0, 0.0);
-                gl.clear(COLOR_BUFFER_BIT);
                 gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
             }
 
