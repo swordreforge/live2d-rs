@@ -204,6 +204,9 @@ fn main() -> anyhow::Result<()> {
 
                         if let Some(ref mut model) = app.current_model {
                             unsafe {
+                                gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                gl.disable(glow::DEPTH_TEST);
+                                gl.disable(glow::CULL_FACE);
                                 renderer.render(&gl, model, &camera);
                             }
                         }
