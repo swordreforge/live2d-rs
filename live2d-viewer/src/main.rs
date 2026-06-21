@@ -331,10 +331,10 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // Minimize to tray
+                        // Minimize to tray (Wayland: set_visible is a no-op, use set_minimized)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            let _ = window.set_visible(false);
+                            window.set_minimized(true);
                         }
 
                         let _ = surface.swap_buffers(&gl_context);
@@ -346,7 +346,7 @@ fn main() -> anyhow::Result<()> {
                             match event {
                                 WindowEvent::CloseRequested => {
                                     if app.pet_mode {
-                                        let _ = window.set_visible(false);
+                                        window.set_minimized(true);
                                     } else {
                                         target.exit();
                                     }
@@ -422,7 +422,7 @@ fn main() -> anyhow::Result<()> {
             Event::UserEvent(event) => {
                 match event {
                     tray::AppEvent::ShowWindow => {
-                        window.set_visible(true);
+                        window.set_minimized(false);
                     }
                     tray::AppEvent::Quit => {
                         target.exit();
