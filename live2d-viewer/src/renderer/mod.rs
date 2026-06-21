@@ -15,6 +15,7 @@ pub struct Live2dRenderer {
     pub textures: Vec<NativeTexture>,
     draw_mesh: Mesh,
     pub mask_fbo: Option<mask_fbo::MaskFbo>,
+    debug_printed: bool,
 }
 
 impl Live2dRenderer {
@@ -30,6 +31,7 @@ impl Live2dRenderer {
             textures: Vec::new(),
             draw_mesh,
             mask_fbo: None,
+            debug_printed: false,
         })
     }
 
@@ -53,6 +55,26 @@ impl Live2dRenderer {
         let mask_counts = drawables.mask_counts();
         let masks = drawables.masks();
         let constant_flags = drawables.constant_flags();
+
+        if !self.debug_printed {
+            self.debug_printed = true;
+            let ci = model.canvas_info();
+            eprintln!("[render] canvas={}x{} ppu={} cam=({:.4},{:.4}),({:.4},{:.4})",
+                ci.size_in_pixels.X, ci.size_in_pixels.Y, ci.pixels_per_unit,
+                camera.scale_x, camera.scale_y, camera.translate_x, camera.translate_y);
+            let scan = |i: usize| {
+                let vc = vert_counts[i] as usize;
+                let all_verts = unsafe { std::slice::from_raw_parts(vert_positions[i], vc) };
+                let (mut mnx, mut mny, mut mxx, mut mxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for v in all_verts { mnx = mnx.min(v.X); mxx = mxx.max(v.X); mny = mny.min(v.Y); mxy = mxy.max(v.Y); }
+                eprintln!("[render]  d[{i}]: xy=[{:.1},{:.1}]x[{:.1},{:.1}] vtx={} tex={} op={:.3}",
+                    mnx, mxx, mny, mxy, vc, tex_indices[i], opacities[i]);
+            };
+            for i in 0..n.min(3) { scan(i); }
+            let last = n.saturating_sub(3);
+            if last >= 3 { eprintln!("[render]  ..."); }
+            for i in last..n { scan(i); }
+        }
 
         let has_masks = mask_counts.iter().any(|&c| c > 0);
 

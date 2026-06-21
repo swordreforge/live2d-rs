@@ -10,7 +10,7 @@ uniform vec2 uTranslate;
 
 void main() {
     gl_Position = vec4(aPos.x * uScale.x + uTranslate.x, aPos.y * uScale.y + uTranslate.y, 0.0, 1.0);
-    vUV = aUV;
+    vUV = vec2(aUV.x, 1.0 - aUV.y);
 }
 "#;
 
@@ -25,18 +25,10 @@ uniform float uOpacity;
 
 void main() {
     vec4 tex = texture(uTexture, vUV);
-
-    vec4 mul = clamp(uMultiplyColor, 0.0, 1.0);
-    vec4 scr = clamp(uScreenColor, 0.0, 1.0);
-
-    vec4 color = tex;
-    color.rgb *= mul.rgb;
-    color.rgb = color.rgb + (scr.rgb - 0.5) * 2.0;
-    color.a *= uOpacity;
-
-    if (color.a < 0.001) { discard; }
-
-    FragColor = color;
+    tex.rgb = tex.rgb * uMultiplyColor.rgb;
+    tex.rgb = tex.rgb + uScreenColor.rgb - (tex.rgb * uScreenColor.rgb);
+    tex.a *= uOpacity;
+    FragColor = vec4(tex.rgb * tex.a, tex.a);
 }
 "#;
 
@@ -77,18 +69,10 @@ void main() {
     float maskAlpha = texture(uMaskTexture, maskUV).a;
 
     vec4 tex = texture(uTexture, vUV);
-
-    vec4 mul = clamp(uMultiplyColor, 0.0, 1.0);
-    vec4 scr = clamp(uScreenColor, 0.0, 1.0);
-
-    vec4 color = tex;
-    color.rgb *= mul.rgb;
-    color.rgb = color.rgb + (scr.rgb - 0.5) * 2.0;
-    color.a *= uOpacity * maskAlpha;
-
-    if (color.a < 0.001) { discard; }
-
-    FragColor = color;
+    tex.rgb = tex.rgb * uMultiplyColor.rgb;
+    tex.rgb = tex.rgb + uScreenColor.rgb - (tex.rgb * uScreenColor.rgb);
+    tex.a *= uOpacity;
+    FragColor = vec4(tex.rgb * tex.a * maskAlpha, tex.a * maskAlpha);
 }
 "#;
 
