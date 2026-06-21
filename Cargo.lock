@@ -2219,6 +2219,7 @@ dependencies = [
  "env_logger",
  "glow",
  "glutin",
+ "gtk",
  "image",
  "live2d-core",
  "live2d-core-sys",

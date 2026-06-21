@@ -26,9 +26,26 @@ use glow::HasContext;
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
+    // Initialize GTK for tray icon (required by tray-icon GTK backend)
+    let gtk_ok = gtk::init().is_ok();
+    if !gtk_ok {
+        log::warn!("GTK init failed — tray icon disabled");
+    }
+
     let event_loop = winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
-    let (_tray, tray_rx) = tray::create_tray();
+    let (_tray, tray_rx) = if gtk_ok {
+        tray::create_tray()
+    } else {
+        let icon = tray_icon::Icon::from_rgba(vec![0; 4], 1, 1).unwrap();
+        let dummy_menu = tray_icon::menu::Menu::new();
+        let dummy_tray = tray_icon::TrayIconBuilder::new()
+            .with_menu(Box::new(dummy_menu))
+            .with_icon(icon)
+            .build()
+            .unwrap();
+        (dummy_tray, tray::dummy_receiver())
+    };
 
     let window = Arc::new(WindowBuilder::new()
         .with_title("Live2D Viewer")

@@ -55,3 +55,9 @@ impl MenuEventReceiver {
         events
     }
 }
+
+/// Dummy receiver that returns nothing (used when GTK init fails)
+pub fn dummy_receiver() -> MenuEventReceiver {
+    let (_, rx) = std::sync::mpsc::channel();
+    MenuEventReceiver { rx }
+}
