@@ -56,8 +56,14 @@ pub struct AppState {
     pub pet_mode_delay: u32,
     /// True when pet mode needs window resize (after model switch)
     pub pet_resize_pending: bool,
-    /// Request minimize to system tray
+    /// Request minimize to floating circle
     pub request_minimize: bool,
+    /// Request restore from floating circle
+    pub request_restore: bool,
+    /// True when window is minimized to a floating dot
+    pub minimized_to_float: bool,
+    /// Saved pet mode window size (logical pixels) for restore
+    pub saved_window_pet_size: (f64, f64),
     /// Camera (view transform for the model)
     pub camera: Camera,
     /// Current window size in pixels (set from main.rs each frame)
@@ -101,6 +107,9 @@ impl AppState {
             pet_mode_delay: 0,
             pet_resize_pending: false,
             request_minimize: false,
+            request_restore: false,
+            minimized_to_float: false,
+            saved_window_pet_size: (0.0, 0.0),
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),

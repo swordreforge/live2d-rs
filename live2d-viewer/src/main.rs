@@ -331,10 +331,21 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // Minimize to tray (Wayland: set_visible is a no-op, use set_minimized)
+                        // Minimize to floating circle (works on all platforms including Wayland)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            window.set_minimized(true);
+                            app.minimized_to_float = true;
+                            app.saved_window_pet_size = (app.window_size.0 as f64, app.window_size.1 as f64);
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(60.0, 60.0));
+                        }
+                        if app.request_restore {
+                            app.request_restore = false;
+                            app.minimized_to_float = false;
+                            let (w, h) = app.saved_window_pet_size;
+                            let restore_w = if w > 100.0 { w } else { 800.0 };
+                            let restore_h = if h > 100.0 { h } else { 600.0 };
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(restore_w, restore_h));
+                            app.camera_needs_fit = true;
                         }
 
                         let _ = surface.swap_buffers(&gl_context);
@@ -345,7 +356,9 @@ fn main() -> anyhow::Result<()> {
                         if !egui_consumed {
                             match event {
                                 WindowEvent::CloseRequested => {
-                                    if app.pet_mode {
+                                    if app.minimized_to_float {
+                                        app.request_restore = true;
+                                    } else if app.pet_mode {
                                         window.set_minimized(true);
                                     } else {
                                         target.exit();
@@ -422,7 +435,7 @@ fn main() -> anyhow::Result<()> {
             Event::UserEvent(event) => {
                 match event {
                     tray::AppEvent::ShowWindow => {
-                        window.set_minimized(false);
+                        app.request_restore = true;
                     }
                     tray::AppEvent::Quit => {
                         target.exit();

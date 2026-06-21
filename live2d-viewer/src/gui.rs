@@ -2,6 +2,11 @@ use egui::{Context, Slider, Window};
 use crate::app::AppState;
 
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
+    if app.minimized_to_float {
+        draw_floating_ui(ctx, app);
+        return;
+    }
+
     if app.pet_mode {
         draw_pet_ui(ctx, app);
     } else {
@@ -17,6 +22,39 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
             }
         });
     }
+}
+
+/// Floating circular button (replaces system tray for Wayland compat)
+fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+        .show(ctx, |ui| {
+            let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+            let center = rect.center();
+            let radius = rect.width().min(rect.height()) / 2.0 - 2.0;
+
+            // Draw filled circle
+            let circle_color = if response.hovered() {
+                egui::Color32::from_rgb(0x55, 0xaa, 0xff)
+            } else {
+                egui::Color32::from_rgb(0x33, 0x99, 0xff)
+            };
+            ui.painter().circle_filled(center, radius.max(4.0), circle_color);
+
+            // Draw inner icon
+            let icon = egui::RichText::new("\u{25b6}").size(radius * 0.6).color(egui::Color32::WHITE);
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                icon.text(),
+                egui::FontId::proportional(radius * 0.6),
+                egui::Color32::WHITE,
+            );
+
+            if response.clicked() {
+                app.request_restore = true;
+            }
+        });
 }
 
 fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
