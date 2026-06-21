@@ -19,7 +19,7 @@ use glutin::prelude::*;
 use glutin::display::{Display, DisplayApiPreference};
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
-use glutin::surface::{SurfaceAttributesBuilder, GlSurface, WindowSurface};
+use glutin::surface::{SurfaceAttributesBuilder, GlSurface, WindowSurface, SwapInterval};
 use glow::HasContext;
 
 
@@ -97,6 +97,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let gl_context = not_current.make_current(&surface)?;
+    let _ = surface.set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
     #[allow(clippy::arc_with_non_send_sync)]
     let gl = Arc::new(unsafe {
