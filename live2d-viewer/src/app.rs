@@ -16,6 +16,7 @@ pub struct AppState {
     pub parameter_names: Vec<String>,
     pub parameter_mins: Vec<f32>,
     pub parameter_maxs: Vec<f32>,
+    pub texture_paths: Vec<PathBuf>,
     pub error_message: Option<String>,
     pub mouse_down: bool,
     pub last_mouse_x: f64,
@@ -33,6 +34,7 @@ impl AppState {
             parameter_names: Vec::new(),
             parameter_mins: Vec::new(),
             parameter_maxs: Vec::new(),
+            texture_paths: Vec::new(),
             error_message: None,
             mouse_down: false,
             last_mouse_x: 0.0,
@@ -88,6 +90,7 @@ impl AppState {
         self.current_moc = Some(moc);
         self.current_model = Some(model);
         self.current_idx = Some(idx);
+        self.texture_paths = loaded.texture_paths();
         self.model_list[idx].loaded = true;
         Ok(())
     }

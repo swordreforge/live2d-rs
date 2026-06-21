@@ -21,9 +21,9 @@ impl MaskFbo {
         let tex = gl.create_texture().map_err(|e| format!("mask tex: {:?}", e))?;
         gl.bind_texture(TEXTURE_2D, Some(tex));
         gl.tex_image_2d(
-            TEXTURE_2D, 0, R8 as i32,
+            TEXTURE_2D, 0, RGBA as i32,
             width, height, 0,
-            RED, UNSIGNED_BYTE,
+            RGBA, UNSIGNED_BYTE,
             None,
         );
         gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR as i32);
@@ -46,9 +46,9 @@ impl MaskFbo {
         self.height = height;
         gl.bind_texture(TEXTURE_2D, Some(self.texture));
         gl.tex_image_2d(
-            TEXTURE_2D, 0, R8 as i32,
+            TEXTURE_2D, 0, RGBA as i32,
             width, height, 0,
-            RED, UNSIGNED_BYTE,
+            RGBA, UNSIGNED_BYTE,
             None,
         );
         gl.bind_texture(TEXTURE_2D, None);

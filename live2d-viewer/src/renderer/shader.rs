@@ -60,6 +60,39 @@ void main() {
 }
 "#;
 
+/// Fragment shader for rendering a drawable with an applied clipping mask.
+/// Uses `gl_FragCoord` to look up the mask alpha from the off-screen FBO texture.
+pub const FRAG_MASKED_SRC: &str = r#"#version 330 core
+in vec2 vUV;
+out vec4 FragColor;
+
+uniform sampler2D uTexture;
+uniform sampler2D uMaskTexture;
+uniform vec4 uMultiplyColor;
+uniform vec4 uScreenColor;
+uniform float uOpacity;
+uniform vec2 uMaskSize;
+
+void main() {
+    vec2 maskUV = gl_FragCoord.xy / uMaskSize;
+    float maskAlpha = texture(uMaskTexture, maskUV).a;
+
+    vec4 tex = texture(uTexture, vUV);
+
+    vec4 mul = clamp(uMultiplyColor, 0.0, 1.0);
+    vec4 scr = clamp(uScreenColor, 0.0, 1.0);
+
+    vec4 color = tex;
+    color.rgb *= mul.rgb;
+    color.rgb = color.rgb + (scr.rgb - 0.5) * 2.0;
+    color.a *= uOpacity * maskAlpha;
+
+    if (color.a < 0.001) { discard; }
+
+    FragColor = color;
+}
+"#;
+
 pub unsafe fn compile_program(gl: &Context, vert: &str, frag: &str) -> Result<NativeProgram> {
     let program = gl.create_program().map_err(|e| anyhow::anyhow!("create program: {:?}", e))?;
 

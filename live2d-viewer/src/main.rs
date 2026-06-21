@@ -119,6 +119,17 @@ fn main() -> anyhow::Result<()> {
         }
         if !app.model_list.is_empty() {
             let _ = app.switch_to(0);
+            for path in &app.texture_paths {
+                match std::fs::read(path) {
+                    Ok(img_data) => {
+                        match unsafe { texture::load_texture(&gl, &img_data) } {
+                            Ok(tex) => renderer.textures.push(tex),
+                            Err(e) => eprintln!("texture load {:?}: {e}", path),
+                        }
+                    }
+                    Err(e) => eprintln!("texture read {:?}: {e}", path),
+                }
+            }
         }
     }
 
@@ -142,6 +153,22 @@ fn main() -> anyhow::Result<()> {
                                     size.width as f32,
                                     size.height as f32,
                                 );
+                            }
+                            unsafe {
+                                for tex in renderer.textures.drain(..) {
+                                    gl.delete_texture(tex);
+                                }
+                            }
+                            for path in &app.texture_paths {
+                                match std::fs::read(path) {
+                                    Ok(img_data) => {
+                                        match unsafe { texture::load_texture(&gl, &img_data) } {
+                                            Ok(tex) => renderer.textures.push(tex),
+                                            Err(e) => eprintln!("texture load {:?}: {e}", path),
+                                        }
+                                    }
+                                    Err(e) => eprintln!("texture read {:?}: {e}", path),
+                                }
                             }
                             prev_idx = app.current_idx;
                         }
