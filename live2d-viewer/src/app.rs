@@ -52,6 +52,8 @@ pub struct AppState {
     pub pet_mode_changed: bool,
     /// True when camera needs recalculation (after pet mode window resize)
     pub camera_needs_fit: bool,
+    /// Frame delay before showing pet toolbar (let window resize settle)
+    pub pet_mode_delay: u32,
     /// Camera (view transform for the model)
     pub camera: Camera,
     /// Current window size in pixels (set from main.rs each frame)
@@ -92,6 +94,7 @@ impl AppState {
             pet_mode: false,
             pet_mode_changed: false,
             camera_needs_fit: false,
+            pet_mode_delay: 0,
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),

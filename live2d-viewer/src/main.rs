@@ -183,6 +183,7 @@ fn main() -> anyhow::Result<()> {
                                 log::info!("[pet] enter: canvas=({:.0},{:.0}) requested=({:.0},{:.0})",
                                     app.canvas_pixel_size.0, app.canvas_pixel_size.1, req_w, req_h);
                                 app.camera_needs_fit = true;
+                                app.pet_mode_delay = 2;
                             } else {
                                 window.set_decorations(true);
                                 window.set_window_level(WindowLevel::Normal);
