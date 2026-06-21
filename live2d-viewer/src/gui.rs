@@ -122,10 +122,17 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
-    // Stable position: use canvas pixel size × 1.5 (matches the target window size),
-    // independent of the actual current window size during resize transitions.
+    // Debug: log positioning info
+    let screen_rect = ctx.screen_rect();
     let canvas_w = if app.canvas_pixel_size.0 > 0.0 { app.canvas_pixel_size.0 } else { app.window_size.0 };
     let toolbar_x = (canvas_w * 1.5).max(400.0) - 36.0;
+    log::info!(
+        "[pet] screen_rect=({:.0},{:.0},{:.0},{:.0}) canvas=({:.0},{:.0}) window=({:.0},{:.0}) toolbar_x={:.0}",
+        screen_rect.min.x, screen_rect.min.y, screen_rect.max.x, screen_rect.max.y,
+        app.canvas_pixel_size.0, app.canvas_pixel_size.1,
+        app.window_size.0, app.window_size.1,
+        toolbar_x,
+    );
 
     egui::Area::new("pet_toolbar".into())
         .fixed_pos(egui::pos2(toolbar_x, 8.0))
