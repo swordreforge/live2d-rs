@@ -50,6 +50,8 @@ pub struct AppState {
     pub pet_mode: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
     pub pet_mode_changed: bool,
+    /// True when camera needs recalculation (after pet mode window resize)
+    pub camera_needs_fit: bool,
     /// Camera (view transform for the model)
     pub camera: Camera,
 }
@@ -85,6 +87,7 @@ impl AppState {
             part_ids: Vec::new(),
             pet_mode: false,
             pet_mode_changed: false,
+            camera_needs_fit: false,
             camera: Camera::new(),
         }
     }

@@ -169,11 +169,20 @@ fn main() -> anyhow::Result<()> {
                         last_frame_time = now;
 
                         // --- Apply pending pet mode window changes ---
-                        // Skip set_decorations() — triggers resize animations on Linux
                         if app.pet_mode_changed {
                             if app.pet_mode {
+                                window.set_decorations(false);
                                 window.set_window_level(WindowLevel::AlwaysOnTop);
+                                // Resize window to fit model canvas + 50% padding
+                                if let Some(ref model) = app.current_model {
+                                    let canvas = model.canvas_info();
+                                    let w = (canvas.size_in_pixels.X * 1.5).max(400.0) as f64;
+                                    let h = (canvas.size_in_pixels.Y * 1.5).max(300.0) as f64;
+                                    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                                }
+                                app.camera_needs_fit = true;
                             } else {
+                                window.set_decorations(true);
                                 window.set_window_level(WindowLevel::Normal);
                             }
                             app.pet_mode_changed = false;
@@ -194,7 +203,8 @@ fn main() -> anyhow::Result<()> {
                             egui::Color32::from_rgb(0x1a, 0x1a, 0x2e)
                         };
 
-                        if app.current_idx != prev_idx {
+                        // Camera recalculation (model switch OR pet mode resize)
+                        if app.current_idx != prev_idx || app.camera_needs_fit {
                             if let Some(ref model) = app.current_model {
                                 let canvas = model.canvas_info();
                                 app.camera.fit_to_canvas(
@@ -205,6 +215,11 @@ fn main() -> anyhow::Result<()> {
                                     size.height as f32,
                                 );
                             }
+                            app.camera_needs_fit = false;
+                        }
+
+                        // Texture reload on model switch only
+                        if app.current_idx != prev_idx {
                             unsafe {
                                 for tex in renderer.textures.drain(..) {
                                     gl.delete_texture(tex);

@@ -122,63 +122,53 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
-    // Compact vertical toolbar on the right side — matches desktop pet style
+    // Position toolbar at right edge of the canvas-sized window
+    let right = ctx.screen_rect().right() - 6.0;
+
     egui::Area::new("pet_toolbar".into())
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .fixed_pos(egui::pos2(right, 8.0))
+        .order(egui::Order::Foreground)
         .movable(false)
         .show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(egui::Color32::from_black_alpha(24))
-                .rounding(4.0)
-                .inner_margin(egui::Margin::symmetric(2.0, 3.0))
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        // Model switch
-                        let btn = egui::Button::new("\u{25c0}").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).clicked() {
-                            if let Some(idx) = current_idx {
-                                if idx > 0 { let _ = app.switch_to(idx - 1); }
-                            }
-                        }
-
-                        let model_name = current_idx
-                            .and_then(|i| app.model_list.get(i))
-                            .map(|e| e.name.as_str())
-                            .unwrap_or("--");
-                        ui.label(egui::RichText::new(model_name).size(10.0).weak());
-
-                        let btn = egui::Button::new("\u{25b6}").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).clicked() {
-                            if let Some(idx) = current_idx {
-                                if idx + 1 < app.model_list.len() { let _ = app.switch_to(idx + 1); }
-                            }
-                        }
-
-                        ui.add_space(4.0);
-
-                        // Camera controls
-                        let btn = egui::Button::new("\u{21ba}").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).on_hover_text("Reset view").clicked() {
-                            app.camera.reset_pan();
-                        }
-                        let btn = egui::Button::new("+").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).on_hover_text("Zoom in").clicked() {
-                            app.camera.zoom_in();
-                        }
-                        let btn = egui::Button::new("-").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).on_hover_text("Zoom out").clicked() {
-                            app.camera.zoom_out();
-                        }
-
-                        ui.add_space(4.0);
-
-                        // Exit (compact)
-                        let btn = egui::Button::new("\u{2716}").min_size(egui::vec2(22.0, 20.0));
-                        if ui.add(btn).on_hover_text("Exit pet mode").clicked() {
-                            app.pet_mode = false;
-                            app.pet_mode_changed = true;
+            let mut frame = egui::Frame::none();
+            frame.fill = egui::Color32::from_black_alpha(20);
+            frame.rounding = egui::Rounding::same(4.0);
+            frame.inner_margin = egui::Margin::symmetric(2.0, 3.0);
+            frame.show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    small_btn(ui, "\u{25c0}").clicked().then(|| {
+                        if let Some(idx) = current_idx {
+                            if idx > 0 { let _ = app.switch_to(idx - 1); }
                         }
                     });
+
+                    ui.label(egui::RichText::new(
+                        current_idx.and_then(|i| app.model_list.get(i)).map(|e| e.name.as_str()).unwrap_or("--")
+                    ).size(10.0).weak());
+
+                    small_btn(ui, "\u{25b6}").clicked().then(|| {
+                        if let Some(idx) = current_idx {
+                            if idx + 1 < app.model_list.len() { let _ = app.switch_to(idx + 1); }
+                        }
+                    });
+
+                    ui.add_space(3.0);
+
+                    small_btn(ui, "\u{21ba}").clicked().then(|| app.camera.reset_pan());
+                    small_btn(ui, "+").clicked().then(|| app.camera.zoom_in());
+                    small_btn(ui, "-").clicked().then(|| app.camera.zoom_out());
+
+                    ui.add_space(3.0);
+
+                    small_btn(ui, "\u{2716}").clicked().then(|| {
+                        app.pet_mode = false;
+                        app.pet_mode_changed = true;
+                    });
                 });
+            });
         });
+}
+
+fn small_btn(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(egui::Button::new(label).min_size(egui::vec2(24.0, 22.0)))
 }
