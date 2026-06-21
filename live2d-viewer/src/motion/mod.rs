@@ -12,6 +12,7 @@ pub mod breath;
 pub mod curve;
 pub mod eye_blink;
 mod expression;
+pub mod look;
 pub mod json;
 pub mod motion;
 pub mod queue;

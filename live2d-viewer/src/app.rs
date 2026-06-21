@@ -30,6 +30,7 @@ pub struct AppState {
     pub expression_manager: motion::ExpressionManager,
     pub eye_blink: motion::eye_blink::EyeBlink,
     pub breath: motion::breath::Breath,
+    pub look: motion::look::Look,
     /// Loaded motions by category (e.g. "Idle", "TapBody")
     pub loaded_motions: HashMap<String, Vec<motion::CubismMotion>>,
     /// Loaded expressions by name
@@ -94,6 +95,7 @@ impl AppState {
             expression_manager: motion::ExpressionManager::new(),
             eye_blink: motion::eye_blink::EyeBlink::new(),
             breath: motion::breath::Breath::new(),
+            look: motion::look::Look::new(),
             loaded_motions: HashMap::new(),
             loaded_expressions: HashMap::new(),
             eye_blink_param_ids: Vec::new(),
@@ -465,8 +467,11 @@ impl AppState {
             }
         }
 
-        // Apply Breath controller — subtle sinusoidal oscillation on angle/breath params
+        // Apply Breath controller
         self.breath.update(delta_time, &mut self.parameter_values, &self.parameter_names);
+
+        // Apply Look controller (head/eye tracking from mouse position)
+        self.look.update(delta_time, &mut self.parameter_values, &self.parameter_names);
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {
@@ -476,6 +481,13 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// Feed mouse NDC position into look controller for head/eye tracking.
+    pub fn update_mouse_for_look(&mut self, mouse_x: f64, mouse_y: f64, screen_w: f32, screen_h: f32) {
+        let ndc_x = 2.0 * mouse_x as f32 / screen_w - 1.0;
+        let ndc_y = 1.0 - 2.0 * mouse_y as f32 / screen_h;
+        self.look.set_target(ndc_x, ndc_y);
     }
 
     /// Handle tap interaction with camera values passed directly (avoids borrow conflict).

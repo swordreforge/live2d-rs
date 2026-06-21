@@ -436,6 +436,9 @@ fn main() -> anyhow::Result<()> {
                                     }
                                     app.last_mouse_x = mx;
                                     app.last_mouse_y = my;
+                                    // Feed mouse position to look controller
+                                    let size = window.inner_size();
+                                    app.update_mouse_for_look(mx, my, size.width as f32, size.height as f32);
                                 }
                                 WindowEvent::MouseInput { state, .. } => {
                                     let was_down = app.mouse_down;
