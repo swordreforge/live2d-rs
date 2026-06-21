@@ -13,6 +13,7 @@ use std::time::Instant;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use winit::event::{Event, WindowEvent, ElementState};
+use winit::window::WindowLevel;
 use raw_window_handle::{HasRawWindowHandle, HasRawDisplayHandle};
 use glutin::prelude::*;
 use glutin::display::{Display, DisplayApiPreference};
@@ -29,6 +30,7 @@ fn main() -> anyhow::Result<()> {
 
     let window = Arc::new(WindowBuilder::new()
         .with_title("Live2D Viewer")
+        .with_transparent(true)
         .build(&event_loop)?);
 
     let display_handle = window.raw_display_handle();
@@ -77,7 +79,6 @@ fn main() -> anyhow::Result<()> {
     });
 
     let mut app = app::AppState::new();
-    let mut camera = camera::Camera::new();
     let mut renderer = unsafe {
         renderer::Live2dRenderer::new(&gl)
             .map_err(|e| anyhow::anyhow!("renderer: {e}"))?
@@ -167,19 +168,37 @@ fn main() -> anyhow::Result<()> {
                         let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1); // cap at 100ms
                         last_frame_time = now;
 
+                        // --- Apply pending pet mode window changes ---
+                        if app.pet_mode_changed {
+                            if app.pet_mode {
+                                window.set_decorations(false);
+                                window.set_window_level(WindowLevel::AlwaysOnTop);
+                            } else {
+                                window.set_decorations(true);
+                                window.set_window_level(WindowLevel::Normal);
+                            }
+                            app.pet_mode_changed = false;
+                        }
+
                         // --- Advance motion system ---
                         app.advance_motion(delta);
 
                         // --- Write parameters to model ---
                         app.update_parameters();
 
+                        app.update_pose(delta);
+
                         let size = window.inner_size();
-                        let clear_color = egui::Color32::from_rgb(0x1a, 0x1a, 0x2e);
+                        let clear_color = if app.pet_mode {
+                            egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
+                        } else {
+                            egui::Color32::from_rgb(0x1a, 0x1a, 0x2e)
+                        };
 
                         if app.current_idx != prev_idx {
                             if let Some(ref model) = app.current_model {
                                 let canvas = model.canvas_info();
-                                camera.fit_to_canvas(
+                                app.camera.fit_to_canvas(
                                     canvas.size_in_pixels.X,
                                     canvas.size_in_pixels.Y,
                                     canvas.pixels_per_unit,
@@ -211,7 +230,7 @@ fn main() -> anyhow::Result<()> {
                                 clear_color.r() as f32 / 255.0,
                                 clear_color.g() as f32 / 255.0,
                                 clear_color.b() as f32 / 255.0,
-                                1.0,
+                                clear_color.a() as f32 / 255.0,
                             );
                             gl.clear(glow::COLOR_BUFFER_BIT);
                         }
@@ -221,7 +240,7 @@ fn main() -> anyhow::Result<()> {
                                 gl.viewport(0, 0, size.width as i32, size.height as i32);
                                 gl.disable(glow::DEPTH_TEST);
                                 gl.disable(glow::CULL_FACE);
-                                renderer.render(&gl, model, &camera);
+                                renderer.render(&gl, model, &app.camera);
                             }
                         }
 
@@ -283,24 +302,41 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::MouseWheel { delta, .. } => {
-                                    let d = match delta {
-                                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                                    };
-                                    camera.zoom(d, 0.5, 0.5);
+                                    if !app.pet_mode {
+                                        let d = match delta {
+                                            winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                                            winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                                        };
+                                        app.camera.zoom(d, 0.5, 0.5);
+                                    }
                                 }
                                 WindowEvent::CursorMoved { position, .. } => {
                                     let (mx, my) = (position.x, position.y);
-                                    if app.mouse_down {
+                                    if app.mouse_down && !app.pet_mode {
                                         let dx = mx - app.last_mouse_x;
                                         let dy = my - app.last_mouse_y;
-                                        camera.pan(dx as f32, dy as f32);
+                                        app.camera.pan(dx as f32, dy as f32);
                                     }
                                     app.last_mouse_x = mx;
                                     app.last_mouse_y = my;
                                 }
                                 WindowEvent::MouseInput { state, .. } => {
+                                    let was_down = app.mouse_down;
                                     app.mouse_down = state == ElementState::Pressed;
+                                    if state == ElementState::Pressed && !was_down {
+                                        let size = window.inner_size();
+                                        let mx = app.last_mouse_x;
+                                        let my = app.last_mouse_y;
+                                        let cam_scale_x = app.camera.scale_x;
+                                        let cam_scale_y = app.camera.scale_y;
+                                        let cam_trans_x = app.camera.translate_x;
+                                        let cam_trans_y = app.camera.translate_y;
+                                        app.handle_tap_with_cam(
+                                            mx, my,
+                                            size.width as f32, size.height as f32,
+                                            cam_scale_x, cam_scale_y, cam_trans_x, cam_trans_y,
+                                        );
+                                    }
                                 }
                                 _ => {}
                             }

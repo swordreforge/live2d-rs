@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use live2d_core::{Moc, Model};
 
+use crate::camera::Camera;
 use crate::motion;
 
 pub struct ModelEntry {
@@ -39,6 +40,18 @@ pub struct AppState {
     pub auto_play_idle: bool,
     /// Base directory for resolving relative paths
     pub base_dir: Option<PathBuf>,
+    pub hit_areas: Vec<crate::model_loader::HitArea>,
+    tap_count: usize,
+    pub pose_data: Option<crate::model_loader::PoseData>,
+    pub pose_fade_remaining: f32,
+    /// Part IDs from the current model (for PartOpacity motion curves)
+    pub part_ids: Vec<String>,
+    /// Desktop pet mode: transparent, frameless, minimal UI
+    pub pet_mode: bool,
+    /// Set to true when pet_mode toggles so main.rs applies window changes
+    pub pet_mode_changed: bool,
+    /// Camera (view transform for the model)
+    pub camera: Camera,
 }
 
 impl AppState {
@@ -65,6 +78,14 @@ impl AppState {
             lip_sync_param_ids: Vec::new(),
             auto_play_idle: true,
             base_dir: None,
+            hit_areas: Vec::new(),
+            tap_count: 0,
+            pose_data: None,
+            pose_fade_remaining: 0.0,
+            part_ids: Vec::new(),
+            pet_mode: false,
+            pet_mode_changed: false,
+            camera: Camera::new(),
         }
     }
 
@@ -92,6 +113,8 @@ impl AppState {
         self.loaded_expressions.clear();
         self.eye_blink_param_ids.clear();
         self.lip_sync_param_ids.clear();
+        self.hit_areas.clear();
+        self.pose_data = None;
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
@@ -113,6 +136,10 @@ impl AppState {
         self.parameter_values = params.default_values().to_vec();
         self.parameter_mins = params.minimum_values().to_vec();
         self.parameter_maxs = params.maximum_values().to_vec();
+
+        // Read part IDs for PartOpacity motion curve evaluation
+        let parts = model.parts();
+        self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
 
         self.current_moc = Some(moc);
         self.current_model = Some(model);
@@ -136,11 +163,19 @@ impl AppState {
             }
         }
 
+        // Load hit areas for tap interaction
+        if let Some(ref areas) = loaded.model3_json.hit_areas {
+            self.hit_areas = areas.clone();
+        }
+
         // Load all motion files
         self.load_all_motions(&loaded.base_dir, &loaded.model3_json);
 
         // Load all expression files
         self.load_all_expressions(&loaded.base_dir, &loaded.model3_json);
+
+        self.load_pose(&loaded.base_dir, &loaded.model3_json);
+        self.apply_pose_reset();
 
         // Start the first idle motion
         if self.auto_play_idle {
@@ -229,6 +264,95 @@ impl AppState {
         }
     }
 
+    fn load_pose(
+        &mut self,
+        base_dir: &std::path::Path,
+        model3_json: &crate::model_loader::Model3Json,
+    ) {
+        let pose_path = match model3_json.file_references.pose {
+            Some(ref p) => base_dir.join(p),
+            None => return,
+        };
+        let data = match std::fs::read(&pose_path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("Failed to read pose {}: {e}", pose_path.display());
+                return;
+            }
+        };
+        let parsed = match crate::model_loader::parse_pose_json(&data) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("Failed to parse pose: {e}");
+                return;
+            }
+        };
+        log::info!("Loaded pose with {} groups (fade={:.2}s)", parsed.groups.len(), parsed.fade_in_time);
+        self.pose_data = Some(parsed);
+    }
+
+    fn apply_pose_reset(&mut self) {
+        let pose = match self.pose_data {
+            Some(ref p) => p.clone(),
+            None => return,
+        };
+        let model = match self.current_model {
+            Some(ref mut m) => m,
+            None => return,
+        };
+        let mut parts = model.parts();
+        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+        let popac = parts.opacities_mut();
+
+        for group in &pose.groups {
+            let mut first_found = false;
+            for entry in group {
+                if let Some(part_idx) = pids.iter().position(|id| id == &entry.id) {
+                    if !first_found {
+                        popac[part_idx] = 1.0;
+                        first_found = true;
+                    } else {
+                        popac[part_idx] = 0.0;
+                    }
+                }
+            }
+        }
+        // Propagate part opacities to drawables
+        if let Some(ref mut model) = self.current_model {
+            model.update();
+        }
+        self.pose_fade_remaining = 0.0;
+    }
+
+    pub fn update_pose(&mut self, _delta_time: f32) {
+        let pose = match self.pose_data {
+            Some(ref p) => p,
+            None => return,
+        };
+        let model = match self.current_model {
+            Some(ref mut m) => m,
+            None => return,
+        };
+        let mut parts = model.parts();
+        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+        let popac = parts.opacities_mut();
+
+        // CopyPartOpacities: for any entry with links, copy main opacity to linked parts
+        for group in &pose.groups {
+            for entry in group {
+                if entry.links.is_empty() { continue; }
+                if let Some(main_idx) = pids.iter().position(|id| id == &entry.id) {
+                    let opacity = popac[main_idx];
+                    for link_id in &entry.links {
+                        if let Some(link_idx) = pids.iter().position(|id| id == link_id) {
+                            popac[link_idx] = opacity;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Start a motion from a specific category (e.g. "Idle", "TapBody").
     /// If `index` is provided, plays that specific motion; otherwise plays the first one.
     pub fn start_motion(&mut self, category: &str, index: Option<usize>) -> bool {
@@ -259,13 +383,33 @@ impl AppState {
     pub fn advance_motion(&mut self, delta_time: f32) {
         self.motion_queue.advance_time(delta_time);
 
-        // Evaluate motion curves
+        // Read current part opacities from model for PartOpacity curve evaluation
+        let mut motion_part_opacities: Vec<f32> = if let Some(ref model) = self.current_model {
+            model.parts().opacities().to_vec()
+        } else {
+            Vec::new()
+        };
+
+        // Evaluate motion curves (parameters + part opacities)
         self.motion_queue.do_update_motion(
             &self.parameter_names,
             &mut self.parameter_values,
             &self.eye_blink_param_ids,
             &self.lip_sync_param_ids,
+            &self.part_ids,
+            &mut motion_part_opacities,
         );
+
+        // Write motion-updated part opacities to model (pose system will override
+        // specific pose-group parts in update_pose, which runs after this)
+        if !motion_part_opacities.is_empty() {
+            if let Some(ref mut model) = self.current_model {
+                let mut parts = model.parts();
+                let opacities = parts.opacities_mut();
+                let len = opacities.len().min(motion_part_opacities.len());
+                opacities[..len].copy_from_slice(&motion_part_opacities[..len]);
+            }
+        }
 
         // Apply expression (if active)
         self.expression_manager.apply(
@@ -273,5 +417,79 @@ impl AppState {
             &mut self.parameter_values,
             self.motion_queue.user_time_seconds,
         );
+
+        // Auto-restart Idle when all motions have finished
+        if self.auto_play_idle && self.motion_queue.entries.is_empty() {
+            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
+                if let Some(first) = idle_motions.first() {
+                    self.motion_queue.start_motion(first.clone());
+                }
+            }
+        }
     }
+
+    /// Handle tap interaction with camera values passed directly (avoids borrow conflict).
+    pub fn handle_tap_with_cam(
+        &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
+        cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
+    ) {
+        let model = match self.current_model {
+            Some(ref m) => m,
+            None => return,
+        };
+
+        let ndc_x = 2.0 * x as f32 / screen_w - 1.0;
+        let ndc_y = 1.0 - 2.0 * y as f32 / screen_h;
+        let model_x = (ndc_x - cam_trans_x) / cam_scale_x;
+        let model_y = (ndc_y - cam_trans_y) / cam_scale_y;
+
+        let drawables = model.drawables();
+        let drawable_ids = drawables.ids();
+        let vpos = drawables.vertex_positions();
+        let vcounts = drawables.vertex_counts();
+        let idxs = drawables.indices();
+        let icounts = drawables.index_counts();
+
+        for hit_area in &self.hit_areas {
+            let di = match drawable_ids.iter().position(|id| id.to_string_lossy() == hit_area.id) {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let verts = unsafe { std::slice::from_raw_parts(vpos[di], vcounts[di] as usize) };
+            let idx = unsafe { std::slice::from_raw_parts(idxs[di], icounts[di] as usize) };
+
+            for tri in idx.chunks(3) {
+                if tri.len() < 3 {
+                    continue;
+                }
+                let a = &verts[tri[0] as usize];
+                let b = &verts[tri[1] as usize];
+                let c = &verts[tri[2] as usize];
+
+                if point_in_triangle(model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y) {
+                    if let Some(motions) = self.loaded_motions.get("TapBody") {
+                        if !motions.is_empty() {
+                            let idx = self.tap_count % motions.len();
+                            self.tap_count += 1;
+                            self.motion_queue.stop_all_motions();
+                            let mut motion = motions[idx].clone();
+                            motion.is_loop = false;
+                            self.motion_queue.start_motion(motion);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32) -> bool {
+    let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+    let d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+    !(has_neg && has_pos)
 }

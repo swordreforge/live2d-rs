@@ -52,4 +52,20 @@ impl Camera {
         self.translate_x = (cx * 2.0 - 1.0) - (wx + self.translate_x / self.scale_x) * self.scale_x;
         self.translate_y = (1.0 - cy * 2.0) - (wy + self.translate_y / self.scale_y) * self.scale_y;
     }
+
+    /// Reset pan (re-center the model).
+    pub fn reset_pan(&mut self) {
+        self.translate_x = 0.0;
+        self.translate_y = 0.0;
+    }
+
+    /// Zoom in by one step (centered).
+    pub fn zoom_in(&mut self) {
+        self.zoom(1.0, 0.5, 0.5);
+    }
+
+    /// Zoom out by one step (centered).
+    pub fn zoom_out(&mut self) {
+        self.zoom(-1.0, 0.5, 0.5);
+    }
 }

@@ -75,7 +75,7 @@ impl CubismMotion {
         self.data.curves.iter().any(|c| c.target == TARGET_NAME_MODEL && c.id == ID_NAME_OPACITY)
     }
 
-    /// Evaluate curves and apply parameter values.
+    /// Evaluate curves and apply parameter values and part opacities.
     #[allow(clippy::too_many_arguments)]
     pub fn do_update_parameters(
         &self,
@@ -88,6 +88,8 @@ impl CubismMotion {
         entry_end_time: f32,
         eye_blink_param_ids: &[String],
         lip_sync_param_ids: &[String],
+        part_ids: &[String],
+        part_opacities: &mut [f32],
     ) -> f32 {
         let time_offset_seconds = (user_time_seconds - entry_start_time).max(0.0);
 
@@ -269,12 +271,15 @@ impl CubismMotion {
 
         // 3. Evaluate PartOpacity curves
         for curve in &part_curves {
-            let param_idx = match param_lookup.get(curve.id.as_str()) {
-                Some(&idx) => idx,
+            let part_idx = match part_ids.iter().position(|id| id == &curve.id) {
+                Some(idx) => idx,
                 None => continue,
             };
-            let value = evaluate_curve(curve, time, is_correction, duration);
-            param_values[param_idx] = value;
+            let target = evaluate_curve(curve, time, is_correction, duration);
+            if part_idx < part_opacities.len() {
+                let source = part_opacities[part_idx];
+                part_opacities[part_idx] = source + (target - source) * fade_weight;
+            }
         }
 
         model_opacity
@@ -401,10 +406,14 @@ mod tests {
         let eye_blink: Vec<String> = vec![];
         let lip_sync: Vec<String> = vec![];
 
+        let empty_parts: Vec<String> = vec![];
+        let mut part_opacities: Vec<f32> = vec![];
+
         // At time 0
         motion.do_update_parameters(
             &param_names, &mut param_values,
             0.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
+            &empty_parts, &mut part_opacities,
         );
         assert!((param_values[0] - 0.0).abs() < 1e-5, "t=0 got {}", param_values[0]);
 
@@ -413,6 +422,7 @@ mod tests {
         motion.do_update_parameters(
             &param_names, &mut param_values,
             1.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
+            &empty_parts, &mut part_opacities,
         );
         assert!((param_values[0] - 50.0).abs() < 1e-5, "t=1 got {}", param_values[0]);
 
@@ -421,6 +431,7 @@ mod tests {
         motion.do_update_parameters(
             &param_names, &mut param_values,
             2.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
+            &empty_parts, &mut part_opacities,
         );
         assert!((param_values[0] - 100.0).abs() < 1e-5, "t=2 got {}", param_values[0]);
     }

@@ -130,13 +130,15 @@ impl MotionQueueManager {
         handle
     }
 
-    /// Update all active motions, evaluating curves and writing to parameters.
+    /// Update all active motions, evaluating curves and writing to parameters and part opacities.
     pub fn do_update_motion(
         &mut self,
         param_names: &[String],
         param_values: &mut [f32],
         eye_blink_param_ids: &[String],
         lip_sync_param_ids: &[String],
+        part_ids: &[String],
+        part_opacities: &mut [f32],
     ) -> bool {
         let mut updated = false;
         let user_time = self.user_time_seconds;
@@ -196,6 +198,8 @@ impl MotionQueueManager {
                 entry_end_time,
                 eye_blink_param_ids,
                 lip_sync_param_ids,
+                part_ids,
+                part_opacities,
             );
 
             updated = true;

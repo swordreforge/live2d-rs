@@ -56,6 +56,7 @@ impl Live2dRenderer {
         let mask_counts = drawables.mask_counts();
         let masks = drawables.masks();
         let constant_flags = drawables.constant_flags();
+        let dynamic_flags = drawables.dynamic_flags();
 
         if !self.debug_printed {
             self.debug_printed = true;
@@ -70,7 +71,9 @@ impl Live2dRenderer {
                 let nm = mask_counts[i];
                 let is_inv = constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
                 let inv = if is_inv { " INVERT" } else { "" };
-                eprintln!("[render]  [{i:>2}] {nm} masks{inv} tex={} op={:.2} b={} id={}",
+                let vis = dynamic_flags[i] & ffi::csmIsVisible as u8 != 0;
+                let vis_s = if vis { "V" } else { "_" };
+                eprintln!("[render]  [{i:>2}] {vis_s} {nm} masks{inv} tex={} op={:.2} b={} id={}",
                     tex_indices[i], opacities[i], blend_modes[i],
                     ids[i].to_string_lossy());
                 if nm > 0 {
@@ -120,6 +123,7 @@ impl Live2dRenderer {
         for &i in &sorted_indices {
             let opacity = opacities[i];
             if opacity < 0.001 { continue; }
+            if dynamic_flags[i] & ffi::csmIsVisible as u8 == 0 { continue; }
 
             let mc = mul_colors[i];
             let sc = scr_colors[i];
@@ -161,6 +165,7 @@ impl Live2dRenderer {
 
                 for &mask_idx in mask_slice {
                     let mi = mask_idx as usize;
+                    if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
                     let m_vc = vert_counts[mi] as usize;
                     let m_ic = idx_counts[mi] as usize;
                     if m_vc == 0 || m_ic == 0 { continue; }
@@ -315,6 +320,7 @@ impl Live2dRenderer {
         let blend_modes = drawables.blend_modes();
         let tex_indices = drawables.texture_indices();
         let constant_flags = drawables.constant_flags();
+        let dynamic_flags = drawables.dynamic_flags();
 
         let vc = vert_counts[drawable_idx] as usize;
         let ic = idx_counts[drawable_idx] as usize;
@@ -355,6 +361,7 @@ impl Live2dRenderer {
 
         for &mask_idx in mask_indices {
             let mi = mask_idx as usize;
+            if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
             let m_vc = vert_counts[mi] as usize;
             let m_ic = idx_counts[mi] as usize;
             if m_vc == 0 || m_ic == 0 { continue; }
