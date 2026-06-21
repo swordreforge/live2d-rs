@@ -331,19 +331,24 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // Minimize to floating circle (works on all platforms including Wayland)
+                        // Minimize to floating circle
                         if app.request_minimize {
                             app.request_minimize = false;
                             app.minimized_to_float = true;
-                            app.saved_window_pet_size = (app.window_size.0 as f64, app.window_size.1 as f64);
-                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(60.0, 60.0));
+                            // Save LOGICAL window size (window_size is physical, convert via scale factor)
+                            let sf = window.scale_factor();
+                            app.saved_window_pet_size = (
+                                app.window_size.0 as f64 / sf,
+                                app.window_size.1 as f64 / sf,
+                            );
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(100.0, 100.0));
                         }
                         if app.request_restore {
                             app.request_restore = false;
                             app.minimized_to_float = false;
                             let (w, h) = app.saved_window_pet_size;
-                            let restore_w = if w > 100.0 { w } else { 800.0 };
-                            let restore_h = if h > 100.0 { h } else { 600.0 };
+                            let restore_w = (w.max(200.0)).min(4000.0);
+                            let restore_h = (h.max(200.0)).min(4000.0);
                             let _ = window.request_inner_size(winit::dpi::LogicalSize::new(restore_w, restore_h));
                             app.camera_needs_fit = true;
                         }
