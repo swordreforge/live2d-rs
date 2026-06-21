@@ -188,8 +188,8 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                     ui.add_space(3.0);
 
                     small_btn(ui, "\u{21ba}").clicked().then(|| app.camera.reset_pan());
-                    small_btn(ui, "+").clicked().then(|| app.camera.zoom_in());
-                    small_btn(ui, "-").clicked().then(|| app.camera.zoom_out());
+                    small_btn(ui, "+").clicked().then(|| { app.camera.zoom_in(); app.pet_resize_pending = true; });
+                    small_btn(ui, "-").clicked().then(|| { app.camera.zoom_out(); app.pet_resize_pending = true; });
 
                     ui.add_space(3.0);
 

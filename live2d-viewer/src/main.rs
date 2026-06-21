@@ -232,11 +232,6 @@ fn main() -> anyhow::Result<()> {
                             app.camera_needs_fit = false;
                         }
 
-                        // Request window resize on model switch in pet mode
-                        if app.pet_mode && app.current_idx != prev_idx {
-                            app.pet_resize_pending = true;
-                        }
-
                         // --- Advance motion system ---
                         app.advance_motion(delta);
 
