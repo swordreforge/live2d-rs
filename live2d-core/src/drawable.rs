@@ -112,9 +112,15 @@ impl<'a> Drawables<'a> {
         unsafe { core::slice::from_raw_parts(ptr, self.len()) }
     }
 
+    pub fn draw_orders(&self) -> &[i32] {
+        let ptr = unsafe { ffi::csmGetDrawableDrawOrders(self.model.as_raw()) };
+        if ptr.is_null() { return &[]; }
+        unsafe { core::slice::from_raw_parts(ptr, self.len()) }
+    }
+
     pub fn render_order_indices(&self) -> Vec<usize> {
         let n = self.len();
-        let orders = self.blend_modes();
+        let orders = self.draw_orders();
         let mut indices: Vec<usize> = (0..n).collect();
         indices.sort_by_key(|&i| orders[i]);
         indices

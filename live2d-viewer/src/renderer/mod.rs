@@ -42,6 +42,7 @@ impl Live2dRenderer {
         let n = drawables.len();
         if n == 0 { return; }
 
+        let sorted_indices = drawables.render_order_indices();
         let tex_indices = drawables.texture_indices();
         let opacities = drawables.opacities();
         let vert_counts = drawables.vertex_counts();
@@ -70,10 +71,9 @@ impl Live2dRenderer {
                 eprintln!("[render]  d[{i}]: xy=[{:.1},{:.1}]x[{:.1},{:.1}] vtx={} tex={} op={:.3}",
                     mnx, mxx, mny, mxy, vc, tex_indices[i], opacities[i]);
             };
-            for i in 0..n.min(3) { scan(i); }
-            let last = n.saturating_sub(3);
-            if last >= 3 { eprintln!("[render]  ..."); }
-            for i in last..n { scan(i); }
+            for &i in sorted_indices.iter().take(3) { scan(i); }
+            if n > 6 { eprintln!("[render]  ..."); }
+            for &i in sorted_indices.iter().rev().take(3).rev() { scan(i); }
         }
 
         let has_masks = mask_counts.iter().any(|&c| c > 0);
@@ -113,7 +113,7 @@ impl Live2dRenderer {
         let mk_translate_loc = gl.get_uniform_location(self.mask_program, "uTranslate");
         let mk_opacity_loc = gl.get_uniform_location(self.mask_program, "uOpacity");
 
-        for i in 0..n {
+        for &i in &sorted_indices {
             let opacity = opacities[i];
             if opacity < 0.001 { continue; }
 
