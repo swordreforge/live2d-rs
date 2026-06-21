@@ -188,6 +188,24 @@ fn main() -> anyhow::Result<()> {
                             app.pet_mode_changed = false;
                         }
 
+                        // --- Camera recalculation (model switch OR pending pet mode resize) ---
+                        // This runs BEFORE pet_mode_changed so that camera_needs_fit set by
+                        // pet mode activation is consumed on the NEXT frame (after resize settles).
+                        if app.current_idx != prev_idx || app.camera_needs_fit {
+                            let size = window.inner_size();
+                            if let Some(ref model) = app.current_model {
+                                let canvas = model.canvas_info();
+                                app.camera.fit_to_canvas(
+                                    canvas.size_in_pixels.X,
+                                    canvas.size_in_pixels.Y,
+                                    canvas.pixels_per_unit,
+                                    size.width as f32,
+                                    size.height as f32,
+                                );
+                            }
+                            app.camera_needs_fit = false;
+                        }
+
                         // --- Advance motion system ---
                         app.advance_motion(delta);
 
@@ -202,21 +220,6 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             egui::Color32::from_rgb(0x1a, 0x1a, 0x2e)
                         };
-
-                        // Camera recalculation (model switch OR pet mode resize)
-                        if app.current_idx != prev_idx || app.camera_needs_fit {
-                            if let Some(ref model) = app.current_model {
-                                let canvas = model.canvas_info();
-                                app.camera.fit_to_canvas(
-                                    canvas.size_in_pixels.X,
-                                    canvas.size_in_pixels.Y,
-                                    canvas.pixels_per_unit,
-                                    size.width as f32,
-                                    size.height as f32,
-                                );
-                            }
-                            app.camera_needs_fit = false;
-                        }
 
                         // Texture reload on model switch only
                         if app.current_idx != prev_idx {
