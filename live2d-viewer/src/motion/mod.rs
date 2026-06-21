@@ -9,6 +9,7 @@
 //! 5. **Expression** (`expression`) — static parameter overrides with blend modes
 
 pub mod curve;
+pub mod eye_blink;
 mod expression;
 pub mod json;
 pub mod motion;

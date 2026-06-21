@@ -28,6 +28,7 @@ pub struct AppState {
     // Motion system
     pub motion_queue: motion::MotionQueueManager,
     pub expression_manager: motion::ExpressionManager,
+    pub eye_blink: motion::eye_blink::EyeBlink,
     /// Loaded motions by category (e.g. "Idle", "TapBody")
     pub loaded_motions: HashMap<String, Vec<motion::CubismMotion>>,
     /// Loaded expressions by name
@@ -90,6 +91,7 @@ impl AppState {
             last_mouse_y: 0.0,
             motion_queue: motion::MotionQueueManager::new(),
             expression_manager: motion::ExpressionManager::new(),
+            eye_blink: motion::eye_blink::EyeBlink::new(),
             loaded_motions: HashMap::new(),
             loaded_expressions: HashMap::new(),
             eye_blink_param_ids: Vec::new(),
@@ -448,6 +450,18 @@ impl AppState {
             &mut self.parameter_values,
             self.motion_queue.user_time_seconds,
         );
+
+        // Apply EyeBlink controller — overrides motion for eye blink parameters
+        if !self.eye_blink_param_ids.is_empty() {
+            let blink = self.eye_blink.update(delta_time);
+            if (blink - 1.0).abs() > 1e-6 {
+                for id in &self.eye_blink_param_ids {
+                    if let Some(idx) = self.parameter_names.iter().position(|n| n == id) {
+                        self.parameter_values[idx] = blink;
+                    }
+                }
+            }
+        }
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {
