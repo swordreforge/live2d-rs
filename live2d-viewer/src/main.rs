@@ -390,6 +390,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+            Event::LoopExiting => {
+                painter.destroy();
+            }
             Event::AboutToWait => {
                 window.request_redraw();
             }

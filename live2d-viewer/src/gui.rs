@@ -150,7 +150,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
             let sf = ww / logical_w;
             let model_display_w = cw / ch * wh;
             let model_right_px = (ww + model_display_w) / 2.0;
-            let x = model_right_px / sf + 4.0;
+            let x = model_right_px / sf;
             let y = logical_h / 2.0 - 70.0; // vertically centered (toolbar ~140px tall)
             (x, y)
         } else {
