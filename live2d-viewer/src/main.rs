@@ -215,6 +215,7 @@ fn main() -> anyhow::Result<()> {
                         app.update_pose(delta);
 
                         let size = window.inner_size();
+                        app.window_size = (size.width as f32, size.height as f32);
                         let clear_color = if app.pet_mode {
                             egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
                         } else {

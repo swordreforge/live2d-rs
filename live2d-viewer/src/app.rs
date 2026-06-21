@@ -54,6 +54,10 @@ pub struct AppState {
     pub camera_needs_fit: bool,
     /// Camera (view transform for the model)
     pub camera: Camera,
+    /// Current window size in pixels (set from main.rs each frame)
+    pub window_size: (f32, f32),
+    /// Model canvas pixel size (from canvas_info), for stable toolbar positioning
+    pub canvas_pixel_size: (f32, f32),
 }
 
 impl AppState {
@@ -89,6 +93,8 @@ impl AppState {
             pet_mode_changed: false,
             camera_needs_fit: false,
             camera: Camera::new(),
+            window_size: (800.0, 600.0),
+            canvas_pixel_size: (0.0, 0.0),
         }
     }
 
@@ -143,6 +149,10 @@ impl AppState {
         // Read part IDs for PartOpacity motion curve evaluation
         let parts = model.parts();
         self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+
+        // Read canvas info for pet mode toolbar positioning
+        let canvas = model.canvas_info();
+        self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
 
         self.current_moc = Some(moc);
         self.current_model = Some(model);
