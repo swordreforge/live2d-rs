@@ -33,6 +33,53 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     if app.current_model.is_some() {
         Window::new("Parameters").default_width(300.0).show(ctx, |ui| {
             ui.label(format!("Parameters: {}", app.parameter_names.len()));
+
+            // Motion status
+            let motion_count = app.motion_queue.entries.len();
+            if motion_count > 0 {
+                ui.label(format!("Motions: {}", motion_count));
+                for (i, entry) in app.motion_queue.entries.iter().enumerate() {
+                    let loop_str = if entry.motion.is_loop { "loop" } else { "once" };
+                    let fw = entry.cached_fade_weight;
+                    ui.label(format!(
+                        "  [{}] {} ({:.1}s, {}, fade={:.2})",
+                        i,
+                        entry.motion.data.duration,
+                        entry.motion.data.duration,
+                        loop_str,
+                        fw,
+                    ));
+                }
+                ui.separator();
+            }
+
+            // Expression status
+            if app.expression_manager.is_active {
+                ui.label("Expression: active");
+                ui.separator();
+            }
+
+            // Action buttons
+            ui.horizontal(|ui| {
+                if ui.button("Replay Idle").clicked() {
+                    app.start_motion("Idle", Some(0));
+                }
+                if ui.button("Stop All").clicked() {
+                    app.motion_queue.stop_all_motions();
+                }
+            });
+
+            if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
+                if !tap_motions.is_empty() && ui.button("Tap Body").clicked() {
+                    // Choose a random tap motion
+                    let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
+                    app.start_motion("TapBody", Some(idx));
+                }
+            }
+
+            ui.separator();
+
+            // Parameter sliders
             for i in 0..app.parameter_names.len() {
                 let name = &app.parameter_names[i];
                 let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);

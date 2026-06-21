@@ -2,12 +2,14 @@ mod app;
 mod camera;
 mod gui;
 mod model_loader;
+pub mod motion;
 mod renderer;
 mod texture;
 
 use std::sync::Arc;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::time::Instant;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use winit::event::{Event, WindowEvent, ElementState};
@@ -151,16 +153,28 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Frame timing
+    let mut last_frame_time = Instant::now();
+
     event_loop.run(move |event, target| {
 
         match event {
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::RedrawRequested => {
+                        // --- Frame timing ---
+                        let now = Instant::now();
+                        let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1); // cap at 100ms
+                        last_frame_time = now;
+
+                        // --- Advance motion system ---
+                        app.advance_motion(delta);
+
+                        // --- Write parameters to model ---
+                        app.update_parameters();
+
                         let size = window.inner_size();
                         let clear_color = egui::Color32::from_rgb(0x1a, 0x1a, 0x2e);
-
-                        app.update_parameters();
 
                         if app.current_idx != prev_idx {
                             if let Some(ref model) = app.current_model {
