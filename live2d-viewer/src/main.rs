@@ -341,7 +341,7 @@ fn main() -> anyhow::Result<()> {
                                 app.window_size.0 as f64 / sf,
                                 app.window_size.1 as f64 / sf,
                             );
-                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(100.0, 100.0));
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(500.0, 500.0));
                         }
                         if app.request_restore {
                             app.request_restore = false;
