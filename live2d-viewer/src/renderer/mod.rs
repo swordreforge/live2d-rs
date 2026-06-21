@@ -71,8 +71,8 @@ impl Live2dRenderer {
             }
         }
 
-        let _scale_loc = gl.get_uniform_location(self.program, "uScale");
-        let _translate_loc = gl.get_uniform_location(self.program, "uTranslate");
+        let scale_loc = gl.get_uniform_location(self.program, "uScale");
+        let translate_loc = gl.get_uniform_location(self.program, "uTranslate");
         let tex_loc = gl.get_uniform_location(self.program, "uTexture");
         let mul_loc = gl.get_uniform_location(self.program, "uMultiplyColor");
         let scr_loc = gl.get_uniform_location(self.program, "uScreenColor");
@@ -108,7 +108,7 @@ impl Live2dRenderer {
             let mut verts = Vec::with_capacity(vc * 4);
             for j in 0..vc {
                 verts.push(pos_slice[j].X);
-                verts.push(-pos_slice[j].Y);
+                verts.push(pos_slice[j].Y);
                 verts.push(uv_slice[j].X);
                 verts.push(uv_slice[j].Y);
             }
@@ -129,7 +129,7 @@ impl Live2dRenderer {
 
                 gl.use_program(Some(self.mask_program));
                 gl.uniform_2_f32(mk_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-                gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
+                gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
                 gl.enable(BLEND);
                 gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
@@ -161,7 +161,7 @@ impl Live2dRenderer {
                     let mut m_verts = Vec::with_capacity(m_vc * 4);
                     for j in 0..m_vc {
                         m_verts.push(m_pos[j].X);
-                        m_verts.push(-m_pos[j].Y);
+                        m_verts.push(m_pos[j].Y);
                         m_verts.push(m_uv[j].X);
                         m_verts.push(m_uv[j].Y);
                     }
@@ -178,7 +178,7 @@ impl Live2dRenderer {
 
                 gl.use_program(Some(self.masked_program));
                 gl.uniform_2_f32(m_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-                gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
+                gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
                 let tex_idx = tex_indices[i];
                 let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
@@ -223,6 +223,10 @@ impl Live2dRenderer {
                 gl.bind_texture(TEXTURE_2D, None);
                 gl.active_texture(TEXTURE0);
             } else {
+                gl.use_program(Some(self.program));
+                gl.uniform_2_f32(scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
+                gl.uniform_2_f32(translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+
                 let tex_idx = tex_indices[i];
                 let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
                     self.textures[tex_idx as usize]
@@ -321,7 +325,7 @@ impl Live2dRenderer {
 
         gl.use_program(Some(self.mask_program));
         gl.uniform_2_f32(mk_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-        gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
+        gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
         gl.enable(BLEND);
         gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
@@ -353,7 +357,7 @@ impl Live2dRenderer {
             let mut m_verts = Vec::with_capacity(m_vc * 4);
             for j in 0..m_vc {
                 m_verts.push(m_pos[j].X);
-                m_verts.push(-m_pos[j].Y);
+                m_verts.push(m_pos[j].Y);
                 m_verts.push(m_uv[j].X);
                 m_verts.push(m_uv[j].Y);
             }
@@ -377,7 +381,7 @@ impl Live2dRenderer {
 
         gl.use_program(Some(self.masked_program));
         gl.uniform_2_f32(m_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-        gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
+        gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
 
         let tex_idx = tex_indices[drawable_idx];
         let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
@@ -424,7 +428,7 @@ impl Live2dRenderer {
         let mut verts = Vec::with_capacity(vc * 4);
         for j in 0..vc {
             verts.push(pos_slice[j].X);
-            verts.push(-pos_slice[j].Y);
+            verts.push(pos_slice[j].Y);
             verts.push(uv_slice[j].X);
             verts.push(uv_slice[j].Y);
         }

@@ -95,42 +95,58 @@ fn main() -> anyhow::Result<()> {
 
     let mut prev_idx: Option<usize> = None;
 
-    // Try loading default models from Samples/Resources
-    let samples_resources = PathBuf::from(
-        std::env::var("LIVE2D_SDK_ROOT").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            format!("{home}/Downloads/CubismSdkForNative-5-r.5")
-        })
-    ).join("Samples").join("Resources");
+    let model_loaded = if let Some(arg) = std::env::args().nth(1) {
+        let model_dir = PathBuf::from(&arg);
+        if model_dir.exists() {
+            let name = model_dir.file_name().and_then(|n| n.to_str()).unwrap_or("model");
+            app.model_list.push(app::ModelEntry { name: name.into(), dir: model_dir, loaded: false });
+            true
+        } else {
+            eprintln!("model directory not found: {arg}");
+            false
+        }
+    } else {
+        false
+    };
 
-    if samples_resources.exists() {
-        if let Ok(entries) = std::fs::read_dir(&samples_resources) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let has_model3 = std::fs::read_dir(&path)
-                        .map(|rd| rd.flat_map(|e| e.ok()).any(|e| {
-                            e.path().extension().map(|ext| ext == "json").unwrap_or(false)
-                        }))
-                        .unwrap_or(false);
-                    if has_model3 {
-                        app.add_model_dir(path);
+    if !model_loaded {
+        let samples_resources = PathBuf::from(
+            std::env::var("LIVE2D_SDK_ROOT").unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                format!("{home}/Downloads/CubismSdkForNative-5-r.5")
+            })
+        ).join("Samples").join("Resources");
+
+        if samples_resources.exists() {
+            if let Ok(entries) = std::fs::read_dir(&samples_resources) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let has_model3 = std::fs::read_dir(&path)
+                            .map(|rd| rd.flat_map(|e| e.ok()).any(|e| {
+                                e.path().extension().map(|ext| ext == "json").unwrap_or(false)
+                            }))
+                            .unwrap_or(false);
+                        if has_model3 {
+                            app.add_model_dir(path);
+                        }
                     }
                 }
             }
         }
-        if !app.model_list.is_empty() {
-            let _ = app.switch_to(0);
-            for path in &app.texture_paths {
-                match std::fs::read(path) {
-                    Ok(img_data) => {
-                        match unsafe { texture::load_texture(&gl, &img_data) } {
-                            Ok(tex) => renderer.textures.push(tex),
-                            Err(e) => eprintln!("texture load {:?}: {e}", path),
-                        }
+    }
+
+    if !app.model_list.is_empty() {
+        let _ = app.switch_to(0);
+        for path in &app.texture_paths {
+            match std::fs::read(path) {
+                Ok(img_data) => {
+                    match unsafe { texture::load_texture(&gl, &img_data) } {
+                        Ok(tex) => renderer.textures.push(tex),
+                        Err(e) => eprintln!("texture load {:?}: {e}", path),
                     }
-                    Err(e) => eprintln!("texture read {:?}: {e}", path),
                 }
+                Err(e) => eprintln!("texture read {:?}: {e}", path),
             }
         }
     }
