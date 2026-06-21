@@ -14,10 +14,11 @@ use winit::event::{Event, WindowEvent, ElementState};
 use raw_window_handle::{HasRawWindowHandle, HasRawDisplayHandle};
 use glutin::prelude::*;
 use glutin::display::{Display, DisplayApiPreference};
-use glutin::config::{ConfigTemplateBuilder, GlConfig};
+use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
 use glutin::surface::{SurfaceAttributesBuilder, GlSurface, WindowSurface};
-use glow::HasContext as _;
+use glow::HasContext;
+
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -65,6 +66,7 @@ fn main() -> anyhow::Result<()> {
 
     let gl_context = not_current.make_current(&surface)?;
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let gl = Arc::new(unsafe {
         glow::Context::from_loader_function(|s| {
             let c_str = std::ffi::CString::new(s).expect("gl proc name");
@@ -185,7 +187,7 @@ fn main() -> anyhow::Result<()> {
 
                         if let Some(ref mut model) = app.current_model {
                             unsafe {
-                                let _ = renderer.render(&gl, model, &camera);
+                                renderer.render(&gl, model, &camera);
                             }
                         }
 

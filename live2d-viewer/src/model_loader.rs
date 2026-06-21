@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Model3Json {
     pub version: u32,
     #[serde(default)]
@@ -11,12 +12,14 @@ pub struct Model3Json {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct FileReference {
     pub id: Option<String>,
     pub path: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Group {
     pub target: String,
     pub name: String,
@@ -24,6 +27,7 @@ pub struct Group {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct HitArea {
     pub id: String,
     pub name: String,

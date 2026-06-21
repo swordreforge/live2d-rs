@@ -1,5 +1,4 @@
 use glow::*;
-use glow::HasContext as _;
 use anyhow::Result;
 use image::GenericImageView;
 

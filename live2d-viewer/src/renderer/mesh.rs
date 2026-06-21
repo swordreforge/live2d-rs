@@ -1,5 +1,5 @@
 use glow::*;
-use glow::HasContext as _;
+
 
 pub struct Mesh {
     vao: NativeVertexArray,

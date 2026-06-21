@@ -1,5 +1,4 @@
 use glow::*;
-use glow::HasContext as _;
 use anyhow::Result;
 
 pub const VERT_SRC: &str = r#"#version 330 core

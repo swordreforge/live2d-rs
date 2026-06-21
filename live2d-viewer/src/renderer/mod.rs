@@ -3,7 +3,6 @@ pub mod mesh;
 pub mod shader;
 
 use glow::*;
-use glow::HasContext as _;
 use anyhow::Result;
 use live2d_core::Model;
 use live2d_core_sys as ffi;
@@ -72,8 +71,8 @@ impl Live2dRenderer {
             }
         }
 
-        let scale_loc = gl.get_uniform_location(self.program, "uScale");
-        let translate_loc = gl.get_uniform_location(self.program, "uTranslate");
+        let _scale_loc = gl.get_uniform_location(self.program, "uScale");
+        let _translate_loc = gl.get_uniform_location(self.program, "uTranslate");
         let tex_loc = gl.get_uniform_location(self.program, "uTexture");
         let mul_loc = gl.get_uniform_location(self.program, "uMultiplyColor");
         let scr_loc = gl.get_uniform_location(self.program, "uScreenColor");
@@ -263,6 +262,7 @@ impl Live2dRenderer {
         gl.use_program(None);
     }
 
+    #[allow(dead_code)]
     pub unsafe fn render_masked(
         &mut self,
         gl: &Context,

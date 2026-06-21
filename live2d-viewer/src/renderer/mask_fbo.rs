@@ -1,5 +1,4 @@
 use glow::*;
-use glow::HasContext as _;
 
 /// Mask FBO for rendering clipped drawables.
 ///
