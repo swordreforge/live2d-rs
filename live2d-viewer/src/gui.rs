@@ -122,56 +122,61 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
-    // Minimal floating toolbar — no title bar, frameless look
+    // Compact vertical toolbar on the right side — matches desktop pet style
     egui::Area::new("pet_toolbar".into())
-        .fixed_pos([12.0, 12.0])
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .movable(false)
         .show(ctx, |ui| {
             egui::Frame::none()
-                .fill(egui::Color32::from_black_alpha(30))
-                .rounding(6.0)
+                .fill(egui::Color32::from_black_alpha(24))
+                .rounding(4.0)
+                .inner_margin(egui::Margin::symmetric(2.0, 3.0))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // Model name + switch arrows
-                        if ui.button("\u{25c0}").clicked() {
+                    ui.vertical_centered(|ui| {
+                        // Model switch
+                        let btn = egui::Button::new("\u{25c0}").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).clicked() {
                             if let Some(idx) = current_idx {
-                                if idx > 0 {
-                                    let _ = app.switch_to(idx - 1);
-                                }
+                                if idx > 0 { let _ = app.switch_to(idx - 1); }
                             }
                         }
 
                         let model_name = current_idx
                             .and_then(|i| app.model_list.get(i))
                             .map(|e| e.name.as_str())
-                            .unwrap_or("No model");
-                        ui.label(model_name);
+                            .unwrap_or("--");
+                        ui.label(egui::RichText::new(model_name).size(10.0).weak());
 
-                        if ui.button("\u{25b6}").clicked() {
+                        let btn = egui::Button::new("\u{25b6}").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).clicked() {
                             if let Some(idx) = current_idx {
-                                if idx + 1 < app.model_list.len() {
-                                    let _ = app.switch_to(idx + 1);
-                                }
+                                if idx + 1 < app.model_list.len() { let _ = app.switch_to(idx + 1); }
                             }
                         }
 
-                        ui.separator();
+                        ui.add_space(4.0);
 
-                        // Exit pet mode
-                        if ui.button("Exit Pet Mode").clicked() {
-                            app.pet_mode = false;
-                            app.pet_mode_changed = true;
-                        }
-
-                        // Camera controls (right side)
-                        ui.separator();
-                        if ui.button("\u{21ba}").on_hover_text("Reset view").clicked() {
+                        // Camera controls
+                        let btn = egui::Button::new("\u{21ba}").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).on_hover_text("Reset view").clicked() {
                             app.camera.reset_pan();
                         }
-                        if ui.button("\u{2795}").on_hover_text("Zoom in").clicked() {
+                        let btn = egui::Button::new("+").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).on_hover_text("Zoom in").clicked() {
                             app.camera.zoom_in();
                         }
-                        if ui.button("\u{2796}").on_hover_text("Zoom out").clicked() {
+                        let btn = egui::Button::new("-").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).on_hover_text("Zoom out").clicked() {
                             app.camera.zoom_out();
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Exit (compact)
+                        let btn = egui::Button::new("\u{2716}").min_size(egui::vec2(22.0, 20.0));
+                        if ui.add(btn).on_hover_text("Exit pet mode").clicked() {
+                            app.pet_mode = false;
+                            app.pet_mode_changed = true;
                         }
                     });
                 });
