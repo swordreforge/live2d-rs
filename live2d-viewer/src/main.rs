@@ -168,6 +168,7 @@ fn main() -> anyhow::Result<()> {
                                 camera.fit_to_canvas(
                                     canvas.size_in_pixels.X,
                                     canvas.size_in_pixels.Y,
+                                    canvas.pixels_per_unit,
                                     size.width as f32,
                                     size.height as f32,
                                 );
