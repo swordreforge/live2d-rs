@@ -14,7 +14,6 @@ fn main() {
     let core_include = sdk_root.join("Core").join("include");
     let core_lib_dir = sdk_root.join("Core").join("dll").join("linux").join("x86_64");
 
-    // Linker config
     println!("cargo:rustc-link-search=native={}", core_lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=Live2DCubismCore");
     println!("cargo:rerun-if-changed={}", core_include.join("Live2DCubismCore.h").display());
