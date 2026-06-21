@@ -168,6 +168,20 @@ fn main() -> anyhow::Result<()> {
                         let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1); // cap at 100ms
                         last_frame_time = now;
 
+                        // --- Helper: request window resize clamped to monitor ---
+                        fn request_clamped(window: &winit::window::Window, logical_w: f64, logical_h: f64) {
+                            let sf = window.scale_factor();
+                            let max_phys = window.current_monitor().map(|m| m.size());
+                            let (clamped_w, clamped_h) = if let Some(mp) = max_phys {
+                                let max_lw = mp.width as f64 / sf - 40.0;
+                                let max_lh = mp.height as f64 / sf - 40.0;
+                                (logical_w.min(max_lw).max(200.0), logical_h.min(max_lh).max(200.0))
+                            } else {
+                                (logical_w, logical_h)
+                            };
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(clamped_w, clamped_h));
+                        }
+
                         // --- Apply pending pet mode window changes ---
                         if app.pet_mode_changed {
                             if app.pet_mode {
@@ -177,7 +191,7 @@ fn main() -> anyhow::Result<()> {
                                     let canvas = model.canvas_info();
                                     let w = (canvas.size_in_pixels.X * 1.2).max(400.0) as f64;
                                     let h = (canvas.size_in_pixels.Y * 1.2).max(300.0) as f64;
-                                    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                                    request_clamped(&window, w, h);
                                     (w, h)
                                 } else { (400.0, 300.0) };
                                 log::info!("[pet] enter: canvas=({:.0},{:.0}) requested=({:.0},{:.0})",
@@ -201,7 +215,7 @@ fn main() -> anyhow::Result<()> {
                                     let canvas = model.canvas_info();
                                     let w = (canvas.size_in_pixels.X * 1.2).max(400.0) as f64;
                                     let h = (canvas.size_in_pixels.Y * 1.2).max(300.0) as f64;
-                                    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                                    request_clamped(&window, w, h);
                                 }
                             }
                         }

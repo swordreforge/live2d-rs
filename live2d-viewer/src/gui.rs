@@ -138,25 +138,28 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
         return;
     }
 
-    // Position toolbar at model's right edge in logical (egui) coordinates.
+    // Position toolbar at model's right edge, vertically centered.
     // Model center = window center. Model display width = canvas_w/canvas_h * window_h.
     // Right edge = (window_w + model_display_w) / 2, then convert to logical.
-    let toolbar_x = {
+    let (toolbar_x, toolbar_y) = {
         let (cw, ch) = app.canvas_pixel_size;
         let (ww, wh) = app.window_size;
         let logical_w = screen_rect.width();
+        let logical_h = screen_rect.height();
         if cw > 0.0 && ch > 0.0 && ww > 0.0 {
-            let sf = ww / logical_w; // physical-to-logical scale
+            let sf = ww / logical_w;
             let model_display_w = cw / ch * wh;
             let model_right_px = (ww + model_display_w) / 2.0;
-            model_right_px / sf + 4.0 // 4px logical margin from model edge
+            let x = model_right_px / sf + 4.0;
+            let y = logical_h / 2.0 - 70.0; // vertically centered (toolbar ~140px tall)
+            (x, y)
         } else {
-            logical_w - 36.0 // fallback
+            (logical_w - 36.0, 8.0)
         }
     };
 
     egui::Area::new("pet_toolbar".into())
-        .fixed_pos(egui::pos2(toolbar_x, 8.0))
+        .fixed_pos(egui::pos2(toolbar_x, toolbar_y))
         .order(egui::Order::Foreground)
         .movable(false)
         .show(ctx, |ui| {
