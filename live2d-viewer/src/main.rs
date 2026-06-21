@@ -175,8 +175,8 @@ fn main() -> anyhow::Result<()> {
                                 window.set_window_level(WindowLevel::AlwaysOnTop);
                                 let (req_w, req_h) = if let Some(ref model) = app.current_model {
                                     let canvas = model.canvas_info();
-                                    let w = (canvas.size_in_pixels.X * 1.5).max(400.0) as f64;
-                                    let h = (canvas.size_in_pixels.Y * 1.5).max(300.0) as f64;
+                                    let w = (canvas.size_in_pixels.X * 1.2).max(400.0) as f64;
+                                    let h = (canvas.size_in_pixels.Y * 1.2).max(300.0) as f64;
                                     let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
                                     (w, h)
                                 } else { (400.0, 300.0) };
@@ -190,6 +190,20 @@ fn main() -> anyhow::Result<()> {
                                 log::info!("[pet] exit");
                             }
                             app.pet_mode_changed = false;
+                        }
+
+                        // --- Resize window when model switches in pet mode ---
+                        if app.pet_resize_pending {
+                            app.pet_resize_pending = false;
+                            app.pet_mode_delay = 2;
+                            if app.pet_mode {
+                                if let Some(ref model) = app.current_model {
+                                    let canvas = model.canvas_info();
+                                    let w = (canvas.size_in_pixels.X * 1.2).max(400.0) as f64;
+                                    let h = (canvas.size_in_pixels.Y * 1.2).max(300.0) as f64;
+                                    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                                }
+                            }
                         }
 
                         // --- Camera recalculation (model switch OR pending pet mode resize) ---
@@ -208,6 +222,11 @@ fn main() -> anyhow::Result<()> {
                                 );
                             }
                             app.camera_needs_fit = false;
+                        }
+
+                        // Request window resize on model switch in pet mode
+                        if app.pet_mode && app.current_idx != prev_idx {
+                            app.pet_resize_pending = true;
                         }
 
                         // --- Advance motion system ---

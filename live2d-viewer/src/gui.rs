@@ -138,10 +138,22 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
         return;
     }
 
-    // Position toolbar at right edge of egui's logical viewport (screen_rect).
-    // This is the correct coordinate space for egui UI positioning.
-    let logical_w = screen_rect.width();
-    let toolbar_x = logical_w - 36.0;
+    // Position toolbar at model's right edge in logical (egui) coordinates.
+    // Model center = window center. Model display width = canvas_w/canvas_h * window_h.
+    // Right edge = (window_w + model_display_w) / 2, then convert to logical.
+    let toolbar_x = {
+        let (cw, ch) = app.canvas_pixel_size;
+        let (ww, wh) = app.window_size;
+        let logical_w = screen_rect.width();
+        if cw > 0.0 && ch > 0.0 && ww > 0.0 {
+            let sf = ww / logical_w; // physical-to-logical scale
+            let model_display_w = cw / ch * wh;
+            let model_right_px = (ww + model_display_w) / 2.0;
+            model_right_px / sf + 4.0 // 4px logical margin from model edge
+        } else {
+            logical_w - 36.0 // fallback
+        }
+    };
 
     egui::Area::new("pet_toolbar".into())
         .fixed_pos(egui::pos2(toolbar_x, 8.0))
