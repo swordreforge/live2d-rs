@@ -56,6 +56,8 @@ pub struct AppState {
     pub pet_mode_delay: u32,
     /// True when pet mode needs window resize (after model switch)
     pub pet_resize_pending: bool,
+    /// Request minimize to system tray
+    pub request_minimize: bool,
     /// Camera (view transform for the model)
     pub camera: Camera,
     /// Current window size in pixels (set from main.rs each frame)
@@ -98,6 +100,7 @@ impl AppState {
             camera_needs_fit: false,
             pet_mode_delay: 0,
             pet_resize_pending: false,
+            request_minimize: false,
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),

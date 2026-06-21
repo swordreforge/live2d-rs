@@ -5,12 +5,12 @@ mod model_loader;
 pub mod motion;
 mod renderer;
 mod texture;
+mod tray;
 
 use std::sync::Arc;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Instant;
-use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use winit::event::{Event, WindowEvent, ElementState};
 use winit::window::WindowLevel;
@@ -26,7 +26,9 @@ use glow::HasContext;
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let event_loop = EventLoop::new()?;
+    let event_loop = winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
+    let (_tray, tray_rx) = tray::create_tray();
 
     let window = Arc::new(WindowBuilder::new()
         .with_title("Live2D Viewer")
@@ -312,6 +314,12 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
+                        // Minimize to tray
+                        if app.request_minimize {
+                            app.request_minimize = false;
+                            let _ = window.set_visible(false);
+                        }
+
                         let _ = surface.swap_buffers(&gl_context);
                     }
                     _ => {
@@ -320,7 +328,11 @@ fn main() -> anyhow::Result<()> {
                         if !egui_consumed {
                             match event {
                                 WindowEvent::CloseRequested => {
-                                    target.exit();
+                                    if app.pet_mode {
+                                        let _ = window.set_visible(false);
+                                    } else {
+                                        target.exit();
+                                    }
                                 }
                                 WindowEvent::Resized(size) => {
                                     if let (Some(w), Some(h)) = (
@@ -390,10 +402,29 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+            Event::UserEvent(event) => {
+                match event {
+                    tray::AppEvent::ShowWindow => {
+                        window.set_visible(true);
+                    }
+                    tray::AppEvent::Quit => {
+                        target.exit();
+                    }
+                }
+            }
             Event::LoopExiting => {
                 painter.destroy();
             }
             Event::AboutToWait => {
+                // Poll tray menu events and forward to main event loop
+                for id in tray_rx.poll() {
+                    let event = match id.as_str() {
+                        "show" => tray::AppEvent::ShowWindow,
+                        "quit" => tray::AppEvent::Quit,
+                        _ => continue,
+                    };
+                    let _ = proxy.send_event(event);
+                }
                 window.request_redraw();
             }
             _ => {}

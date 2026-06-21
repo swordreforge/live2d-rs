@@ -197,6 +197,11 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                         app.pet_mode = false;
                         app.pet_mode_changed = true;
                     });
+
+                    ui.add_space(3.0);
+                    if small_btn(ui, "\u{2193}").on_hover_text("Minimize to tray").clicked() {
+                        app.request_minimize = true;
+                    }
                 });
             });
         });
