@@ -60,20 +60,24 @@ impl Live2dRenderer {
         if !self.debug_printed {
             self.debug_printed = true;
             let ci = model.canvas_info();
-            eprintln!("[render] canvas={}x{} ppu={} cam=({:.4},{:.4}),({:.4},{:.4})",
-                ci.size_in_pixels.X, ci.size_in_pixels.Y, ci.pixels_per_unit,
+            let ids = drawables.ids();
+            eprintln!("[render] canvas={}x{} ppu={} n_drawables={}",
+                ci.size_in_pixels.X, ci.size_in_pixels.Y, ci.pixels_per_unit, n);
+            eprintln!("[render] cam=({:.4},{:.4}),({:.4},{:.4})",
                 camera.scale_x, camera.scale_y, camera.translate_x, camera.translate_y);
-            let scan = |i: usize| {
-                let vc = vert_counts[i] as usize;
-                let all_verts = unsafe { std::slice::from_raw_parts(vert_positions[i], vc) };
-                let (mut mnx, mut mny, mut mxx, mut mxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for v in all_verts { mnx = mnx.min(v.X); mxx = mxx.max(v.X); mny = mny.min(v.Y); mxy = mxy.max(v.Y); }
-                eprintln!("[render]  d[{i}]: xy=[{:.1},{:.1}]x[{:.1},{:.1}] vtx={} tex={} op={:.3}",
-                    mnx, mxx, mny, mxy, vc, tex_indices[i], opacities[i]);
-            };
-            for &i in sorted_indices.iter().take(3) { scan(i); }
-            if n > 6 { eprintln!("[render]  ..."); }
-            for &i in sorted_indices.iter().rev().take(3).rev() { scan(i); }
+            eprintln!("[render] textures loaded={}", self.textures.len());
+            for i in 0..n.min(100) {
+                let nm = mask_counts[i];
+                let is_inv = constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
+                let inv = if is_inv { " INVERT" } else { "" };
+                eprintln!("[render]  [{i:>2}] {nm} masks{inv} tex={} op={:.2} b={} id={}",
+                    tex_indices[i], opacities[i], blend_modes[i],
+                    ids[i].to_string_lossy());
+                if nm > 0 {
+                    let mask_slice = unsafe { std::slice::from_raw_parts(masks[i], nm as usize) };
+                    eprintln!("[render]        masks: {:?}", mask_slice.iter().map(|&m| m).collect::<Vec<_>>());
+                }
+            }
         }
 
         let has_masks = mask_counts.iter().any(|&c| c > 0);
