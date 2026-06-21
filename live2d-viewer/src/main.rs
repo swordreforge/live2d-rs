@@ -260,13 +260,12 @@ fn main() -> anyhow::Result<()> {
                             app.camera_needs_fit = false;
                         }
 
-                        // --- Advance motion system ---
-                        app.advance_motion(delta);
-
-                        // --- Write parameters to model ---
-                        app.update_parameters();
-
-                        app.update_pose(delta);
+                        // --- Advance motion system (skip when floating) ---
+                        if !app.minimized_to_float {
+                            app.advance_motion(delta);
+                            app.update_parameters();
+                            app.update_pose(delta);
+                        }
 
                         let size = window.inner_size();
                         app.window_size = (size.width as f32, size.height as f32);
