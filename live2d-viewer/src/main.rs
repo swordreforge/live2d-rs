@@ -343,8 +343,12 @@ fn main() -> anyhow::Result<()> {
                         // Minimize (tray on X11, floating circle on native Wayland)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            // X11 backend = tray hide; native Wayland = floating circle
-                            let on_x11 = std::env::var("WINIT_UNIX_BACKEND").as_deref() == Ok("x11");
+                            // Detect actual backend from window handle (not env var — winit may fall back)
+                            let on_x11 = match window.raw_window_handle() {
+                                raw_window_handle::RawWindowHandle::Xlib(_)
+                                | raw_window_handle::RawWindowHandle::Xcb(_) => true,
+                                _ => false,
+                            };
                             if on_x11 {
                                 let _ = window.set_visible(false);
                             } else {
