@@ -24,6 +24,12 @@ use glow::HasContext;
 
 
 fn main() -> anyhow::Result<()> {
+    // Auto-switch to X11 backend on Wayland for full window management support
+    if std::env::var("WAYLAND_DISPLAY").is_ok() && std::env::var("WINIT_UNIX_BACKEND").is_err() {
+        std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+        log::info!("Wayland detected: using X11 backend (WINIT_UNIX_BACKEND=x11) for tray + window control");
+    }
+
     env_logger::init();
 
     // Initialize GTK for tray icon (required by tray-icon GTK backend)
@@ -31,6 +37,7 @@ fn main() -> anyhow::Result<()> {
     if !gtk_ok {
         log::warn!("GTK init failed — tray icon disabled");
     }
+
 
     let event_loop = winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
