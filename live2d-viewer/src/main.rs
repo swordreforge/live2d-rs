@@ -338,26 +338,35 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // Minimize to floating circle
+                        // Minimize (tray on X11, floating circle on native Wayland)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            app.minimized_to_float = true;
-                            // Save LOGICAL window size (window_size is physical, convert via scale factor)
-                            let sf = window.scale_factor();
-                            app.saved_window_pet_size = (
-                                app.window_size.0 as f64 / sf,
-                                app.window_size.1 as f64 / sf,
-                            );
-                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(150.0, 150.0));
+                            let on_x11 = std::env::var("WINIT_UNIX_BACKEND").as_deref() == Ok("x11")
+                                || std::env::var("WAYLAND_DISPLAY").is_err();
+                            if on_x11 {
+                                let _ = window.set_visible(false);
+                            } else {
+                                app.minimized_to_float = true;
+                                let sf = window.scale_factor();
+                                app.saved_window_pet_size = (
+                                    app.window_size.0 as f64 / sf,
+                                    app.window_size.1 as f64 / sf,
+                                );
+                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(150.0, 150.0));
+                            }
                         }
                         if app.request_restore {
                             app.request_restore = false;
-                            app.minimized_to_float = false;
-                            let (w, h) = app.saved_window_pet_size;
-                            let restore_w = (w.max(200.0)).min(4000.0);
-                            let restore_h = (h.max(200.0)).min(4000.0);
-                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(restore_w, restore_h));
-                            app.camera_needs_fit = true;
+                            if app.minimized_to_float {
+                                app.minimized_to_float = false;
+                                let (w, h) = app.saved_window_pet_size;
+                                let rw = (w.max(200.0)).min(4000.0);
+                                let rh = (h.max(200.0)).min(4000.0);
+                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
+                                app.camera_needs_fit = true;
+                            } else {
+                                let _ = window.set_visible(true);
+                            }
                         }
 
                         let _ = surface.swap_buffers(&gl_context);
@@ -368,10 +377,12 @@ fn main() -> anyhow::Result<()> {
                         if !egui_consumed {
                             match event {
                                 WindowEvent::CloseRequested => {
-                                    if app.minimized_to_float {
-                                        app.request_restore = true;
-                                    } else if app.pet_mode {
-                                        window.set_minimized(true);
+                                    if app.pet_mode {
+                                        if app.minimized_to_float {
+                                            app.request_restore = true;
+                                        } else {
+                                            let _ = window.set_visible(false);
+                                        }
                                     } else {
                                         target.exit();
                                     }
