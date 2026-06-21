@@ -4,6 +4,7 @@
 //! Evaluates all curves in a parsed motion against model parameters.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::curve::{self, SegmentType};
 use super::json::{ParsedCurve, ParsedMotion};
@@ -17,10 +18,10 @@ const ID_NAME_OPACITY: &str = "Opacity";
 /// Flag values for tracking which params eye blink / lip sync were applied to.
 const MAX_TARGET_BITS: usize = 64;
 
-/// A single motion instance. Holds the parsed motion data (immutable, shared).
+/// A single motion instance. Holds the parsed motion data (immutable, shared via Arc).
 #[derive(Debug, Clone)]
 pub struct CubismMotion {
-    pub data: ParsedMotion,
+    pub data: Arc<ParsedMotion>,
     pub fade_in_seconds: f32,
     pub fade_out_seconds: f32,
     pub weight: f32,
@@ -47,7 +48,7 @@ impl CubismMotion {
 
         let is_loop = data.r#loop;
         Self {
-            data,
+            data: Arc::new(data),
             fade_in_seconds,
             fade_out_seconds,
             weight: 1.0,
