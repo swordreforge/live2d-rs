@@ -1,25 +1,52 @@
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
 pub struct Model3Json {
     pub version: u32,
-    #[serde(default)]
-    pub file_references: Vec<FileReference>,
+    pub file_references: FileReferences,
     pub groups: Option<Vec<Group>>,
     pub hit_areas: Option<Vec<HitArea>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
-pub struct FileReference {
-    pub id: Option<String>,
-    pub path: String,
+#[serde(rename_all = "PascalCase")]
+pub struct FileReferences {
+    pub moc: String,
+    pub textures: Vec<String>,
+    pub physics: Option<String>,
+    pub pose: Option<String>,
+    pub display_info: Option<String>,
+    pub expressions: Option<Vec<ExpressionRef>>,
+    pub motions: Option<HashMap<String, Vec<MotionRef>>>,
+    pub user_data: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
+pub struct ExpressionRef {
+    pub name: String,
+    pub file: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
+pub struct MotionRef {
+    pub file: String,
+    pub fade_in_time: Option<f64>,
+    pub fade_out_time: Option<f64>,
+    pub sound: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
 pub struct Group {
     pub target: String,
     pub name: String,
@@ -28,6 +55,7 @@ pub struct Group {
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
 pub struct HitArea {
     pub id: String,
     pub name: String,
@@ -39,17 +67,12 @@ impl Model3Json {
         Ok(serde_json::from_str(&content)?)
     }
 
-    pub fn texture_paths(&self) -> Vec<&str> {
-        self.file_references.iter()
-            .filter(|r| r.path.ends_with(".png") || r.path.ends_with(".jpg"))
-            .map(|r| r.path.as_str())
-            .collect()
+    pub fn texture_paths(&self) -> &[String] {
+        &self.file_references.textures
     }
 
-    pub fn moc3_path(&self) -> Option<&str> {
-        self.file_references.iter()
-            .find(|r| r.path.ends_with(".moc3"))
-            .map(|r| r.path.as_str())
+    pub fn moc3_path(&self) -> &str {
+        &self.file_references.moc
     }
 }
 
@@ -66,9 +89,7 @@ impl LoadedModel {
         let base_dir = model3_path.parent().unwrap_or(model_dir).to_path_buf();
 
         let json = Model3Json::from_file(&model3_path)?;
-        let moc3_rel = json.moc3_path()
-            .ok_or_else(|| anyhow::anyhow!("No .moc3 in model3.json"))?;
-        let moc3_path = base_dir.join(moc3_rel);
+        let moc3_path = base_dir.join(json.moc3_path());
         let moc3_data = std::fs::read(&moc3_path)?;
 
         Ok(Self { model3_json: json, moc3_data, base_dir })
