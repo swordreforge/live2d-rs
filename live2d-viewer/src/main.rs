@@ -169,12 +169,11 @@ fn main() -> anyhow::Result<()> {
                         last_frame_time = now;
 
                         // --- Apply pending pet mode window changes ---
+                        // Skip set_decorations() — triggers resize animations on Linux
                         if app.pet_mode_changed {
                             if app.pet_mode {
-                                window.set_decorations(false);
                                 window.set_window_level(WindowLevel::AlwaysOnTop);
                             } else {
-                                window.set_decorations(true);
                                 window.set_window_level(WindowLevel::Normal);
                             }
                             app.pet_mode_changed = false;
