@@ -378,6 +378,15 @@ fn main() -> anyhow::Result<()> {
                         let _ = surface.swap_buffers(&gl_context);
                     }
                     _ => {
+                        // Always track mouse for look (before egui may consume the event)
+                        if let WindowEvent::CursorMoved { position, .. } = &event {
+                            let (mx, my) = (position.x, position.y);
+                            app.last_mouse_x = mx;
+                            app.last_mouse_y = my;
+                            let size = window.inner_size();
+                            app.update_mouse_for_look(mx, my, size.width as f32, size.height as f32);
+                        }
+
                         let egui_consumed = egui_state.on_window_event(&window, &event).consumed;
 
                         if !egui_consumed {
@@ -428,17 +437,12 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::CursorMoved { position, .. } => {
-                                    let (mx, my) = (position.x, position.y);
+                                    // Camera pan (mouse_down in normal mode)
                                     if app.mouse_down && !app.pet_mode {
-                                        let dx = mx - app.last_mouse_x;
-                                        let dy = my - app.last_mouse_y;
+                                        let dx = position.x - app.last_mouse_x;
+                                        let dy = position.y - app.last_mouse_y;
                                         app.camera.pan(dx as f32, dy as f32);
                                     }
-                                    app.last_mouse_x = mx;
-                                    app.last_mouse_y = my;
-                                    // Feed mouse position to look controller
-                                    let size = window.inner_size();
-                                    app.update_mouse_for_look(mx, my, size.width as f32, size.height as f32);
                                 }
                                 WindowEvent::MouseInput { state, .. } => {
                                     let was_down = app.mouse_down;
