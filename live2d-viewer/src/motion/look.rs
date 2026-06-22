@@ -42,10 +42,10 @@ impl TargetPoint {
         let dt = (self.user_time - self.last_time).min(0.1);
         self.last_time = self.user_time;
 
-        const MAX_V: f32 = 40.0 / 10.0 / 30.0;
+        const MAX_V: f32 = 40.0 / 10.0 / 30.0 * 3.0;  // 3x faster response
         let dt_w = dt * 30.0;
-        let max_a = dt_w * MAX_V / (0.15 * 30.0);
-        const EPS: f32 = 0.01;
+        let max_a = dt_w * MAX_V / (0.05 * 30.0);      // 3x faster acceleration
+        const EPS: f32 = 0.003;
 
         let dx = self.target_x - self.x;
         let dy = self.target_y - self.y;
@@ -94,12 +94,12 @@ impl Look {
     pub fn new() -> Self {
         Self {
             params: vec![
-                LookParam { id: "ParamAngleX".into(),     factor_x: 30.0,  factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
-                LookParam { id: "ParamAngleY".into(),     factor_x: 0.0,   factor_y: 30.0, factor_xy: 0.0, current_offset: 0.0 },
-                LookParam { id: "ParamAngleZ".into(),     factor_x: 0.0,   factor_y: 0.0,  factor_xy: -30.0, current_offset: 0.0 },
-                LookParam { id: "ParamBodyAngleX".into(), factor_x: 10.0,  factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
-                LookParam { id: "ParamEyeBallX".into(),   factor_x: 1.0,   factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
-                LookParam { id: "ParamEyeBallY".into(),   factor_x: 0.0,   factor_y: 1.0,  factor_xy: 0.0, current_offset: 0.0 },
+                LookParam { id: "ParamAngleX".into(),     factor_x: 60.0,  factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
+                LookParam { id: "ParamAngleY".into(),     factor_x: 0.0,   factor_y: 60.0, factor_xy: 0.0, current_offset: 0.0 },
+                LookParam { id: "ParamAngleZ".into(),     factor_x: 0.0,   factor_y: 0.0,  factor_xy: -60.0, current_offset: 0.0 },
+                LookParam { id: "ParamBodyAngleX".into(), factor_x: 20.0,  factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
+                LookParam { id: "ParamEyeBallX".into(),   factor_x: 3.0,   factor_y: 0.0,  factor_xy: 0.0, current_offset: 0.0 },
+                LookParam { id: "ParamEyeBallY".into(),   factor_x: 0.0,   factor_y: 3.0,  factor_xy: 0.0, current_offset: 0.0 },
             ],
             target: TargetPoint::new(),
         }
