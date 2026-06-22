@@ -486,6 +486,25 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 WindowEvent::Resized(size) => {
                                     eprintln!("[Resized] {}x{} (physical)", size.width, size.height);
+                                    // If the compositor resized our float window (e.g. via drag),
+                                    // force it back to 50x50 logical immediately.
+                                    if app.minimized_to_float {
+                                        let float_logical = 50.0;
+                                        let max_phys = (float_logical * window.scale_factor()).ceil() as u32;
+                                        if size.width > max_phys || size.height > max_phys {
+                                            eprintln!("[Resized] wayland compositor enlarged float window, forcing back");
+                                            let _ = window.request_inner_size(
+                                                winit::dpi::LogicalSize::new(float_logical, float_logical),
+                                            );
+                                            if let (Some(rw), Some(rh)) = (
+                                                NonZeroU32::new(max_phys.max(1)),
+                                                NonZeroU32::new(max_phys.max(1)),
+                                            ) {
+                                                surface.resize(&gl_context, rw, rh);
+                                            }
+                                            return; // skip viewport update, will be handled next frame
+                                        }
+                                    }
                                     if let (Some(w), Some(h)) = (
                                         NonZeroU32::new(size.width),
                                         NonZeroU32::new(size.height),
