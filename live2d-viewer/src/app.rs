@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use live2d_core::{Moc, Model};
+use live2d_core::moc2::{Moc2Model, parse_moc2};
 
 use crate::camera::Camera;
 use crate::motion;
+use crate::model_adapter::{LoadedModelVariant, Moc2ModelAdapter};
 
 pub struct ModelEntry {
     pub name: String,
@@ -15,7 +18,7 @@ pub struct AppState {
     pub model_list: Vec<ModelEntry>,
     pub current_idx: Option<usize>,
     pub current_moc: Option<Moc>,
-    pub current_model: Option<Model<'static>>,
+    pub current_model: Option<LoadedModelVariant>,
     pub parameter_values: Vec<f32>,
     pub parameter_names: Vec<String>,
     pub parameter_mins: Vec<f32>,
@@ -144,7 +147,7 @@ impl AppState {
             return Err("index out of range".into());
         }
 
-        // Drop order: Model first, then Moc
+        // Drop order: Model variant first, then Moc
         self.current_model = None;
         self.current_moc = None;
         self.parameter_values.clear();
@@ -161,81 +164,258 @@ impl AppState {
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
-        let loaded = crate::model_loader::LoadedModel::load(&entry.dir)
-            .map_err(|e| format!("load model: {e}"))?;
 
-        let moc = Moc::revive(&loaded.moc3_data)
-            .map_err(|e| format!("revive moc: {e}"))?;
+        // Detect MOC format: .moc (Cubism 2.x) vs .moc3 (Cubism 3+)
+        // Look for a model3.json or model.json in the directory
+        let model3_path = entry.dir.join(format!("{}.model3.json", &entry.name));
+        let model2_path = entry.dir.join("model.json");
 
-        let moc_ptr: *const Moc = &moc as *const Moc;
-        let model = unsafe { Model::initialize(&*moc_ptr) }
-            .map_err(|e| format!("init model: {e}"))?;
-        let model: Model<'static> = unsafe { std::mem::transmute(model) };
+        if model3_path.exists() {
+            // ── Cubism 3+ (Core) path ──
+            let loaded = crate::model_loader::LoadedModel::load(&entry.dir)
+                .map_err(|e| format!("load model: {e}"))?;
 
-        let params = model.parameters();
-        for id in params.ids() {
-            self.parameter_names.push(id.to_string_lossy().into_owned());
+            let moc = Moc::revive(&loaded.moc3_data)
+                .map_err(|e| format!("revive moc: {e}"))?;
+
+            let moc_ptr: *const Moc = &moc as *const Moc;
+            let model = unsafe { Model::initialize(&*moc_ptr) }
+                .map_err(|e| format!("init model: {e}"))?;
+            let model: Model<'static> = unsafe { std::mem::transmute(model) };
+
+            let params = model.parameters();
+            self.parameter_names = params.ids().iter()
+                .map(|id| id.to_string_lossy().into_owned())
+                .collect();
+            self.parameter_values = params.default_values().to_vec();
+            self.parameter_mins = params.minimum_values().to_vec();
+            self.parameter_maxs = params.maximum_values().to_vec();
+            self.parameter_defaults = params.default_values().to_vec();
+
+            self.part_ids = model.parts().ids().iter()
+                .map(|id| id.to_string_lossy().into_owned())
+                .collect();
+
+            let canvas = model.canvas_info();
+            self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+
+            self.current_moc = Some(moc);
+            self.current_model = Some(LoadedModelVariant::Core(model));
+            self.texture_paths = loaded.texture_paths();
+            self.base_dir = Some(loaded.base_dir.clone());
+
+            // Load metadata
+            if let Some(ref groups) = loaded.model3_json.groups {
+                for group in groups {
+                    match group.name.as_str() {
+                        "EyeBlink" => self.eye_blink_param_ids = group.ids.clone(),
+                        "LipSync" => self.lip_sync_param_ids = group.ids.clone(),
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(ref areas) = loaded.model3_json.hit_areas {
+                self.hit_areas = areas.clone();
+            }
+
+            self.load_all_motions(&loaded.base_dir, &loaded.model3_json);
+            self.load_all_expressions(&loaded.base_dir, &loaded.model3_json);
+            self.load_pose(&loaded.base_dir, &loaded.model3_json);
+            self.apply_pose_reset();
+            self.load_physics(&loaded.base_dir, &loaded.model3_json);
+        } else if model2_path.exists() || entry.dir.join(format!("{}.model.json", &entry.name)).exists() || entry.dir.join(format!("{}.moc", &entry.name)).exists() {
+            // ── Cubism 2.x (MOC2) path ──
+            // Find the .moc file
+            let moc_file = entry.dir.join(format!("{}.moc", &entry.name));
+            let moc_data = std::fs::read(&moc_file)
+                .map_err(|e| format!("read .moc: {e}"))?;
+
+            let moc2_data = parse_moc2(&moc_data)
+                .map_err(|e| format!("parse MOC2: {e}"))?;
+            let moc2_data = Arc::new(moc2_data);
+
+            let runtime = Moc2Model::new(moc2_data.clone());
+            let adapter = Moc2ModelAdapter::new(runtime, moc2_data.clone());
+
+            // Populate param metadata
+            for p in adapter.data.param_defs.iter() {
+                self.parameter_names.push(p.id.to_string());
+                self.parameter_values.push(p.default_value);
+                self.parameter_mins.push(p.min_value);
+                self.parameter_maxs.push(p.max_value);
+                self.parameter_defaults.push(p.default_value);
+            }
+
+            // Part IDs
+            self.part_ids = adapter.data.parts.iter()
+                .map(|p| p.id.to_string())
+                .collect();
+
+            let canvas = adapter.canvas_info();
+            self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+
+            // ── Load textures from model.json if available (ordered list) ──
+            // model.json can be "model.json" or "{name}.model.json"
+            let model_json_path = if model2_path.exists() {
+                Some(model2_path)
+            } else {
+                let candidate = entry.dir.join(format!("{}.model.json", &entry.name));
+                if candidate.exists() { Some(candidate) } else { None }
+            };
+
+            let moc2_json = model_json_path.as_ref().and_then(|p| {
+                crate::model_loader::Moc2ModelJson::from_file(p).ok()
+            });
+
+            if let Some(ref json) = moc2_json {
+                // Load textures from ordered list
+                self.texture_paths = json.texture_paths(&entry.dir);
+                log::info!("Loaded {} textures from MOC2 model.json", self.texture_paths.len());
+            }
+
+            // Fallback: try single PNG with same name as .moc, or any PNG in directory
+            if self.texture_paths.is_empty() {
+                let png_candidate = moc_file.with_extension("png");
+                if png_candidate.exists() {
+                    self.texture_paths.push(png_candidate);
+                } else {
+                    if let Ok(rd) = std::fs::read_dir(&entry.dir) {
+                        for e in rd.flatten() {
+                            let p = e.path();
+                            if p.extension().map(|ext| ext == "png").unwrap_or(false) {
+                                self.texture_paths.push(p);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.current_moc = None;
+            self.current_model = Some(LoadedModelVariant::V2(adapter));
+            self.base_dir = Some(entry.dir.clone());
+
+            // ── Load motions, expressions, physics from model.json ──
+            if let Some(ref json) = moc2_json {
+                let base_dir = entry.dir.clone();
+
+                // Load motions by category
+                for (category, motion_refs) in &json.motions {
+                    let mut motions: Vec<crate::motion::CubismMotion> = Vec::new();
+                    for mref in motion_refs {
+                        let path = base_dir.join(&mref.file);
+                        let data = match std::fs::read(&path) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                log::warn!("Failed to read MOC2 motion {}: {e}", path.display());
+                                continue;
+                            }
+                        };
+                        let parsed = match crate::model_loader::parse_mtn_motion(&data) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                log::warn!("Failed to parse MOC2 motion {}: {e}", path.display());
+                                continue;
+                            }
+                        };
+                        let fade_in = mref.fade_in.unwrap_or(-1.0);
+                        let fade_out = mref.fade_out.unwrap_or(-1.0);
+                        let cm = crate::motion::CubismMotion::new(parsed, fade_in, fade_out);
+                        motions.push(cm);
+                    }
+                    self.loaded_motions.insert(category.clone(), motions);
+                }
+
+                // Load expressions
+                for eref in &json.expressions {
+                    let path = base_dir.join(&eref.file);
+                    let data = match std::fs::read(&path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::warn!("Failed to read MOC2 expression {}: {e}", path.display());
+                            continue;
+                        }
+                    };
+                    let parsed = match crate::model_loader::parse_moc2_expression_json(&data) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::warn!("Failed to parse MOC2 expression {}: {e}", path.display());
+                            continue;
+                        }
+                    };
+                    let mut em = crate::motion::ExpressionMotion::new(parsed);
+
+                    // Extract fade_in from the JSON if present (in milliseconds → seconds)
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(fade_in_ms) = root.get("fade_in").and_then(|v| v.as_f64()) {
+                                em.fade_in_seconds = (fade_in_ms as f32) / 1000.0;
+                            }
+                        }
+                    }
+
+                    self.loaded_expressions.insert(eref.name.clone(), em);
+                }
+
+                // Load physics (MOC2 format: physics_hair → physics3.json conversion)
+                if let Some(physics_file) = &json.physics {
+                    let path = base_dir.join(physics_file);
+                    match std::fs::read(&path) {
+                        Ok(buf) => {
+                            match crate::model_loader::convert_moc2_physics_to_physics3_json(&buf)
+                                .and_then(|converted| {
+                                    motion::physics::PhysicsEngine::from_json(&converted)
+                                }) {
+                                Ok(engine) => {
+                                    let mut params = motion::physics::PhysicsParams {
+                                        values: &mut self.parameter_values,
+                                        minimums: &self.parameter_mins,
+                                        maximums: &self.parameter_maxs,
+                                        defaults: &self.parameter_defaults,
+                                        names: &self.parameter_names,
+                                    };
+                                    let mut engine = engine;
+                                    let sub_rigs = engine.sub_rig_count();
+                                    engine.stabilization(&mut params);
+                                    self.physics = Some(engine);
+                                    log::info!("Loaded MOC2 physics ({sub_rigs} sub-rigs)");
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to parse MOC2 physics {}: {e}", path.display());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to read MOC2 physics {}: {e}", path.display());
+                        }
+                    }
+                }
+
+                // Load hit areas
+                if !json.hit_areas.is_empty() {
+                    self.hit_areas = json.hit_areas.iter().map(|ha| {
+                        crate::model_loader::HitArea {
+                            id: ha.id.clone(),
+                            name: ha.name.clone(),
+                        }
+                    }).collect();
+                }
+            }
+        } else {
+            return Err("No model3.json or .moc file found".into());
         }
-        self.parameter_values = params.default_values().to_vec();
-        self.parameter_mins = params.minimum_values().to_vec();
-        self.parameter_maxs = params.maximum_values().to_vec();
-        self.parameter_defaults = params.default_values().to_vec();
 
-        // Build param lookup once — reused every frame instead of rebuilding HashMap
+        // Build param lookup once — reused every frame
         self.param_lookup.clear();
         self.param_lookup.reserve(self.parameter_names.len());
         for (i, name) in self.parameter_names.iter().enumerate() {
             self.param_lookup.insert(name.clone(), i);
         }
 
-        // Read part IDs for PartOpacity motion curve evaluation
-        let parts = model.parts();
-        self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
-
-        // Read canvas info for pet mode toolbar positioning
-        let canvas = model.canvas_info();
-        self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
-
-        self.current_moc = Some(moc);
-        self.current_model = Some(model);
         self.current_idx = Some(idx);
-        self.texture_paths = loaded.texture_paths();
-        self.base_dir = Some(loaded.base_dir.clone());
         self.model_list[idx].loaded = true;
 
-        // Extract eye blink and lip sync parameter IDs from model3.json Groups
-        if let Some(ref groups) = loaded.model3_json.groups {
-            for group in groups {
-                match group.name.as_str() {
-                    "EyeBlink" => {
-                        self.eye_blink_param_ids = group.ids.clone();
-                    }
-                    "LipSync" => {
-                        self.lip_sync_param_ids = group.ids.clone();
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Load hit areas for tap interaction
-        if let Some(ref areas) = loaded.model3_json.hit_areas {
-            self.hit_areas = areas.clone();
-        }
-
-        // Load all motion files
-        self.load_all_motions(&loaded.base_dir, &loaded.model3_json);
-
-        // Load all expression files
-        self.load_all_expressions(&loaded.base_dir, &loaded.model3_json);
-
-        self.load_pose(&loaded.base_dir, &loaded.model3_json);
-        self.apply_pose_reset();
-
-        // Load physics engine
-        self.load_physics(&loaded.base_dir, &loaded.model3_json);
-
-        // Start the first idle motion
+        // Start the first idle motion (only for Core models that have motion files)
         if self.auto_play_idle {
             if let Some(idle_motions) = self.loaded_motions.get("Idle") {
                 if let Some(first) = idle_motions.first() {
@@ -399,27 +579,26 @@ impl AppState {
             Some(ref mut m) => m,
             None => return,
         };
-        let mut parts = model.parts();
-        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
-        let popac = parts.opacities_mut();
+        let pids: Vec<String> = model.part_ids();
+        let mut popac = model.part_opacities_mut();
+        let opacities = popac.as_mut_slice();
 
         for group in &pose.groups {
             let mut first_found = false;
             for entry in group {
                 if let Some(part_idx) = pids.iter().position(|id| id == &entry.id) {
                     if !first_found {
-                        popac[part_idx] = 1.0;
+                        opacities[part_idx] = 1.0;
                         first_found = true;
                     } else {
-                        popac[part_idx] = 0.0;
+                        opacities[part_idx] = 0.0;
                     }
                 }
             }
         }
+        drop(popac);
         // Propagate part opacities to drawables
-        if let Some(ref mut model) = self.current_model {
-            model.update();
-        }
+        model.update();
         self.pose_fade_remaining = 0.0;
     }
 
@@ -432,19 +611,18 @@ impl AppState {
             Some(ref mut m) => m,
             None => return,
         };
-        let mut parts = model.parts();
-        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
-        let popac = parts.opacities_mut();
+        let pids: Vec<String> = model.part_ids();
+        let mut popac = model.part_opacities_mut();
 
         // CopyPartOpacities: for any entry with links, copy main opacity to linked parts
         for group in &pose.groups {
             for entry in group {
                 if entry.links.is_empty() { continue; }
                 if let Some(main_idx) = pids.iter().position(|id| id == &entry.id) {
-                    let opacity = popac[main_idx];
+                    let opacity = popac.as_mut_slice()[main_idx];
                     for link_id in &entry.links {
                         if let Some(link_idx) = pids.iter().position(|id| id == link_id) {
-                            popac[link_idx] = opacity;
+                            popac.as_mut_slice()[link_idx] = opacity;
                         }
                     }
                 }
@@ -469,11 +647,7 @@ impl AppState {
 
     pub fn update_parameters(&mut self) {
         if let Some(ref mut model) = self.current_model {
-            let mut params = model.parameters();
-            let mut vals = params.values_mut();
-            for (i, &v) in self.parameter_values.iter().enumerate() {
-                vals.set(i, v);
-            }
+            model.set_param_values(&self.parameter_values);
         }
     }
 
@@ -484,7 +658,7 @@ impl AppState {
 
         // Read current part opacities from model for PartOpacity curve evaluation
         let mut motion_part_opacities: Vec<f32> = if let Some(ref model) = self.current_model {
-            model.parts().opacities().to_vec()
+            model.part_opacities()
         } else {
             Vec::new()
         };
@@ -500,14 +674,13 @@ impl AppState {
             &mut motion_part_opacities,
         );
 
-        // Write motion-updated part opacities to model (pose system will override
-        // specific pose-group parts in update_pose, which runs after this)
+        // Write motion-updated part opacities to model
         if !motion_part_opacities.is_empty() {
             if let Some(ref mut model) = self.current_model {
-                let mut parts = model.parts();
-                let opacities = parts.opacities_mut();
-                let len = opacities.len().min(motion_part_opacities.len());
-                opacities[..len].copy_from_slice(&motion_part_opacities[..len]);
+                let mut opacities = model.part_opacities_mut();
+                let dst = opacities.as_mut_slice();
+                let len = dst.len().min(motion_part_opacities.len());
+                dst[..len].copy_from_slice(&motion_part_opacities[..len]);
             }
         }
 
@@ -584,41 +757,59 @@ impl AppState {
         &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
         cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
     ) {
-        let model = match self.current_model {
-            Some(ref m) => m,
-            None => return,
-        };
-
         let ndc_x = 2.0 * x as f32 / screen_w - 1.0;
         let ndc_y = 1.0 - 2.0 * y as f32 / screen_h;
         let model_x = (ndc_x - cam_trans_x) / cam_scale_x;
         let model_y = (ndc_y - cam_trans_y) / cam_scale_y;
 
-        let drawables = model.drawables();
-        let drawable_ids = drawables.ids();
-        let vpos = drawables.vertex_positions();
-        let vcounts = drawables.vertex_counts();
-        let idxs = drawables.indices();
-        let icounts = drawables.index_counts();
+        // Hit test against current model drawables
+        self.hit_test_drawables(model_x, model_y);
+    }
+
+    /// Check which hit area (if any) was tapped and play the associated motion.
+    fn hit_test_drawables(&mut self, model_x: f32, model_y: f32) {
+        let model = match self.current_model {
+            Some(ref m) => m,
+            None => return,
+        };
+        let drawable_ids: Vec<String> = match model {
+            LoadedModelVariant::Core(m) => m.drawables().ids().iter()
+                .map(|id| id.to_string_lossy().into_owned())
+                .collect(),
+            LoadedModelVariant::V2(a) => a.data.drawables.iter()
+                .map(|d| d.id.to_string())
+                .collect(),
+        };
+
+        // We need vertex data for hit testing. Collect frame drawables for this.
+        // Use a temporary FrameDrawables to access vertex data.
+        let model_mut_workaround = self.current_model.as_mut().unwrap(); // safe: we checked
+        let fd = model_mut_workaround.collect_drawables();
 
         for hit_area in &self.hit_areas {
-            let di = match drawable_ids.iter().position(|id| id.to_string_lossy() == hit_area.id) {
+            let di = match drawable_ids.iter().position(|id| *id == hit_area.id) {
                 Some(i) => i,
                 None => continue,
             };
+            if di >= fd.n { continue; }
 
-            let verts = unsafe { std::slice::from_raw_parts(vpos[di], vcounts[di] as usize) };
-            let idx = unsafe { std::slice::from_raw_parts(idxs[di], icounts[di] as usize) };
+            let vc = fd.vert_counts[di] as usize;
+            let ic = fd.idx_counts[di] as usize;
+            if vc < 3 || ic < 3 { continue; }
+
+            let verts = unsafe { std::slice::from_raw_parts(fd.vert_positions[di], vc * 2) };
+            let idx = unsafe { std::slice::from_raw_parts(fd.indices[di], ic) };
 
             for tri in idx.chunks(3) {
-                if tri.len() < 3 {
-                    continue;
-                }
-                let a = &verts[tri[0] as usize];
-                let b = &verts[tri[1] as usize];
-                let c = &verts[tri[2] as usize];
+                if tri.len() < 3 { continue; }
+                let ax = verts[tri[0] as usize * 2];
+                let ay = verts[tri[0] as usize * 2 + 1];
+                let bx = verts[tri[1] as usize * 2];
+                let by = verts[tri[1] as usize * 2 + 1];
+                let cx = verts[tri[2] as usize * 2];
+                let cy = verts[tri[2] as usize * 2 + 1];
 
-                if point_in_triangle(model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y) {
+                if point_in_triangle(model_x, model_y, ax, ay, bx, by, cx, cy) {
                     if let Some(motions) = self.loaded_motions.get("TapBody") {
                         if !motions.is_empty() {
                             let idx = self.tap_count % motions.len();

@@ -7,6 +7,7 @@ use anyhow::Result;
 use live2d_core::Model;
 use live2d_core_sys as ffi;
 use mesh::Mesh;
+use crate::model_adapter::FrameDrawables;
 
 // ---------------------------------------------------------------------------
 // Cached uniform locations (queried once at init, saves ~30 driver calls/frame)
@@ -114,34 +115,11 @@ impl Live2dRenderer {
         })
     }
 
-    pub unsafe fn render(&mut self, gl: &Context, model: &mut Model, camera: &crate::camera::Camera) {
-        // Must reset dynamic flags (csmIsVisible etc.) before Update, as documented in Core API
-        model.reset_dynamic_flags();
-        model.update();
-
-        let drawables = model.drawables();
-        let n = drawables.len();
+    pub unsafe fn render(&mut self, gl: &Context, fd: &FrameDrawables, camera: &crate::camera::Camera) {
+        let n = fd.n;
         if n == 0 { return; }
 
-        let render_orders = model.render_orders();
-        let tex_indices = drawables.texture_indices();
-        let opacities = drawables.opacities();
-        let vert_counts = drawables.vertex_counts();
-        let vert_positions = drawables.vertex_positions();
-        let vert_uvs = drawables.vertex_uvs();
-        let idx_counts = drawables.index_counts();
-        let idx_data = drawables.indices();
-        let mul_colors = drawables.multiply_colors();
-        let scr_colors = drawables.screen_colors();
-        let blend_modes = drawables.blend_modes();
-        let mask_counts = drawables.mask_counts();
-        let masks = drawables.masks();
-        let constant_flags = drawables.constant_flags();
-        let dynamic_flags = drawables.dynamic_flags();
-
-        let _ = model.canvas_info(); // init internal lazy state
-
-        let has_masks = mask_counts.iter().any(|&c| c > 0);
+        let has_masks = fd.mask_counts.iter().any(|&c| c > 0);
 
         if has_masks {
             let mut viewport = [0i32; 4];
@@ -179,42 +157,33 @@ impl Live2dRenderer {
         let m_opacity_loc = &self.masked_u.opacity;
         let m_invert_mask_loc = &self.masked_u.invert_mask;
 
-        // The SDK's DrawObjectLoop uses csmGetRenderOrders() as follows:
-        //   render_orders[i] = final sort position for the object at source index i
-        //   _sortedObjectsIndexList[render_orders[i]] = i  (inverse mapping)
-        // Then iterates _sortedObjectsIndexList[0..totalCount] in order.
-        // The first drawableCount entries are drawables; the rest are offscreens.
-        //
-        // We build an equivalent sorted iteration:
-        let mut sorted: Vec<(i32, usize)> = render_orders.iter()
+        // Build sorted iteration from render_orders
+        let mut sorted: Vec<(i32, usize)> = fd.render_orders.iter()
             .enumerate()
-            .filter(|(src_idx, _)| *src_idx < n)  // drawable entries only
+            .filter(|(src_idx, _)| *src_idx < n)
             .map(|(drawable_idx, &sort_pos)| (sort_pos, drawable_idx))
             .collect();
         sorted.sort_by_key(|(sort_pos, _)| *sort_pos);
 
         for &(_sort_pos, i) in &sorted {
-            let opacity = opacities[i];
+            let opacity = fd.opacities[i];
             if opacity < 0.001 { continue; }
-            if dynamic_flags[i] & ffi::csmIsVisible as u8 == 0 { continue; }
+            if fd.dynamic_flags[i] & ffi::csmIsVisible as u8 == 0 { continue; }
 
-            let mc = mul_colors[i];
-            let sc = scr_colors[i];
-            let vc = vert_counts[i] as usize;
-            let ic = idx_counts[i] as usize;
+            let mc = fd.mul_colors[i];
+            let sc = fd.scr_colors[i];
+            let vc = fd.vert_counts[i] as usize;
+            let ic = fd.idx_counts[i] as usize;
             if vc == 0 || ic == 0 { continue; }
 
-            let pos_slice = std::slice::from_raw_parts(vert_positions[i], vc);
-            let uv_slice = std::slice::from_raw_parts(vert_uvs[i], vc);
-            let idx_slice = std::slice::from_raw_parts(idx_data[i], ic);
+            // Our pos/uv arrays are already flat f32*, not csmVector2*
+            let pos_f32 = std::slice::from_raw_parts(fd.vert_positions[i], vc * 2);
+            let uv_f32 = std::slice::from_raw_parts(fd.vert_uvs[i], vc * 2);
+            let idx_slice = std::slice::from_raw_parts(fd.indices[i], ic);
 
-            // Reinterpret Core's csmVector2 arrays as flat f32 slices directly
-            let pos_f32 = std::slice::from_raw_parts(pos_slice.as_ptr() as *const f32, vc * 2);
-            let uv_f32 = std::slice::from_raw_parts(uv_slice.as_ptr() as *const f32, vc * 2);
-
-            let n_masks = mask_counts[i];
+            let n_masks = fd.mask_counts[i];
             if n_masks > 0 {
-                let mask_slice = std::slice::from_raw_parts(masks[i], n_masks as usize);
+                let mask_slice = std::slice::from_raw_parts(fd.masks[i], n_masks as usize);
 
                 let fbo = self.mask_fbo.as_ref().expect("mask_fbo must be created before masked render");
                 let fbo_w = fbo.width;
@@ -227,48 +196,34 @@ impl Live2dRenderer {
 
                 gl.bind_framebuffer(FRAMEBUFFER, Some(fbo.fbo));
                 gl.viewport(0, 0, fbo_w, fbo_h);
-                // SDK convention: clear mask FBO to white (1 = invalid/masked-out area)
                 gl.clear_color(1.0, 1.0, 1.0, 1.0);
                 gl.clear(COLOR_BUFFER_BIT);
 
                 gl.use_program(Some(self.mask_program));
-                gl.uniform_2_f32(mk_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-                gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+                gl.uniform_2_f32(mk_scale_loc.as_ref(), camera.scale_x, camera.scale_y);
+                gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
 
                 gl.enable(BLEND);
 
-                // SDK convention for mask drawable blend:
-                //   glBlendFuncSeparate(GL_ZERO, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA)
-                // RGB: stays unchanged (our shader outputs (0,0,0,alpha) so ONE_MINUS_SRC_COLOR = 1)
-                // A: new = 0 + dst * (1 - src_alpha) = dst * (1 - textureAlpha)
-                // Starting from 1.0: alpha = 0 inside mask shape, 1 outside
+                // SDK convention for mask drawable blend
                 gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
 
                 for &mask_idx in mask_slice {
                     let mi = mask_idx as usize;
-                    // SDK: mask drawables check VertexPositionsDidChange, NOT csmIsVisible
-                    // Mask drawables may be "invisible" as rendered objects but still define mask shapes
-                    let m_vc = vert_counts[mi] as usize;
-                    let m_ic = idx_counts[mi] as usize;
+                    let m_vc = fd.vert_counts[mi] as usize;
+                    let m_ic = fd.idx_counts[mi] as usize;
                     if m_vc == 0 || m_ic == 0 { continue; }
 
-                    // SDK convention: mask drawables use raw texture alpha, not drawable opacity.
-                    // The opacity field is intentionally NOT passed to the mask shader.
-
-                    // Bind the mask drawable's texture so its alpha shapes the mask
-                    let m_tex_idx = tex_indices[mi];
+                    let m_tex_idx = fd.tex_indices[mi];
                     if m_tex_idx >= 0 && (m_tex_idx as usize) < self.textures.len() {
                         gl.active_texture(TEXTURE0);
                         gl.bind_texture(TEXTURE_2D, Some(self.textures[m_tex_idx as usize]));
                         gl.uniform_1_i32(mk_tex_loc.as_ref(), 0);
                     }
 
-                    let m_pos = std::slice::from_raw_parts(vert_positions[mi], m_vc);
-                    let m_uv = std::slice::from_raw_parts(vert_uvs[mi], m_vc);
-                    let m_idx = std::slice::from_raw_parts(idx_data[mi], m_ic);
-
-                    let m_pos_f32 = std::slice::from_raw_parts(m_pos.as_ptr() as *const f32, m_vc * 2);
-                    let m_uv_f32 = std::slice::from_raw_parts(m_uv.as_ptr() as *const f32, m_vc * 2);
+                    let m_pos_f32 = std::slice::from_raw_parts(fd.vert_positions[mi], m_vc * 2);
+                    let m_uv_f32 = std::slice::from_raw_parts(fd.vert_uvs[mi], m_vc * 2);
+                    let m_idx = std::slice::from_raw_parts(fd.indices[mi], m_ic);
                     self.draw_mesh.upload(gl, m_pos_f32, m_uv_f32, m_idx);
                     self.draw_mesh.draw(gl);
                 }
@@ -280,10 +235,10 @@ impl Live2dRenderer {
                 gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
                 gl.use_program(Some(self.masked_program));
-                gl.uniform_2_f32(m_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-                gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+                gl.uniform_2_f32(m_scale_loc.as_ref(), camera.scale_x, camera.scale_y);
+                gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, camera.translate_y);
 
-                let tex_idx = tex_indices[i];
+                let tex_idx = fd.tex_indices[i];
                 let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
                     self.textures[tex_idx as usize]
                 } else {
@@ -298,13 +253,12 @@ impl Live2dRenderer {
                 gl.uniform_1_i32(m_mask_tex_loc.as_ref(), 1);
                 gl.uniform_2_f32(m_mask_size_loc.as_ref(), fbo_w as f32, fbo_h as f32);
 
-                let blend = blend_modes[i];
+                let blend = fd.blend_modes[i];
                 match blend {
                     0 => {
                     gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
                 }
                 1 => {
-                    // Additive uses ONE, ONE — premultiplied shader output adds to background
                     gl.blend_func_separate(ONE, ONE, ZERO, ONE);
                 }
                 2 => {
@@ -316,13 +270,11 @@ impl Live2dRenderer {
                 }
                 gl.enable(BLEND);
 
-                // SDK convention: csmIsInvertedMask on the MAIN drawable inverts the mask.
-                // Pass 1.0 for inverted, 0.0 for normal (mix() in shader does the selection).
-                let is_inverted = constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
+                let is_inverted = fd.constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
                 gl.uniform_1_f32(m_invert_mask_loc.as_ref(), if is_inverted { 1.0 } else { 0.0 });
 
-                gl.uniform_4_f32(m_mul_loc.as_ref(), mc.X, mc.Y, mc.Z, mc.W);
-                gl.uniform_4_f32(m_scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
+                gl.uniform_4_f32(m_mul_loc.as_ref(), mc[0], mc[1], mc[2], mc[3]);
+                gl.uniform_4_f32(m_scr_loc.as_ref(), sc[0], sc[1], sc[2], sc[3]);
                 gl.uniform_1_f32(m_opacity_loc.as_ref(), opacity);
 
                 self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
@@ -333,10 +285,10 @@ impl Live2dRenderer {
                 gl.active_texture(TEXTURE0);
             } else {
                 gl.use_program(Some(self.program));
-                gl.uniform_2_f32(scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-                gl.uniform_2_f32(translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+                gl.uniform_2_f32(scale_loc.as_ref(), camera.scale_x, camera.scale_y);
+                gl.uniform_2_f32(translate_loc.as_ref(), camera.translate_x, camera.translate_y);
 
-                let tex_idx = tex_indices[i];
+                let tex_idx = fd.tex_indices[i];
                 let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
                     self.textures[tex_idx as usize]
                 } else {
@@ -346,13 +298,12 @@ impl Live2dRenderer {
                 gl.bind_texture(TEXTURE_2D, Some(tex));
                 gl.uniform_1_i32(tex_loc.as_ref(), 0);
 
-                let blend = blend_modes[i];
+                let blend = fd.blend_modes[i];
                 match blend {
                     0 => {
                     gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
                 }
                 1 => {
-                    // Additive uses ONE, ONE — premultiplied shader output adds to background
                     gl.blend_func_separate(ONE, ONE, ZERO, ONE);
                 }
                 2 => {
@@ -364,8 +315,8 @@ impl Live2dRenderer {
                 }
                 gl.enable(BLEND);
 
-                gl.uniform_4_f32(mul_loc.as_ref(), mc.X, mc.Y, mc.Z, mc.W);
-                gl.uniform_4_f32(scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
+                gl.uniform_4_f32(mul_loc.as_ref(), mc[0], mc[1], mc[2], mc[3]);
+                gl.uniform_4_f32(scr_loc.as_ref(), sc[0], sc[1], sc[2], sc[3]);
                 gl.uniform_1_f32(opacity_loc.as_ref(), opacity);
 
                 self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
@@ -433,8 +384,8 @@ impl Live2dRenderer {
         gl.clear(COLOR_BUFFER_BIT);
 
         gl.use_program(Some(self.mask_program));
-        gl.uniform_2_f32(self.mask_u.scale.as_ref(), camera.scale_x, -camera.scale_y);
-        gl.uniform_2_f32(self.mask_u.translate.as_ref(), camera.translate_x, -camera.translate_y);
+        gl.uniform_2_f32(self.mask_u.scale.as_ref(), camera.scale_x, camera.scale_y);
+        gl.uniform_2_f32(self.mask_u.translate.as_ref(), camera.translate_x, camera.translate_y);
 
         gl.enable(BLEND);
 

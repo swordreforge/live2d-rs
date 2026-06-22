@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod gui;
+mod model_adapter;
 mod model_loader;
 pub mod motion;
 mod renderer;
@@ -284,6 +285,9 @@ fn main() -> anyhow::Result<()> {
                         if app.current_idx != prev_idx || app.camera_needs_fit {
                             let size = window.inner_size();
                             if let Some(ref model) = app.current_model {
+                                // MOC2 (V2) uses Y-down coordinate system → flip Y for OpenGL NDC
+                                let is_moc2 = matches!(model, crate::model_adapter::LoadedModelVariant::V2(_));
+                                app.camera.flip_y = is_moc2;
                                 let canvas = model.canvas_info();
                                 app.camera.fit_to_canvas(
                                     canvas.size_in_pixels.X,
@@ -346,11 +350,13 @@ fn main() -> anyhow::Result<()> {
 
                         if let Some(ref mut model) = app.current_model {
                             if !app.minimized_to_float {
+                                model.update();
+                                let fd = model.collect_drawables();
                                 unsafe {
                                     gl.viewport(0, 0, size.width as i32, size.height as i32);
                                     gl.disable(glow::DEPTH_TEST);
                                     gl.disable(glow::CULL_FACE);
-                                    renderer.render(&gl, model, &app.camera);
+                                    renderer.render(&gl, &fd, &app.camera);
                                 }
                             }
                         }
