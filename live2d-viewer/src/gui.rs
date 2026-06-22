@@ -38,14 +38,8 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     eprintln!("[float] btn_rect={btn_rect:?} icon_size={icon_size}");
 
     let painter = ctx.debug_painter();
-    let hovered = ctx.pointer_hover_pos().map_or(false, |p| btn_rect.contains(p));
-    let bg = if hovered {
-        egui::Color32::from_rgb(0x55, 0xaa, 0xff)
-    } else {
-        egui::Color32::from_rgb(0x33, 0x99, 0xff)
-    };
-
-    painter.rect_filled(btn_rect, 4.0, bg);
+    // Draw a RED rect to contrast with blue GL clear
+    painter.rect_filled(btn_rect, 4.0, egui::Color32::RED);
     painter.text(
         btn_rect.center(),
         egui::Align2::CENTER_CENTER,

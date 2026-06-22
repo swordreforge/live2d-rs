@@ -302,7 +302,9 @@ fn main() -> anyhow::Result<()> {
 
                         let size = window.inner_size();
                         app.window_size = (size.width as f32, size.height as f32);
-                        let clear_color = if app.pet_mode {
+                        let clear_color = if app.minimized_to_float {
+                            egui::Color32::from_rgb(0x33, 0x99, 0xff)
+                        } else if app.pet_mode {
                             egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
                         } else {
                             egui::Color32::from_rgb(0x1a, 0x1a, 0x2e)
