@@ -15,6 +15,17 @@ use crate::moc2::deformer::{
 use crate::moc2::pivot::{ParamPivotState, PivotContext, PIVOT_TABLE_SIZE};
 use crate::moc2::types::*;
 
+fn resolve_pivot_indices<'a>(
+    pmgr_idx: usize,
+    pivot_managers: &'a [PivotManager],
+) -> &'a [usize] {
+    if pmgr_idx != usize::MAX {
+        &pivot_managers[pmgr_idx].pivot_indices
+    } else {
+        &[]
+    }
+}
+
 /// Per-drawable runtime output after a call to [`Moc2Model::update`].
 #[derive(Debug, Clone)]
 pub struct DrawableState {
@@ -199,9 +210,14 @@ impl Moc2Model {
                     let Some(warp) = self.warp_states[def_idx].as_mut() else {
                         continue;
                     };
+                    let pivot_indices = resolve_pivot_indices(
+                        deformer.pivot_manager_index,
+                        &self.data.pivot_managers,
+                    );
                     warp_setup_interpolate(
                         deformer,
                         warp,
+                        pivot_indices,
                         &self.data.param_pivots,
                         &mut self.pivot_states,
                         &ctx,
@@ -213,9 +229,14 @@ impl Moc2Model {
                     let Some(rot) = self.rotation_states[def_idx].as_mut() else {
                         continue;
                     };
+                    let pivot_indices = resolve_pivot_indices(
+                        deformer.pivot_manager_index,
+                        &self.data.pivot_managers,
+                    );
                     deformer::rotation_setup_interpolate(
                         deformer,
                         rot,
+                        pivot_indices,
                         &self.data.param_pivots,
                         &mut self.pivot_states,
                         &ctx,
@@ -327,19 +348,34 @@ impl Moc2Model {
                         (ret_dir[0], ret_dir[1]),
                     );
 
+                    // Transform origin through parent (Python: deformer.transformPoints(origin))
+                    let mut transformed_origin = src_origin;
+                    apply_deformer_pts(
+                        &self.data.deformers,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        p,
+                        &src_origin,
+                        &mut transformed_origin,
+                        1,
+                        0,
+                        2,
+                    );
+
                     // Now mutate transformed_affine via raw pointer.
                     let rot_ptr: *mut Option<RotationContext> =
                         &mut self.rotation_states[def_idx];
                     let rot = unsafe { &mut *rot_ptr };
                     if let Some(r) = rot {
                         let mut out = r.interpolated_affine;
-                        out.rotation_deg = rd + angle * deformer::RAD_TO_DEG;
+                        // Python: interpolated - parent_angle
+                        out.rotation_deg = rd - angle * deformer::RAD_TO_DEG;
                         out.reflect_x = rx;
                         out.reflect_y = ry;
                         out.scale_x = sx;
                         out.scale_y = sy;
-                        out.origin_x = ox;
-                        out.origin_y = oy;
+                        out.origin_x = transformed_origin[0];
+                        out.origin_y = transformed_origin[1];
                         r.transformed_affine = Some(out);
                     }
                 }
@@ -353,11 +389,16 @@ impl Moc2Model {
             let drawable = &self.data.drawables[draw_idx];
             let ds = &mut self.drawable_states[draw_idx];
 
+            let pivot_indices = resolve_pivot_indices(
+                drawable.pivot_manager_index,
+                &self.data.pivot_managers,
+            );
             let outside = drawable_setup_interpolate(
                 drawable,
                 &mut self.pivot_states,
                 &ctx,
                 &self.data.param_pivots,
+                pivot_indices,
                 &mut self.tmp_indices,
                 &mut self.tmp_t,
                 &mut ds.interpolated_vertices,
@@ -373,42 +414,18 @@ impl Moc2Model {
                 }
                 Some(target_def) => {
                     let vert_count = drawable.vertex_count;
-                    let chain = build_deformer_chain(target_def, &self.deformer_parents);
-
-                    if let Some(&first) = chain.first() {
-                        let src = ds.interpolated_vertices.clone();
-                        apply_deformer_pts(
-                            &self.data.deformers,
-                            &self.warp_states,
-                            &self.rotation_states,
-                            first,
-                            &src,
-                            &mut ds.transformed_vertices,
-                            vert_count,
-                            0,
-                            2,
-                        );
-
-                        for &next_def in chain.iter().skip(1) {
-                            let tmp: Vec<f32> =
-                                ds.transformed_vertices[..(vert_count as usize * 2)].to_vec();
-                            apply_deformer_pts(
-                                &self.data.deformers,
-                                &self.warp_states,
-                                &self.rotation_states,
-                                next_def,
-                                &tmp,
-                                &mut ds.transformed_vertices,
-                                vert_count,
-                                0,
-                                2,
-                            );
-                        }
-                    } else {
-                        ds.transformed_vertices
-                            .copy_from_slice(&ds.interpolated_vertices);
-                    }
-
+                    let src = ds.interpolated_vertices.clone();
+                    apply_deformer_pts(
+                        &self.data.deformers,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        target_def,
+                        &src,
+                        &mut ds.transformed_vertices,
+                        vert_count,
+                        0,
+                        2,
+                    );
                     ds.available = !outside;
                 }
             }
@@ -476,16 +493,6 @@ fn resolve_drawable_deformer(deformers: &[Deformer], drawable: &Drawable) -> Opt
     } else {
         None
     }
-}
-
-fn build_deformer_chain(target_def: usize, parents: &[Option<usize>]) -> Vec<usize> {
-    let mut chain = Vec::new();
-    let mut current = Some(target_def);
-    while let Some(idx) = current {
-        chain.push(idx);
-        current = parents[idx];
-    }
-    chain
 }
 
 /// Inline version of `get_direction_on_dst` that takes explicit slices

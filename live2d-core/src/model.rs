@@ -46,11 +46,11 @@ impl<'moc> Model<'moc> {
         unsafe { ffi::csmUpdateModel(self.raw.as_ptr()) }
     }
 
-    pub(crate) fn as_raw(&self) -> *const ffi::csmModel {
+    pub fn as_raw(&self) -> *const ffi::csmModel {
         self.raw.as_ptr()
     }
 
-    pub(crate) fn as_raw_mut(&mut self) -> *mut ffi::csmModel {
+    pub fn as_raw_mut(&mut self) -> *mut ffi::csmModel {
         self.raw.as_ptr()
     }
 

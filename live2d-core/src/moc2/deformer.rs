@@ -324,6 +324,7 @@ fn gy(grid: &[f32], r: i32, c: i32, a1: i32) -> f32 {
 pub(crate) fn warp_setup_interpolate(
     deformer: &Deformer,
     context: &mut WarpContext,
+    pivot_indices: &[usize],
     param_pivots: &[ParamPivot],
     pivot_states: &mut [ParamPivotState],
     ctx: &PivotContext,
@@ -331,7 +332,7 @@ pub(crate) fn warp_setup_interpolate(
     tmp_t: &mut [f32],
 ) {
     if !check_param_updated(
-        &[deformer.pivot_manager_index],
+        pivot_indices,
         param_pivots,
         pivot_states,
         ctx,
@@ -354,7 +355,7 @@ pub(crate) fn warp_setup_interpolate(
     // Interpolate pivot grid points.
     let mut outside = false;
     let dim_count = calc_pivot_values(
-        &[deformer.pivot_manager_index],
+        pivot_indices,
         param_pivots,
         pivot_states,
         ctx,
@@ -366,7 +367,7 @@ pub(crate) fn warp_setup_interpolate(
         context.interpolated_points[..len].copy_from_slice(&pivot_arrays[0][..len]);
     } else {
         calc_pivot_indices(
-            &[deformer.pivot_manager_index],
+            pivot_indices,
             pivot_states,
             param_pivots,
             dim_count,
@@ -398,7 +399,7 @@ pub(crate) fn warp_setup_interpolate(
     // Interpolate opacity.
     let opacity = interpolate_opacity(
         &deformer.pivot_opacities,
-        &[deformer.pivot_manager_index],
+        pivot_indices,
         param_pivots,
         pivot_states,
         ctx,
@@ -793,6 +794,7 @@ pub(crate) fn warp_transform_points_sdk2(
 pub(crate) fn rotation_setup_interpolate(
     deformer: &Deformer,
     context: &mut RotationContext,
+    pivot_indices: &[usize],
     param_pivots: &[ParamPivot],
     pivot_states: &mut [ParamPivotState],
     ctx: &PivotContext,
@@ -800,8 +802,6 @@ pub(crate) fn rotation_setup_interpolate(
     tmp_t: &mut [f32],
     affines: &[AffineEnt],
 ) {
-    let pivot_indices = &[deformer.pivot_manager_index];
-
     if !check_param_updated(pivot_indices, param_pivots, pivot_states, ctx) {
         return;
     }
@@ -1047,13 +1047,13 @@ pub(crate) fn drawable_setup_interpolate(
     pivot_states: &mut [ParamPivotState],
     ctx: &PivotContext,
     param_pivots: &[ParamPivot],
+    pivot_indices: &[usize],
     tmp_indices: &mut [u16],
     tmp_t: &mut [f32],
     out_vertices: &mut [f32],
     out_draw_order: &mut i32,
     out_opacity: &mut f32,
 ) -> bool {
-    let pivot_indices = &[drawable.pivot_manager_index];
     let mut outside = false;
 
     if !check_param_updated(pivot_indices, param_pivots, pivot_states, ctx) {

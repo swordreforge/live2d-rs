@@ -380,7 +380,7 @@ pub(crate) fn interpolate_float(
     );
 
     if dim_count == 0 {
-        return (pivot_values[tmp_indices[0] as usize], outside);
+        return (pivot_values[0], outside);
     }
 
     calc_pivot_indices(
@@ -435,7 +435,7 @@ pub(crate) fn interpolate_int(
     );
 
     if dim_count == 0 {
-        return (pivot_values[tmp_indices[0] as usize], outside);
+        return (pivot_values[0], outside);
     }
 
     calc_pivot_indices(
@@ -502,9 +502,8 @@ pub(crate) fn interpolate_points(
     );
 
     if dim_count == 0 {
-        // No interpolation — copy first corner's data.
         let src = &pivot_points
-            [tmp_indices[0] as usize * points_per_corner..][..num_points * 2];
+            [0 * points_per_corner..][..num_points * 2];
         dst[..num_points * 2].copy_from_slice(src);
         return outside;
     }

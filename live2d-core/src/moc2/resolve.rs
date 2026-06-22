@@ -210,15 +210,15 @@ pub(crate) fn resolve_registry(registry: &Registry) -> MocResult<Moc2Data> {
                     let popac = read_u32(data, &mut pos);
                     let clip = read_u32(data, &mut pos);
                     let tex_no = read_i32(data, &mut pos);
-                    let _vcnt = read_i32(data, &mut pos);
-                    let _pcnt = read_i32(data, &mut pos);
                     let idx_arr = read_u32(data, &mut pos);
                     let ppts = read_u32(data, &mut pos);
                     let uvs_arr = read_u32(data, &mut pos);
                     let _opt_flag = read_i32(data, &mut pos);
                     let color_comp = read_u8(data, &mut pos);
                     let cull = read_u8(data, &mut pos) != 0;
-                    let pivot_points = resolve_f32_array(ppts, registry);
+                    let pivot_arrays = resolve_f32_array_array(ppts, registry);
+                    let vertex_count = pivot_arrays.first().map(|a| a.len() as i32 / 2).unwrap_or(0);
+                    let pivot_points: Vec<f32> = pivot_arrays.into_iter().flatten().collect();
                     let slot = idx_to_drawable[&idx];
                     drawables[slot] = Drawable {
                         id: resolve_id(id_idx, &ids),
@@ -229,7 +229,7 @@ pub(crate) fn resolve_registry(registry: &Registry) -> MocResult<Moc2Data> {
                         pivot_opacities: resolve_f32_array(popac, registry),
                         clip_id: if clip != u32::MAX { Some(resolve_id(clip, &ids)) } else { None },
                         texture_no: tex_no,
-                        vertex_count: pivot_points.len() as i32 / 2,
+                        vertex_count,
                         index_array: resolve_u16_array(idx_arr, registry),
                         pivot_points,
                         uvs: resolve_f32_array(uvs_arr, registry),
