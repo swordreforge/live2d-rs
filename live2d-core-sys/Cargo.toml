@@ -7,5 +7,9 @@ rust-version = "1.75"
 [build-dependencies]
 bindgen = "0.71"
 
+[features]
+default = ["static-link"]
+static-link = []
+
 [package.metadata.docs.rs]
 rustc-args = ["--cfg", "docsrs"]

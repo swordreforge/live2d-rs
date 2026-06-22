@@ -11,11 +11,29 @@ fn main() {
         }
     };
 
+    let static_link = cfg!(feature = "static-link");
+
+    let (lib_subdir, link_kind) = if static_link {
+        ("lib", "static")
+    } else {
+        ("dll", "dylib")
+    };
+
+    let core_lib_dir = sdk_root
+        .join("Core")
+        .join(lib_subdir)
+        .join("linux")
+        .join("x86_64");
+
     let core_include = sdk_root.join("Core").join("include");
-    let core_lib_dir = sdk_root.join("Core").join("dll").join("linux").join("x86_64");
 
     println!("cargo:rustc-link-search=native={}", core_lib_dir.display());
-    println!("cargo:rustc-link-lib=dylib=Live2DCubismCore");
+    println!("cargo:rustc-link-lib={}=Live2DCubismCore", link_kind);
+
+    if static_link {
+        println!("cargo:rustc-link-lib=dylib=m");
+    }
+
     println!("cargo:rerun-if-changed={}", core_include.join("Live2DCubismCore.h").display());
 
     // Generate bindings

@@ -8,5 +8,6 @@ rust-version = "1.75"
 live2d-core-sys = { path = "../live2d-core-sys" }
 
 [features]
-default = ["std"]
+default = ["std", "static-link"]
 std = []
+static-link = ["live2d-core-sys/static-link"]

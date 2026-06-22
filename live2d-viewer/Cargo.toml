@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 
+[features]
+default = ["static-link"]
+static-link = ["live2d-core-sys/static-link"]
+
 [dependencies]
 live2d-core = { path = "../live2d-core" }
 live2d-core-sys = { path = "../live2d-core-sys" }

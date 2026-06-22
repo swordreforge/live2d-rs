@@ -15,7 +15,6 @@ pub struct Live2dRenderer {
     pub textures: Vec<NativeTexture>,
     draw_mesh: Mesh,
     pub mask_fbo: Option<mask_fbo::MaskFbo>,
-    debug_printed: bool,
 }
 
 impl Live2dRenderer {
@@ -31,7 +30,6 @@ impl Live2dRenderer {
             textures: Vec::new(),
             draw_mesh,
             mask_fbo: None,
-            debug_printed: false,
         })
     }
 
@@ -58,30 +56,7 @@ impl Live2dRenderer {
         let constant_flags = drawables.constant_flags();
         let dynamic_flags = drawables.dynamic_flags();
 
-        if !self.debug_printed {
-            self.debug_printed = true;
-            let ci = model.canvas_info();
-            let ids = drawables.ids();
-            eprintln!("[render] canvas={}x{} ppu={} n_drawables={}",
-                ci.size_in_pixels.X, ci.size_in_pixels.Y, ci.pixels_per_unit, n);
-            eprintln!("[render] cam=({:.4},{:.4}),({:.4},{:.4})",
-                camera.scale_x, camera.scale_y, camera.translate_x, camera.translate_y);
-            eprintln!("[render] textures loaded={}", self.textures.len());
-            for i in 0..n.min(100) {
-                let nm = mask_counts[i];
-                let is_inv = constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
-                let inv = if is_inv { " INVERT" } else { "" };
-                let vis = dynamic_flags[i] & ffi::csmIsVisible as u8 != 0;
-                let vis_s = if vis { "V" } else { "_" };
-                eprintln!("[render]  [{i:>2}] {vis_s} {nm} masks{inv} tex={} op={:.2} b={} id={}",
-                    tex_indices[i], opacities[i], blend_modes[i],
-                    ids[i].to_string_lossy());
-                if nm > 0 {
-                    let mask_slice = unsafe { std::slice::from_raw_parts(masks[i], nm as usize) };
-                    eprintln!("[render]        masks: {:?}", mask_slice.iter().map(|&m| m).collect::<Vec<_>>());
-                }
-            }
-        }
+        let _ = model.canvas_info(); // init internal lazy state
 
         let has_masks = mask_counts.iter().any(|&c| c > 0);
 

@@ -9,3 +9,8 @@ members = [
 [profile.release]
 strip = true
 lto = true
+panic = "abort"
+overflow-checks = false
+debug = false
+debug-assertions = false
+incremental = false
