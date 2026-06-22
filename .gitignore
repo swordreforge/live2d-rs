@@ -17,6 +17,7 @@
 # Manual test binaries (not source files)
 /live2d-viewer
 /live2d-viewer.exe
+live2d-viewer-*
 
 # Build artifacts
 *.o
