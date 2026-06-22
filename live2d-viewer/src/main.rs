@@ -426,6 +426,13 @@ fn main() -> anyhow::Result<()> {
                                 app.camera_needs_fit = false;
                                 let _ = window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(100.0, 100.0)));
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(100.0, 100.0));
+                                // Force EGL surface resize immediately (Wayland workaround)
+                                let phys_w = (100.0_f64 * sf) as u32;
+                                let phys_h = (100.0_f64 * sf) as u32;
+                                if let (Some(rw), Some(rh)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
+                                    surface.resize(&gl_context, rw, rh);
+                                    eprintln!("[float] forced surface resize to {}x{}", phys_w, phys_h);
+                                }
                             }
                         }
                         if app.request_restore {
@@ -471,7 +478,7 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::Resized(size) => {
-                                    log::info!("Resized({}, {})", size.width, size.height);
+                                    eprintln!("[Resized] {}x{} (physical)", size.width, size.height);
                                     if let (Some(w), Some(h)) = (
                                         NonZeroU32::new(size.width),
                                         NonZeroU32::new(size.height),
