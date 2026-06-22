@@ -302,6 +302,9 @@ fn main() -> anyhow::Result<()> {
 
                         let size = window.inner_size();
                         app.window_size = (size.width as f32, size.height as f32);
+                        if app.minimized_to_float {
+                            eprintln!("[float] frame: size={size:?} request_restore={}", app.request_restore);
+                        }
                         let clear_color = if app.pet_mode {
                             egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
                         } else {
@@ -392,6 +395,7 @@ fn main() -> anyhow::Result<()> {
                                     app.window_size.0 as f64 / sf,
                                     app.window_size.1 as f64 / sf,
                                 );
+                                eprintln!("[float] minimize: saved_size={:?}, sf={sf}", app.saved_window_pet_size);
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(80.0, 80.0));
                             }
                         }
@@ -400,6 +404,7 @@ fn main() -> anyhow::Result<()> {
                             if app.minimized_to_float {
                                 app.minimized_to_float = false;
                                 let (w, h) = app.saved_window_pet_size;
+                                eprintln!("[float] restore: current_size={size:?} target_size=({w},{h})");
                                 let rw = (w.max(200.0)).min(4000.0);
                                 let rh = (h.max(200.0)).min(4000.0);
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
@@ -437,6 +442,10 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::Resized(size) => {
+                                    eprintln!(
+                                        "[event] Resized({}, {}) minimized_to_float={}",
+                                        size.width, size.height, app.minimized_to_float,
+                                    );
                                     if let (Some(w), Some(h)) = (
                                         NonZeroU32::new(size.width),
                                         NonZeroU32::new(size.height),

@@ -24,30 +24,32 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     }
 }
 
-/// Floating circular button (replaces system tray for Wayland compat)
 fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
-    let hovered = ctx.pointer_hover_pos().is_some();
-    let bg = if hovered {
+    let screen = ctx.screen_rect();
+    let center = screen.center();
+    let icon_size = (screen.size().x.min(screen.size().y) * 0.4).max(14.0);
+
+    eprintln!("[float/ui] screen={screen:?} center={center:?} icon_size={icon_size}");
+
+    let bg = if ctx.pointer_hover_pos().is_some() {
         egui::Color32::from_rgb(0x55, 0xaa, 0xff)
     } else {
         egui::Color32::from_rgb(0x33, 0x99, 0xff)
     };
 
-    egui::CentralPanel::default()
-        .frame(egui::Frame::none().fill(bg))
+    egui::Area::new(egui::Id::new("float"))
+        .fixed_pos(screen.left_top())
+        .interactable(true)
         .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
-            let center = rect.center();
-            let icon_size = (rect.width().min(rect.height()) * 0.3).max(12.0);
-
+            let (rect, response) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+            ui.painter().rect_filled(rect, 0.0, bg);
             ui.painter().text(
-                center,
+                rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "\u{25b6}",
                 egui::FontId::proportional(icon_size),
                 egui::Color32::WHITE,
             );
-
             if response.clicked() {
                 app.request_restore = true;
             }
