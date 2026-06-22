@@ -356,25 +356,21 @@ fn main() -> anyhow::Result<()> {
                         {
                             let raw_input = egui_state.take_egui_input(&window);
                             if app.minimized_to_float {
-                                // Diagnostics: draw a full-screen red rect via GL to confirm pixel coverage
-                                unsafe {
-                                    gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                    gl.enable(glow::SCISSOR_TEST);
-                                    gl.scissor(0, 0, size.width as i32, (size.height as i32) / 2);
-                                    gl.clear_color(1.0, 0.0, 0.0, 1.0);
-                                    gl.clear(glow::COLOR_BUFFER_BIT);
-                                    gl.disable(glow::SCISSOR_TEST);
-                                    // restore viewport
-                                    gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                }
                                 eprintln!(
-                                    "[float] diag: window_size={size:?} scale={:?}",
+                                    "[float] diag: window_size={size:?} scale_factor={}",
                                     window.scale_factor(),
                                 );
                             }
                             egui_ctx.begin_frame(raw_input);
                             gui::draw_ui(&egui_ctx, &mut app);
                             let output = egui_ctx.end_frame();
+                            if app.minimized_to_float {
+                                eprintln!(
+                                    "[float] output: ppp={:?} shapes={}",
+                                    output.pixels_per_point,
+                                    output.shapes.len(),
+                                );
+                            }
 
                             for (id, delta) in &output.textures_delta.set {
                                 painter.set_texture(*id, delta);
