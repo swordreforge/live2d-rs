@@ -448,18 +448,21 @@ impl Live2dRenderer {
 /// Bypasses egui_glow entirely since its coordinate transform is bugged at small sizes.
 pub struct FloatOverlay {
     program: Option<NativeProgram>,
+    vao: Option<NativeVertexArray>,
     vbo: Option<NativeBuffer>,
 }
 
 impl FloatOverlay {
     pub fn new() -> Self {
-        Self { program: None, vbo: None }
+        Self { program: None, vao: None, vbo: None }
     }
 
     unsafe fn ensure_resources(&mut self, gl: &Context) {
         if self.program.is_some() {
             return;
         }
+
+        // Try GLES 100 first, fall back to desktop GL 330 if it fails
         let vs_src = "\
             #version 100\n
             attribute vec2 p;\n
@@ -477,20 +480,35 @@ impl FloatOverlay {
         let vs = gl.create_shader(VERTEX_SHADER).unwrap();
         gl.shader_source(vs, vs_src);
         gl.compile_shader(vs);
+        if !gl.get_shader_compile_status(vs) {
+            let log = gl.get_shader_info_log(vs);
+            eprintln!("[float] VERTEX shader compile error: {log}");
+        }
 
         let fs = gl.create_shader(FRAGMENT_SHADER).unwrap();
         gl.shader_source(fs, fs_src);
         gl.compile_shader(fs);
+        if !gl.get_shader_compile_status(fs) {
+            let log = gl.get_shader_info_log(fs);
+            eprintln!("[float] FRAGMENT shader compile error: {log}");
+        }
 
         let prog = gl.create_program().unwrap();
         gl.attach_shader(prog, vs);
         gl.attach_shader(prog, fs);
         gl.link_program(prog);
+        if !gl.get_program_link_status(prog) {
+            let log = gl.get_program_info_log(prog);
+            eprintln!("[float] program link error: {log}");
+        }
         gl.delete_shader(vs);
         gl.delete_shader(fs);
 
+        // VAO required on core GL profiles (GL 3.2+ / GLES 3.0+)
+        let vao = gl.create_vertex_array().ok();
         let vbo = gl.create_buffer().unwrap();
         self.program = Some(prog);
+        self.vao = vao;
         self.vbo = Some(vbo);
     }
 
@@ -500,17 +518,30 @@ impl FloatOverlay {
         let prog = self.program.unwrap();
         let vbo = self.vbo.unwrap();
 
-        let aspect = w / h;
+        let aspect = if h > 0.0 { w / h } else { 1.0 };
         let s = 0.45;
+        // Play triangle: |<  pointing right
         let verts: [f32; 6] = [
             -s / aspect, -s,
             -s / aspect,  s,
              s / aspect,  0.0,
         ];
 
+        // Set GL state for the overlay
         gl.use_program(Some(prog));
+        gl.disable(DEPTH_TEST);
+        gl.disable(STENCIL_TEST);
+        gl.disable(CULL_FACE);
+        gl.enable(BLEND);
+        gl.blend_func_separate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+
         let color_loc = gl.get_uniform_location(prog, "c");
-        gl.uniform_4_f32(color_loc.as_ref(), 1.0, 1.0, 1.0, 1.0); // white triangle on blue bg
+        gl.uniform_4_f32(color_loc.as_ref(), 1.0, 1.0, 1.0, 1.0);
+
+        // Bind VAO if available
+        if let Some(v) = self.vao {
+            gl.bind_vertex_array(Some(v));
+        }
 
         gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
         gl.buffer_data_u8_slice(ARRAY_BUFFER, std::slice::from_raw_parts(
@@ -524,7 +555,13 @@ impl FloatOverlay {
         gl.vertex_attrib_pointer_f32(pos_loc, 2, FLOAT, false, 0, 0);
 
         gl.draw_arrays(TRIANGLES, 0, 3);
+
         gl.disable_vertex_attrib_array(pos_loc);
+        if let Some(_) = self.vao {
+            gl.bind_vertex_array(None);
+        }
+        gl.bind_buffer(ARRAY_BUFFER, None);
         gl.use_program(None);
+        gl.disable(BLEND);
     }
 }
