@@ -231,7 +231,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
                     ui.add_space(3.0);
 
-                    if ui.add(egui::Button::new("\u{2193} Tray").min_size(egui::vec2(30.0, 22.0))).on_hover_text("Minimize to tray").clicked() {
+                    if ui.add(egui::Button::new("\u{2193}").min_size(egui::vec2(30.0, 22.0))).on_hover_text("Minimize to tray").clicked() {
                         app.request_minimize = true;
                     }
 
