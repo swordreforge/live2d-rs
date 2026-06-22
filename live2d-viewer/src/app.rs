@@ -65,10 +65,8 @@ pub struct AppState {
     pub request_minimize: bool,
     /// Request restore from floating circle
     pub request_restore: bool,
-    /// True when window is minimized to a floating dot
+    /// True when window is minimized to a floating overlay
     pub minimized_to_float: bool,
-    /// Saved pet mode window size (logical pixels) for restore
-    pub saved_window_pet_size: (f64, f64),
     /// Camera (view transform for the model)
     pub camera: Camera,
     /// Current window size in pixels (set from main.rs each frame)
@@ -120,7 +118,6 @@ impl AppState {
             request_minimize: false,
             request_restore: false,
             minimized_to_float: false,
-            saved_window_pet_size: (0.0, 0.0),
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),
