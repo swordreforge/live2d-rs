@@ -1,0 +1,12 @@
+[package]
+name = "moc-parser"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Binary parser for Live2D Cubism 2.x MOC format — zero domain knowledge, pure IO layer"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]

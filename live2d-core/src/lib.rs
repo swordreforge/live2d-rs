@@ -2,6 +2,7 @@ pub mod canvas;
 pub mod drawable;
 pub mod error;
 pub mod moc;
+pub mod moc2;
 pub mod model;
 pub mod offscreen;
 pub mod param;

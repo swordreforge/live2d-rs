@@ -4,6 +4,7 @@ members = [
     "live2d-core-sys",
     "live2d-core",
     "live2d-viewer",
+    "moc-parser",
 ]
 
 [profile.release]

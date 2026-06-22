@@ -6,6 +6,7 @@ rust-version = "1.75"
 
 [dependencies]
 live2d-core-sys = { path = "../live2d-core-sys" }
+moc-parser = { path = "../moc-parser" }
 
 [features]
 default = ["std", "static-link"]

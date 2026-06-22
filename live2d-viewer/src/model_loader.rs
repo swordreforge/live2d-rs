@@ -329,7 +329,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         let dflags = drawables.dynamic_flags();
         let cflags = drawables.constant_flags();
         let mask_counts = drawables.mask_counts();
-        let vcounts = drawables.vertex_counts();
+        let _vcounts = drawables.vertex_counts();
         let tex_indices = drawables.texture_indices();
         let mul_colors = drawables.multiply_colors();
         let scr_colors = drawables.screen_colors();
