@@ -15,6 +15,7 @@ mod expression;
 pub mod look;
 pub mod json;
 pub mod motion;
+pub mod physics;
 pub mod queue;
 
 pub use curve::*;

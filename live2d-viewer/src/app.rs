@@ -20,6 +20,8 @@ pub struct AppState {
     pub parameter_names: Vec<String>,
     pub parameter_mins: Vec<f32>,
     pub parameter_maxs: Vec<f32>,
+    /// Original model parameter default values (used by physics normalization)
+    pub parameter_defaults: Vec<f32>,
     pub texture_paths: Vec<PathBuf>,
     pub error_message: Option<String>,
     pub mouse_down: bool,
@@ -73,6 +75,8 @@ pub struct AppState {
     pub window_size: (f32, f32),
     /// Model canvas pixel size (from canvas_info), for stable toolbar positioning
     pub canvas_pixel_size: (f32, f32),
+    /// Physics engine loaded from physics3.json
+    pub physics: Option<motion::physics::PhysicsEngine>,
 }
 
 impl AppState {
@@ -86,6 +90,7 @@ impl AppState {
             parameter_names: Vec::new(),
             parameter_mins: Vec::new(),
             parameter_maxs: Vec::new(),
+            parameter_defaults: Vec::new(),
             texture_paths: Vec::new(),
             error_message: None,
             mouse_down: false,
@@ -119,6 +124,7 @@ impl AppState {
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),
+            physics: None,
         }
     }
 
@@ -148,6 +154,7 @@ impl AppState {
         self.lip_sync_param_ids.clear();
         self.hit_areas.clear();
         self.pose_data = None;
+        self.physics = None;
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
@@ -169,6 +176,7 @@ impl AppState {
         self.parameter_values = params.default_values().to_vec();
         self.parameter_mins = params.minimum_values().to_vec();
         self.parameter_maxs = params.maximum_values().to_vec();
+        self.parameter_defaults = params.default_values().to_vec();
 
         // Read part IDs for PartOpacity motion curve evaluation
         let parts = model.parts();
@@ -213,6 +221,9 @@ impl AppState {
 
         self.load_pose(&loaded.base_dir, &loaded.model3_json);
         self.apply_pose_reset();
+
+        // Load physics engine
+        self.load_physics(&loaded.base_dir, &loaded.model3_json);
 
         // Start the first idle motion
         if self.auto_play_idle {
@@ -326,6 +337,47 @@ impl AppState {
         };
         log::info!("Loaded pose with {} groups (fade={:.2}s)", parsed.groups.len(), parsed.fade_in_time);
         self.pose_data = Some(parsed);
+    }
+
+    /// Load physics3.json and initialize the physics engine.
+    fn load_physics(
+        &mut self,
+        base_dir: &std::path::Path,
+        model3_json: &crate::model_loader::Model3Json,
+    ) {
+        let physics_path = match model3_json.file_references.physics {
+            Some(ref p) => base_dir.join(p),
+            None => return,
+        };
+        let data = match std::fs::read(&physics_path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("Failed to read physics {}: {e}", physics_path.display());
+                return;
+            }
+        };
+        let mut engine = match motion::physics::PhysicsEngine::from_json(&data) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("Failed to parse physics: {e}");
+                return;
+            }
+        };
+        log::info!("Loaded physics ({} sub-rigs)", engine.sub_rig_count());
+
+        // Run stabilization to set initial steady state
+        {
+            let mut params = motion::physics::PhysicsParams {
+                values: &mut self.parameter_values,
+                minimums: &self.parameter_mins,
+                maximums: &self.parameter_maxs,
+                defaults: &self.parameter_defaults,
+                names: &self.parameter_names,
+            };
+            engine.stabilization(&mut params);
+        }
+
+        self.physics = Some(engine);
     }
 
     fn apply_pose_reset(&mut self) {
@@ -485,6 +537,18 @@ impl AppState {
                     self.parameter_values[idx] += p.current_offset;
                 }
             }
+        }
+
+        // Apply Physics (order 600 in CubismFramework: after Breath 500, before Pose 800)
+        if let Some(ref mut engine) = self.physics {
+            let mut params = motion::physics::PhysicsParams {
+                values: &mut self.parameter_values,
+                minimums: &self.parameter_mins,
+                maximums: &self.parameter_maxs,
+                defaults: &self.parameter_defaults,
+                names: &self.parameter_names,
+            };
+            engine.evaluate(&mut params, delta_time);
         }
 
         // Auto-restart Idle when all motions have finished
