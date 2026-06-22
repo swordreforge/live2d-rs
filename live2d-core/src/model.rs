@@ -75,7 +75,7 @@ impl<'moc> Model<'moc> {
     }
 
     pub fn render_orders(&self) -> &[i32] {
-        let n = self.drawables().len();
+        let n = self.drawables().len() + self.offscreens().len();
         let ptr = unsafe { ffi::csmGetRenderOrders(self.as_raw()) };
         if ptr.is_null() { return &[]; }
         unsafe { std::slice::from_raw_parts(ptr, n) }

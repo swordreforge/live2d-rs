@@ -34,25 +34,34 @@ void main() {
 
 pub const MASK_VERT_SRC: &str = r#"#version 330 core
 layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUV;
+out vec2 vUV;
 uniform vec2 uScale;
 uniform vec2 uTranslate;
 
 void main() {
     gl_Position = vec4(aPos.x * uScale.x + uTranslate.x, aPos.y * uScale.y + uTranslate.y, 0.0, 1.0);
+    vUV = vec2(aUV.x, 1.0 - aUV.y);
 }
 "#;
 
 pub const MASK_FRAG_SRC: &str = r#"#version 330 core
+in vec2 vUV;
 out vec4 FragColor;
-uniform float uOpacity;
+uniform sampler2D uTexture;
 
 void main() {
-    FragColor = vec4(0.0, 0.0, 0.0, uOpacity);
+    // SDK convention: mask drawables use raw texture alpha, NOT drawable opacity.
+    // Mask drawables (e.g. eye whites for pupil clipping) often have opacity 0
+    // because they are not directly visible — they only define the clipping boundary.
+    float maskAlpha = texture(uTexture, vUV).a;
+    FragColor = vec4(0.0, 0.0, 0.0, maskAlpha);
 }
 "#;
 
 /// Fragment shader for rendering a drawable with an applied clipping mask.
 /// Uses `gl_FragCoord` to look up the mask alpha from the off-screen FBO texture.
+/// Supports mask inversion via `uInvertMask` uniform (0.0 = normal, 1.0 = inverted).
 pub const FRAG_MASKED_SRC: &str = r#"#version 330 core
 in vec2 vUV;
 out vec4 FragColor;
@@ -63,16 +72,21 @@ uniform vec4 uMultiplyColor;
 uniform vec4 uScreenColor;
 uniform float uOpacity;
 uniform vec2 uMaskSize;
+uniform float uInvertMask;
 
 void main() {
     vec2 maskUV = gl_FragCoord.xy / uMaskSize;
     float maskAlpha = texture(uMaskTexture, maskUV).a;
 
+    // When uInvertMask = 1.0, invert so that mask drawable opaque → hidden
+    // (SDK convention: inverted mask uses (1.0 - maskVal) instead of maskVal)
+    float maskFactor = mix(maskAlpha, 1.0 - maskAlpha, uInvertMask);
+
     vec4 tex = texture(uTexture, vUV);
     tex.rgb = tex.rgb * uMultiplyColor.rgb;
     tex.rgb = tex.rgb + uScreenColor.rgb - (tex.rgb * uScreenColor.rgb);
     tex.a *= uOpacity;
-    FragColor = vec4(tex.rgb * tex.a * maskAlpha, tex.a * maskAlpha);
+    FragColor = vec4(tex.rgb * tex.a * maskFactor, tex.a * maskFactor);
 }
 "#;
 

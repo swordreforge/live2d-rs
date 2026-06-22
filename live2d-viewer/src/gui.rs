@@ -176,8 +176,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
     }
 
     // Position toolbar at model's right edge, vertically centered.
-    // Model center = window center. Model display width = canvas_w/canvas_h * window_h.
-    // Right edge = (window_w + model_display_w) / 2, then convert to logical.
+    // Clamp to window bounds so wide-aspect models don't push the panel off-screen.
     let (toolbar_x, toolbar_y) = {
         let (cw, ch) = app.canvas_pixel_size;
         let (ww, wh) = app.window_size;
@@ -187,7 +186,8 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
             let sf = ww / logical_w;
             let model_display_w = cw / ch * wh;
             let model_right_px = (ww + model_display_w) / 2.0;
-            let x = model_right_px / sf;
+            let toolbar_w = 44.0;
+            let x = (model_right_px / sf).clamp(2.0, logical_w - toolbar_w);
             let y = logical_h / 2.0 - 70.0; // vertically centered (toolbar ~140px tall)
             (x, y)
         } else {

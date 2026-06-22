@@ -37,7 +37,7 @@ impl ProgramUniforms {
 struct MaskUniforms {
     scale: Option<UniformLocation>,
     translate: Option<UniformLocation>,
-    opacity: Option<UniformLocation>,
+    tex: Option<UniformLocation>,
 }
 
 impl MaskUniforms {
@@ -45,7 +45,7 @@ impl MaskUniforms {
         Self {
             scale: gl.get_uniform_location(program, "uScale"),
             translate: gl.get_uniform_location(program, "uTranslate"),
-            opacity: gl.get_uniform_location(program, "uOpacity"),
+            tex: gl.get_uniform_location(program, "uTexture"),
         }
     }
 }
@@ -59,6 +59,7 @@ struct MaskedUniforms {
     mul: Option<UniformLocation>,
     scr: Option<UniformLocation>,
     opacity: Option<UniformLocation>,
+    invert_mask: Option<UniformLocation>,
 }
 
 impl MaskedUniforms {
@@ -72,6 +73,7 @@ impl MaskedUniforms {
             mul: gl.get_uniform_location(program, "uMultiplyColor"),
             scr: gl.get_uniform_location(program, "uScreenColor"),
             opacity: gl.get_uniform_location(program, "uOpacity"),
+            invert_mask: gl.get_uniform_location(program, "uInvertMask"),
         }
     }
 }
@@ -113,13 +115,15 @@ impl Live2dRenderer {
     }
 
     pub unsafe fn render(&mut self, gl: &Context, model: &mut Model, camera: &crate::camera::Camera) {
+        // Must reset dynamic flags (csmIsVisible etc.) before Update, as documented in Core API
+        model.reset_dynamic_flags();
         model.update();
 
         let drawables = model.drawables();
         let n = drawables.len();
         if n == 0 { return; }
 
-        let sorted_indices = drawables.render_order_indices();
+        let render_orders = model.render_orders();
         let tex_indices = drawables.texture_indices();
         let opacities = drawables.opacities();
         let vert_counts = drawables.vertex_counts();
@@ -163,6 +167,7 @@ impl Live2dRenderer {
 
         let mk_scale_loc = &self.mask_u.scale;
         let mk_translate_loc = &self.mask_u.translate;
+        let mk_tex_loc = &self.mask_u.tex;
 
         let m_scale_loc = &self.masked_u.scale;
         let m_translate_loc = &self.masked_u.translate;
@@ -172,8 +177,23 @@ impl Live2dRenderer {
         let m_mul_loc = &self.masked_u.mul;
         let m_scr_loc = &self.masked_u.scr;
         let m_opacity_loc = &self.masked_u.opacity;
+        let m_invert_mask_loc = &self.masked_u.invert_mask;
 
-        for &i in &sorted_indices {
+        // The SDK's DrawObjectLoop uses csmGetRenderOrders() as follows:
+        //   render_orders[i] = final sort position for the object at source index i
+        //   _sortedObjectsIndexList[render_orders[i]] = i  (inverse mapping)
+        // Then iterates _sortedObjectsIndexList[0..totalCount] in order.
+        // The first drawableCount entries are drawables; the rest are offscreens.
+        //
+        // We build an equivalent sorted iteration:
+        let mut sorted: Vec<(i32, usize)> = render_orders.iter()
+            .enumerate()
+            .filter(|(src_idx, _)| *src_idx < n)  // drawable entries only
+            .map(|(drawable_idx, &sort_pos)| (sort_pos, drawable_idx))
+            .collect();
+        sorted.sort_by_key(|(sort_pos, _)| *sort_pos);
+
+        for &(_sort_pos, i) in &sorted {
             let opacity = opacities[i];
             if opacity < 0.001 { continue; }
             if dynamic_flags[i] & ffi::csmIsVisible as u8 == 0 { continue; }
@@ -188,13 +208,9 @@ impl Live2dRenderer {
             let uv_slice = std::slice::from_raw_parts(vert_uvs[i], vc);
             let idx_slice = std::slice::from_raw_parts(idx_data[i], ic);
 
-            let mut verts = Vec::with_capacity(vc * 4);
-            for j in 0..vc {
-                verts.push(pos_slice[j].X);
-                verts.push(pos_slice[j].Y);
-                verts.push(uv_slice[j].X);
-                verts.push(uv_slice[j].Y);
-            }
+            // Reinterpret Core's csmVector2 arrays as flat f32 slices directly
+            let pos_f32 = std::slice::from_raw_parts(pos_slice.as_ptr() as *const f32, vc * 2);
+            let uv_f32 = std::slice::from_raw_parts(uv_slice.as_ptr() as *const f32, vc * 2);
 
             let n_masks = mask_counts[i];
             if n_masks > 0 {
@@ -204,6 +220,10 @@ impl Live2dRenderer {
                 let fbo_w = fbo.width;
                 let fbo_h = fbo.height;
                 let fbo_tex = fbo.texture;
+
+                // Save the current viewport BEFORE switching to mask FBO size
+                let mut viewport = [0i32; 4];
+                gl.get_parameter_i32_slice(VIEWPORT, &mut viewport);
 
                 gl.bind_framebuffer(FRAMEBUFFER, Some(fbo.fbo));
                 gl.viewport(0, 0, fbo_w, fbo_h);
@@ -216,6 +236,10 @@ impl Live2dRenderer {
 
                 gl.enable(BLEND);
 
+                // SDK convention: mask drawables always use ONE, ONE_MINUS_SRC_ALPHA blending.
+                // The csmIsInvertedMask flag is checked on the MAIN drawable, not mask drawables.
+                gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+
                 for &mask_idx in mask_slice {
                     let mi = mask_idx as usize;
                     if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
@@ -223,38 +247,31 @@ impl Live2dRenderer {
                     let m_ic = idx_counts[mi] as usize;
                     if m_vc == 0 || m_ic == 0 { continue; }
 
-                    let is_inverted = constant_flags[mi] & ffi::csmIsInvertedMask as u8 != 0;
-                    if is_inverted {
-                        // Inverted mask: zeros out alpha in the shape area (clips this region)
-                        gl.blend_func_separate(ZERO, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
-                    } else {
-                        // Normal mask: sets alpha=1 in the shape area (marks as visible)
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
+                    // SDK convention: mask drawables use raw texture alpha, not drawable opacity.
+                    // The opacity field is intentionally NOT passed to the mask shader.
 
-                    let m_opacity = opacities[mi];
-            gl.uniform_1_f32(self.mask_u.opacity.as_ref(), m_opacity);
+                    // Bind the mask drawable's texture so its alpha shapes the mask
+                    let m_tex_idx = tex_indices[mi];
+                    if m_tex_idx >= 0 && (m_tex_idx as usize) < self.textures.len() {
+                        gl.active_texture(TEXTURE0);
+                        gl.bind_texture(TEXTURE_2D, Some(self.textures[m_tex_idx as usize]));
+                        gl.uniform_1_i32(mk_tex_loc.as_ref(), 0);
+                    }
 
                     let m_pos = std::slice::from_raw_parts(vert_positions[mi], m_vc);
                     let m_uv = std::slice::from_raw_parts(vert_uvs[mi], m_vc);
                     let m_idx = std::slice::from_raw_parts(idx_data[mi], m_ic);
 
-                    let mut m_verts = Vec::with_capacity(m_vc * 4);
-                    for j in 0..m_vc {
-                        m_verts.push(m_pos[j].X);
-                        m_verts.push(m_pos[j].Y);
-                        m_verts.push(m_uv[j].X);
-                        m_verts.push(m_uv[j].Y);
-                    }
-                    self.draw_mesh.upload(gl, &m_verts, m_idx);
+                    let m_pos_f32 = std::slice::from_raw_parts(m_pos.as_ptr() as *const f32, m_vc * 2);
+                    let m_uv_f32 = std::slice::from_raw_parts(m_uv.as_ptr() as *const f32, m_vc * 2);
+                    self.draw_mesh.upload(gl, m_pos_f32, m_uv_f32, m_idx);
                     self.draw_mesh.draw(gl);
                 }
 
                 gl.disable(BLEND);
                 gl.bind_framebuffer(FRAMEBUFFER, None);
 
-                let mut viewport = [0i32; 4];
-                gl.get_parameter_i32_slice(VIEWPORT, &mut viewport);
+                // Restore the original viewport saved before mask FBO render
                 gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
                 gl.use_program(Some(self.masked_program));
@@ -278,26 +295,32 @@ impl Live2dRenderer {
 
                 let blend = blend_modes[i];
                 match blend {
-                    0 | 1 => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    2 => {
-                        gl.blend_func_separate(DST_COLOR, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    3..=17 => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    _ => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
+                    0 => {
+                    gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+                }
+                1 => {
+                    // Additive uses ONE, ONE — premultiplied shader output adds to background
+                    gl.blend_func_separate(ONE, ONE, ZERO, ONE);
+                }
+                2 => {
+                    gl.blend_func_separate(DST_COLOR, ONE_MINUS_SRC_ALPHA, ZERO, ONE);
+                }
+                _ => {
+                    gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+                }
                 }
                 gl.enable(BLEND);
+
+                // SDK convention: csmIsInvertedMask on the MAIN drawable inverts the mask.
+                // Pass 1.0 for inverted, 0.0 for normal (mix() in shader does the selection).
+                let is_inverted = constant_flags[i] & ffi::csmIsInvertedMask as u8 != 0;
+                gl.uniform_1_f32(m_invert_mask_loc.as_ref(), if is_inverted { 1.0 } else { 0.0 });
 
                 gl.uniform_4_f32(m_mul_loc.as_ref(), mc.X, mc.Y, mc.Z, mc.W);
                 gl.uniform_4_f32(m_scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
                 gl.uniform_1_f32(m_opacity_loc.as_ref(), opacity);
 
-                self.draw_mesh.upload(gl, &verts, idx_slice);
+                self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
                 self.draw_mesh.draw(gl);
 
                 gl.active_texture(TEXTURE1);
@@ -320,18 +343,19 @@ impl Live2dRenderer {
 
                 let blend = blend_modes[i];
                 match blend {
-                    0 | 1 => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    2 => {
-                        gl.blend_func_separate(DST_COLOR, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    3..=17 => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
-                    _ => {
-                        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-                    }
+                    0 => {
+                    gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+                }
+                1 => {
+                    // Additive uses ONE, ONE — premultiplied shader output adds to background
+                    gl.blend_func_separate(ONE, ONE, ZERO, ONE);
+                }
+                2 => {
+                    gl.blend_func_separate(DST_COLOR, ONE_MINUS_SRC_ALPHA, ZERO, ONE);
+                }
+                _ => {
+                    gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+                }
                 }
                 gl.enable(BLEND);
 
@@ -339,7 +363,7 @@ impl Live2dRenderer {
                 gl.uniform_4_f32(scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
                 gl.uniform_1_f32(opacity_loc.as_ref(), opacity);
 
-                self.draw_mesh.upload(gl, &verts, idx_slice);
+                self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
                 self.draw_mesh.draw(gl);
             }
         }
@@ -408,6 +432,10 @@ impl Live2dRenderer {
 
         gl.enable(BLEND);
 
+        // SDK convention: mask drawables always use ONE, ONE_MINUS_SRC_ALPHA.
+        // The csmIsInvertedMask flag is on the MAIN drawable, not mask drawables.
+        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+
         for &mask_idx in mask_indices {
             let mi = mask_idx as usize;
             if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
@@ -415,28 +443,15 @@ impl Live2dRenderer {
             let m_ic = idx_counts[mi] as usize;
             if m_vc == 0 || m_ic == 0 { continue; }
 
-            let is_inverted = constant_flags[mi] & ffi::csmIsInvertedMask as u8 != 0;
-            if is_inverted {
-                gl.blend_func_separate(ZERO, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
-            } else {
-                gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
-            }
-
-            let m_opacity = drawables.opacities()[mi];
-            gl.uniform_1_f32(self.mask_u.opacity.as_ref(), m_opacity);
+            // SDK convention: mask drawables use raw texture alpha, not drawable opacity.
 
             let m_pos = std::slice::from_raw_parts(vert_positions[mi], m_vc);
             let m_uv = std::slice::from_raw_parts(vert_uvs[mi], m_vc);
             let m_idx = std::slice::from_raw_parts(idx_data[mi], m_ic);
 
-            let mut m_verts = Vec::with_capacity(m_vc * 4);
-            for j in 0..m_vc {
-                m_verts.push(m_pos[j].X);
-                m_verts.push(m_pos[j].Y);
-                m_verts.push(m_uv[j].X);
-                m_verts.push(m_uv[j].Y);
-            }
-            self.draw_mesh.upload(gl, &m_verts, m_idx);
+            let m_pos_f32 = std::slice::from_raw_parts(m_pos.as_ptr() as *const f32, m_vc * 2);
+            let m_uv_f32 = std::slice::from_raw_parts(m_uv.as_ptr() as *const f32, m_vc * 2);
+            self.draw_mesh.upload(gl, m_pos_f32, m_uv_f32, m_idx);
             self.draw_mesh.draw(gl);
         }
 
@@ -486,19 +501,16 @@ impl Live2dRenderer {
         let sc = scr_colors[drawable_idx];
         gl.uniform_4_f32(self.masked_u.scr.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
         gl.uniform_1_f32(self.masked_u.opacity.as_ref(), opacity);
+        let is_inverted = constant_flags[drawable_idx] & ffi::csmIsInvertedMask as u8 != 0;
+        gl.uniform_1_f32(self.masked_u.invert_mask.as_ref(), if is_inverted { 1.0 } else { 0.0 });
 
         let pos_slice = std::slice::from_raw_parts(vert_positions[drawable_idx], vc);
         let uv_slice = std::slice::from_raw_parts(vert_uvs[drawable_idx], vc);
         let idx_slice = std::slice::from_raw_parts(idx_data[drawable_idx], ic);
 
-        let mut verts = Vec::with_capacity(vc * 4);
-        for j in 0..vc {
-            verts.push(pos_slice[j].X);
-            verts.push(pos_slice[j].Y);
-            verts.push(uv_slice[j].X);
-            verts.push(uv_slice[j].Y);
-        }
-        self.draw_mesh.upload(gl, &verts, idx_slice);
+        let pos_f32 = std::slice::from_raw_parts(pos_slice.as_ptr() as *const f32, vc * 2);
+        let uv_f32 = std::slice::from_raw_parts(uv_slice.as_ptr() as *const f32, vc * 2);
+        self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
         self.draw_mesh.draw(gl);
 
         gl.active_texture(TEXTURE1);

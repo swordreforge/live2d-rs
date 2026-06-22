@@ -230,6 +230,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         }
 
     const MAO_MODEL_DIR: &str = "/home/swordreforge/Downloads/CubismSdkForNative-5-r.5/Samples/Resources/Mao";
+    const RICE_MODEL_DIR: &str = "/home/swordreforge/Downloads/CubismSdkForNative-5-r.5/Samples/Resources/Rice";
 
     #[test]
     fn dump_mao_drawables() {
@@ -285,6 +286,79 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
             let order = orders[i];
             println!("  [{pos:>3}] ro={order:>4} {vis_s} op={:.3} v={} m={}{inv_s} {}",
                 opacities[i], vcounts[i], mask_counts[i], ids[i].to_string_lossy());
+        }
+    }
+
+    #[test]
+    fn dump_rice_drawables() {
+        let loaded = LoadedModel::load(RICE_MODEL_DIR).expect("load Rice model");
+        let moc = Moc::revive(&loaded.moc3_data).expect("revive moc");
+        let moc_ptr: *const Moc = &moc as *const Moc;
+        let mut model = unsafe { Model::initialize(&*moc_ptr) }.expect("init model");
+        {
+            let params = model.parameters();
+            let default_vals = params.default_values().to_vec();
+            drop(params);
+            let mut params = model.parameters();
+            let mut vals = params.values_mut();
+            for i in 0..default_vals.len() {
+                vals.set(i, default_vals[i]);
+            }
+        }
+        model.update();
+
+        // Dump parameter default values
+        {
+            let params = model.parameters();
+            let pids = params.ids();
+            let default_vals = params.default_values();
+            let vals = params.values();
+            println!("\n=== Rice parameters (n={}) ===", pids.len());
+            for i in 0..pids.len() {
+                let name = pids[i].to_string_lossy();
+                println!("  {}: default={:.3} current={:.3}", name, default_vals[i], vals[i]);
+            }
+        }
+
+        let drawables = model.drawables();
+        let n = drawables.len();
+        println!("=== Rice drawables (n={n}) ===");
+        let ids = drawables.ids();
+        let orders = drawables.draw_orders();
+        let opacities = drawables.opacities();
+        let dflags = drawables.dynamic_flags();
+        let cflags = drawables.constant_flags();
+        let mask_counts = drawables.mask_counts();
+        let vcounts = drawables.vertex_counts();
+        let tex_indices = drawables.texture_indices();
+        let mul_colors = drawables.multiply_colors();
+        let scr_colors = drawables.screen_colors();
+        let parent_parts = drawables.parent_part_indices();
+
+        let parts = model.parts();
+        let part_ids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+
+        let render_order = drawables.render_order_indices();
+
+        println!("ro / #[id] / draw_order / vis / op / tex / masks / mul/screen / parent / name");
+        for (pos, &i) in render_order.iter().enumerate() {
+            let vis = dflags[i] & live2d_core_sys::csmIsVisible as u8 != 0;
+            let vis_s = if vis { 'V' } else { '_' };
+            let is_inv = cflags[i] & live2d_core_sys::csmIsInvertedMask as u8 != 0;
+            let inv_s = if is_inv { " INV" } else { "" };
+            let pi = parent_parts[i] as usize;
+            let pname = if pi < part_ids.len() { &part_ids[pi] } else { "???" };
+            let mc = mul_colors[i];
+            let sc = scr_colors[i];
+            println!("  [{pos:>3}] #[{i:>3}] ro={:>4} {vis_s} op={:.3} t={} m={}{inv_s} mc=({:.3},{:.3},{:.3}) sc=({:.3},{:.3},{:.3}) {pname} {}",
+                orders[i], opacities[i], tex_indices[i], mask_counts[i],
+                mc.X, mc.Y, mc.Z, sc.X, sc.Y, sc.Z,
+                ids[i].to_string_lossy());
+            if mask_counts[i] > 0 {
+                let masks_ptr = drawables.masks();
+                let mask_slice = unsafe { std::slice::from_raw_parts(masks_ptr[i], mask_counts[i] as usize) };
+                println!("         masks: {:?}", mask_slice.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            }
         }
     }
 
@@ -463,6 +537,28 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
             if *h > 0.05 || *w > 0.05 {  // Skip tiny details
                 println!("  #[{i:>3}] {vis} op={:.3} {} v={}: x=[{:.2},{:.2}] y=[{:.2},{:.2}] w={:.2} h={:.2}",
                     opacities[*i], pname, vcounts[*i], min_x, max_x, min_y, max_y, w, h);
+            }
+        }
+
+        // Compare csmGetRenderOrders() vs sorted-by-draw-order
+        {
+            let render_orders_from_core = model.render_orders();
+            let our_sorted = model.drawables().render_order_indices();
+            let mut mismatches = 0;
+            for (pos, (&core_idx, &our_idx)) in render_orders_from_core.iter().zip(our_sorted.iter()).enumerate() {
+                if core_idx as usize != our_idx {
+                    mismatches += 1;
+                    if mismatches <= 20 {
+                        let core_id = drawables.ids()[core_idx as usize].to_string_lossy();
+                        let our_id = drawables.ids()[our_idx].to_string_lossy();
+                        println!("  MISMATCH [{pos}]: core={core_idx} ({core_id}) vs our={our_idx} ({our_id})");
+                    }
+                }
+            }
+            if mismatches == 0 {
+                println!("  Render order MATCHES csmGetRenderOrders()");
+            } else {
+                println!("  Render order MISMATCHES in {mismatches}/{n} positions");
             }
         }
     }
