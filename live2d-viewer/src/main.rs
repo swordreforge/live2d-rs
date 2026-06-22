@@ -340,11 +340,13 @@ fn main() -> anyhow::Result<()> {
                         }
 
                         if let Some(ref mut model) = app.current_model {
-                            unsafe {
-                                gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                gl.disable(glow::DEPTH_TEST);
-                                gl.disable(glow::CULL_FACE);
-                                renderer.render(&gl, model, &app.camera);
+                            if !app.minimized_to_float {
+                                unsafe {
+                                    gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                    gl.disable(glow::DEPTH_TEST);
+                                    gl.disable(glow::CULL_FACE);
+                                    renderer.render(&gl, model, &app.camera);
+                                }
                             }
                         }
 
@@ -390,7 +392,7 @@ fn main() -> anyhow::Result<()> {
                                     app.window_size.0 as f64 / sf,
                                     app.window_size.1 as f64 / sf,
                                 );
-                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(44.0, 44.0));
+                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(80.0, 80.0));
                             }
                         }
                         if app.request_restore {
@@ -442,8 +444,10 @@ fn main() -> anyhow::Result<()> {
                                         surface.resize(&gl_context, w, h);
                                     }
                                     unsafe { gl.viewport(0, 0, size.width as i32, size.height as i32); }
-                                    // Recalculate camera when window size actually changes
-                                    app.camera_needs_fit = true;
+                                    // Recalculate camera when window size changes (skip when floating)
+                                    if !app.minimized_to_float {
+                                        app.camera_needs_fit = true;
+                                    }
                                 }
                                 WindowEvent::KeyboardInput { event: ref ke, .. } => {
                                     if ke.state == ElementState::Pressed {

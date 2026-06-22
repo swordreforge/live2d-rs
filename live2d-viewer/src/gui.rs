@@ -26,28 +26,35 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
 /// Floating circular button (replaces system tray for Wayland compat)
 fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
+    let hovered = ctx.pointer_hover_pos().is_some();
+    let bg_color = if hovered {
+        egui::Color32::from_rgb(0x55, 0xaa, 0xff)
+    } else {
+        egui::Color32::from_rgb(0x33, 0x99, 0xff)
+    };
+
     egui::CentralPanel::default()
-        .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+        .frame(egui::Frame::none().fill(bg_color))
         .show(ctx, |ui| {
             let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
             let center = rect.center();
-            let radius = rect.width().min(rect.height()) / 2.0 - 2.0;
+            let radius = rect.width().min(rect.height()) / 2.0 - 4.0;
+            let icon_size = (radius * 0.6).max(10.0);
 
-            // Draw filled circle
+            // Draw filled circle on top of panel background
             let circle_color = if response.hovered() {
                 egui::Color32::from_rgb(0x55, 0xaa, 0xff)
             } else {
                 egui::Color32::from_rgb(0x33, 0x99, 0xff)
             };
-            ui.painter().circle_filled(center, radius.max(4.0), circle_color);
+            ui.painter().circle_filled(center, radius, circle_color);
 
-            // Draw inner icon
-            let icon = egui::RichText::new("\u{25b6}").size(radius * 0.6).color(egui::Color32::WHITE);
+            // White play icon
             ui.painter().text(
                 center,
                 egui::Align2::CENTER_CENTER,
-                icon.text(),
-                egui::FontId::proportional(radius * 0.6),
+                "\u{25b6}",
+                egui::FontId::proportional(icon_size),
                 egui::Color32::WHITE,
             );
 
