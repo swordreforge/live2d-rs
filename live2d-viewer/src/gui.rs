@@ -28,43 +28,41 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     let screen = ctx.screen_rect();
     eprintln!("[float] screen_rect={screen:?}");
 
-    let btn_size = screen.size().x.min(screen.size().y);
-    let pad = 4.0;
-    let inner = btn_size - pad * 2.0;
-    let icon_size = inner * 0.4;
+    let btn_size = screen.size().x.min(screen.size().y) - 4.0;
+    let btn_rect = egui::Rect::from_center_size(
+        screen.center(),
+        egui::vec2(btn_size, btn_size),
+    );
+    let icon_size = btn_size * 0.45;
 
-    eprintln!("[float] btn_size={btn_size} pad={pad} inner={inner}");
+    eprintln!("[float] btn_rect={btn_rect:?} icon_size={icon_size}");
 
-    let hovered = ctx.pointer_hover_pos().map_or(false, |p| {
-        p.x >= pad && p.x <= pad + inner && p.y >= pad && p.y <= pad + inner
-    });
+    let painter = ctx.debug_painter();
+    let hovered = ctx.pointer_hover_pos().map_or(false, |p| btn_rect.contains(p));
     let bg = if hovered {
         egui::Color32::from_rgb(0x55, 0xaa, 0xff)
     } else {
         egui::Color32::from_rgb(0x33, 0x99, 0xff)
     };
 
-    egui::Area::new(egui::Id::new("float"))
-        .fixed_pos(egui::pos2(pad, pad))
-        .interactable(true)
-        .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(egui::vec2(inner, inner), egui::Sense::click());
-            eprintln!("[float] area_rect={rect:?} center={:?} response.rect={:?}",
-                rect.center(), response.rect);
-            let painter = ui.painter();
-            let round = (inner * 0.15).max(4.0);
-            painter.rect_filled(rect, round, bg);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "\u{25b6}",
-                egui::FontId::proportional(icon_size),
-                egui::Color32::WHITE,
-            );
-            if response.clicked() {
-                app.request_restore = true;
-            }
-        });
+    painter.rect_filled(btn_rect, 4.0, bg);
+    painter.text(
+        btn_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "\u{25b6}",
+        egui::FontId::proportional(icon_size),
+        egui::Color32::WHITE,
+    );
+
+    if ctx.input(|i| i.pointer.any_click()) {
+        let pos = match ctx.input(|i| i.pointer.interact_pos()) {
+            Some(p) => p,
+            None => return,
+        };
+        if btn_rect.contains(pos) {
+            app.request_restore = true;
+        }
+    }
 }
 
 fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
