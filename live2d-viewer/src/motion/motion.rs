@@ -80,7 +80,8 @@ impl CubismMotion {
     #[allow(clippy::too_many_arguments)]
     pub fn do_update_parameters(
         &self,
-        param_names: &[String],
+        _param_names: &[String],
+        param_lookup: &HashMap<String, usize>,
         param_values: &mut [f32],
         user_time_seconds: f32,
         fade_weight: f32,
@@ -128,17 +129,13 @@ impl CubismMotion {
 
         let is_correction = self.is_loop;
 
-        // Build param lookup map
-        let param_lookup: HashMap<&str, usize> =
-            param_names.iter().enumerate().map(|(i, name)| (name.as_str(), i)).collect();
-
         let eye_blink_indices: Vec<usize> = eye_blink_param_ids
             .iter()
-            .filter_map(|id| param_lookup.get(id.as_str()).copied())
+            .filter_map(|id| param_lookup.get(id).copied())
             .collect();
         let lip_sync_indices: Vec<usize> = lip_sync_param_ids
             .iter()
-            .filter_map(|id| param_lookup.get(id.as_str()).copied())
+            .filter_map(|id| param_lookup.get(id).copied())
             .collect();
 
         let mut eye_blink_flags: u64 = 0;
@@ -179,7 +176,7 @@ impl CubismMotion {
 
         // 2. Evaluate Parameter curves
         for curve in &param_curves {
-            let param_idx = match param_lookup.get(curve.id.as_str()) {
+            let param_idx = match param_lookup.get(&curve.id) {
                 Some(&idx) => idx,
                 None => continue,
             };
@@ -403,6 +400,7 @@ mod tests {
         let motion = CubismMotion::new(parsed, 0.0, 0.0);
 
         let param_names = vec!["ParamA".to_string()];
+        let param_lookup: HashMap<String, usize> = [("ParamA".to_string(), 0)].into_iter().collect();
         let mut param_values = vec![0.0f32];
         let eye_blink: Vec<String> = vec![];
         let lip_sync: Vec<String> = vec![];
@@ -412,7 +410,7 @@ mod tests {
 
         // At time 0
         motion.do_update_parameters(
-            &param_names, &mut param_values,
+            &param_names, &param_lookup, &mut param_values,
             0.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
             &empty_parts, &mut part_opacities,
         );
@@ -421,7 +419,7 @@ mod tests {
         // At time 1 (midpoint)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names, &mut param_values,
+            &param_names, &param_lookup, &mut param_values,
             1.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
             &empty_parts, &mut part_opacities,
         );
@@ -430,7 +428,7 @@ mod tests {
         // At time 2 (end)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names, &mut param_values,
+            &param_names, &param_lookup, &mut param_values,
             2.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
             &empty_parts, &mut part_opacities,
         );

@@ -8,6 +8,76 @@ use live2d_core::Model;
 use live2d_core_sys as ffi;
 use mesh::Mesh;
 
+// ---------------------------------------------------------------------------
+// Cached uniform locations (queried once at init, saves ~30 driver calls/frame)
+// ---------------------------------------------------------------------------
+
+struct ProgramUniforms {
+    scale: Option<UniformLocation>,
+    translate: Option<UniformLocation>,
+    tex: Option<UniformLocation>,
+    mul: Option<UniformLocation>,
+    scr: Option<UniformLocation>,
+    opacity: Option<UniformLocation>,
+}
+
+impl ProgramUniforms {
+    unsafe fn query(gl: &Context, program: NativeProgram) -> Self {
+        Self {
+            scale: gl.get_uniform_location(program, "uScale"),
+            translate: gl.get_uniform_location(program, "uTranslate"),
+            tex: gl.get_uniform_location(program, "uTexture"),
+            mul: gl.get_uniform_location(program, "uMultiplyColor"),
+            scr: gl.get_uniform_location(program, "uScreenColor"),
+            opacity: gl.get_uniform_location(program, "uOpacity"),
+        }
+    }
+}
+
+struct MaskUniforms {
+    scale: Option<UniformLocation>,
+    translate: Option<UniformLocation>,
+    opacity: Option<UniformLocation>,
+}
+
+impl MaskUniforms {
+    unsafe fn query(gl: &Context, program: NativeProgram) -> Self {
+        Self {
+            scale: gl.get_uniform_location(program, "uScale"),
+            translate: gl.get_uniform_location(program, "uTranslate"),
+            opacity: gl.get_uniform_location(program, "uOpacity"),
+        }
+    }
+}
+
+struct MaskedUniforms {
+    scale: Option<UniformLocation>,
+    translate: Option<UniformLocation>,
+    tex: Option<UniformLocation>,
+    mask_tex: Option<UniformLocation>,
+    mask_size: Option<UniformLocation>,
+    mul: Option<UniformLocation>,
+    scr: Option<UniformLocation>,
+    opacity: Option<UniformLocation>,
+}
+
+impl MaskedUniforms {
+    unsafe fn query(gl: &Context, program: NativeProgram) -> Self {
+        Self {
+            scale: gl.get_uniform_location(program, "uScale"),
+            translate: gl.get_uniform_location(program, "uTranslate"),
+            tex: gl.get_uniform_location(program, "uTexture"),
+            mask_tex: gl.get_uniform_location(program, "uMaskTexture"),
+            mask_size: gl.get_uniform_location(program, "uMaskSize"),
+            mul: gl.get_uniform_location(program, "uMultiplyColor"),
+            scr: gl.get_uniform_location(program, "uScreenColor"),
+            opacity: gl.get_uniform_location(program, "uOpacity"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 pub struct Live2dRenderer {
     program: NativeProgram,
     mask_program: NativeProgram,
@@ -15,6 +85,9 @@ pub struct Live2dRenderer {
     pub textures: Vec<NativeTexture>,
     draw_mesh: Mesh,
     pub mask_fbo: Option<mask_fbo::MaskFbo>,
+    prog_u: ProgramUniforms,
+    mask_u: MaskUniforms,
+    masked_u: MaskedUniforms,
 }
 
 impl Live2dRenderer {
@@ -23,6 +96,9 @@ impl Live2dRenderer {
         let mask_program = shader::compile_program(gl, shader::MASK_VERT_SRC, shader::MASK_FRAG_SRC)?;
         let masked_program = shader::compile_program(gl, shader::VERT_SRC, shader::FRAG_MASKED_SRC)?;
         let draw_mesh = Mesh::new(gl).map_err(|e| anyhow::anyhow!("{}", e))?;
+        let prog_u = ProgramUniforms::query(gl, program);
+        let mask_u = MaskUniforms::query(gl, mask_program);
+        let masked_u = MaskedUniforms::query(gl, masked_program);
         Ok(Self {
             program,
             mask_program,
@@ -30,6 +106,9 @@ impl Live2dRenderer {
             textures: Vec::new(),
             draw_mesh,
             mask_fbo: None,
+            prog_u,
+            mask_u,
+            masked_u,
         })
     }
 
@@ -75,25 +154,24 @@ impl Live2dRenderer {
             }
         }
 
-        let scale_loc = gl.get_uniform_location(self.program, "uScale");
-        let translate_loc = gl.get_uniform_location(self.program, "uTranslate");
-        let tex_loc = gl.get_uniform_location(self.program, "uTexture");
-        let mul_loc = gl.get_uniform_location(self.program, "uMultiplyColor");
-        let scr_loc = gl.get_uniform_location(self.program, "uScreenColor");
-        let opacity_loc = gl.get_uniform_location(self.program, "uOpacity");
+        let scale_loc = &self.prog_u.scale;
+        let translate_loc = &self.prog_u.translate;
+        let tex_loc = &self.prog_u.tex;
+        let mul_loc = &self.prog_u.mul;
+        let scr_loc = &self.prog_u.scr;
+        let opacity_loc = &self.prog_u.opacity;
 
-        let m_scale_loc = gl.get_uniform_location(self.masked_program, "uScale");
-        let m_translate_loc = gl.get_uniform_location(self.masked_program, "uTranslate");
-        let m_tex_loc = gl.get_uniform_location(self.masked_program, "uTexture");
-        let m_mask_tex_loc = gl.get_uniform_location(self.masked_program, "uMaskTexture");
-        let m_mask_size_loc = gl.get_uniform_location(self.masked_program, "uMaskSize");
-        let m_mul_loc = gl.get_uniform_location(self.masked_program, "uMultiplyColor");
-        let m_scr_loc = gl.get_uniform_location(self.masked_program, "uScreenColor");
-        let m_opacity_loc = gl.get_uniform_location(self.masked_program, "uOpacity");
+        let mk_scale_loc = &self.mask_u.scale;
+        let mk_translate_loc = &self.mask_u.translate;
 
-        let mk_scale_loc = gl.get_uniform_location(self.mask_program, "uScale");
-        let mk_translate_loc = gl.get_uniform_location(self.mask_program, "uTranslate");
-        let mk_opacity_loc = gl.get_uniform_location(self.mask_program, "uOpacity");
+        let m_scale_loc = &self.masked_u.scale;
+        let m_translate_loc = &self.masked_u.translate;
+        let m_tex_loc = &self.masked_u.tex;
+        let m_mask_tex_loc = &self.masked_u.mask_tex;
+        let m_mask_size_loc = &self.masked_u.mask_size;
+        let m_mul_loc = &self.masked_u.mul;
+        let m_scr_loc = &self.masked_u.scr;
+        let m_opacity_loc = &self.masked_u.opacity;
 
         for &i in &sorted_indices {
             let opacity = opacities[i];
@@ -155,7 +233,7 @@ impl Live2dRenderer {
                     }
 
                     let m_opacity = opacities[mi];
-                    gl.uniform_1_f32(mk_opacity_loc.as_ref(), m_opacity);
+            gl.uniform_1_f32(self.mask_u.opacity.as_ref(), m_opacity);
 
                     let m_pos = std::slice::from_raw_parts(vert_positions[mi], m_vc);
                     let m_uv = std::slice::from_raw_parts(vert_uvs[mi], m_vc);
@@ -324,13 +402,9 @@ impl Live2dRenderer {
         gl.clear_color(0.0, 0.0, 0.0, 0.0);
         gl.clear(COLOR_BUFFER_BIT);
 
-        let mk_scale_loc = gl.get_uniform_location(self.mask_program, "uScale");
-        let mk_translate_loc = gl.get_uniform_location(self.mask_program, "uTranslate");
-        let mk_opacity_loc = gl.get_uniform_location(self.mask_program, "uOpacity");
-
         gl.use_program(Some(self.mask_program));
-        gl.uniform_2_f32(mk_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-        gl.uniform_2_f32(mk_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+        gl.uniform_2_f32(self.mask_u.scale.as_ref(), camera.scale_x, -camera.scale_y);
+        gl.uniform_2_f32(self.mask_u.translate.as_ref(), camera.translate_x, -camera.translate_y);
 
         gl.enable(BLEND);
 
@@ -349,7 +423,7 @@ impl Live2dRenderer {
             }
 
             let m_opacity = drawables.opacities()[mi];
-            gl.uniform_1_f32(mk_opacity_loc.as_ref(), m_opacity);
+            gl.uniform_1_f32(self.mask_u.opacity.as_ref(), m_opacity);
 
             let m_pos = std::slice::from_raw_parts(vert_positions[mi], m_vc);
             let m_uv = std::slice::from_raw_parts(vert_uvs[mi], m_vc);
@@ -371,18 +445,9 @@ impl Live2dRenderer {
 
         gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
-        let m_scale_loc = gl.get_uniform_location(self.masked_program, "uScale");
-        let m_translate_loc = gl.get_uniform_location(self.masked_program, "uTranslate");
-        let m_tex_loc = gl.get_uniform_location(self.masked_program, "uTexture");
-        let m_mask_tex_loc = gl.get_uniform_location(self.masked_program, "uMaskTexture");
-        let m_mask_size_loc = gl.get_uniform_location(self.masked_program, "uMaskSize");
-        let m_mul_loc = gl.get_uniform_location(self.masked_program, "uMultiplyColor");
-        let m_scr_loc = gl.get_uniform_location(self.masked_program, "uScreenColor");
-        let m_opacity_loc = gl.get_uniform_location(self.masked_program, "uOpacity");
-
         gl.use_program(Some(self.masked_program));
-        gl.uniform_2_f32(m_scale_loc.as_ref(), camera.scale_x, -camera.scale_y);
-        gl.uniform_2_f32(m_translate_loc.as_ref(), camera.translate_x, -camera.translate_y);
+        gl.uniform_2_f32(self.masked_u.scale.as_ref(), camera.scale_x, -camera.scale_y);
+        gl.uniform_2_f32(self.masked_u.translate.as_ref(), camera.translate_x, -camera.translate_y);
 
         let tex_idx = tex_indices[drawable_idx];
         let tex = if tex_idx >= 0 && (tex_idx as usize) < self.textures.len() {
@@ -392,12 +457,12 @@ impl Live2dRenderer {
         };
         gl.active_texture(TEXTURE0);
         gl.bind_texture(TEXTURE_2D, Some(tex));
-        gl.uniform_1_i32(m_tex_loc.as_ref(), 0);
+        gl.uniform_1_i32(self.masked_u.tex.as_ref(), 0);
 
         gl.active_texture(TEXTURE1);
         gl.bind_texture(TEXTURE_2D, Some(fbo_tex));
-        gl.uniform_1_i32(m_mask_tex_loc.as_ref(), 1);
-        gl.uniform_2_f32(m_mask_size_loc.as_ref(), fbo_w as f32, fbo_h as f32);
+        gl.uniform_1_i32(self.masked_u.mask_tex.as_ref(), 1);
+        gl.uniform_2_f32(self.masked_u.mask_size.as_ref(), fbo_w as f32, fbo_h as f32);
 
         let blend = blend_modes[drawable_idx];
         match blend {
@@ -417,10 +482,10 @@ impl Live2dRenderer {
         gl.enable(BLEND);
 
         let mc = mul_colors[drawable_idx];
-        gl.uniform_4_f32(m_mul_loc.as_ref(), mc.X, mc.Y, mc.Z, mc.W);
+        gl.uniform_4_f32(self.masked_u.mul.as_ref(), mc.X, mc.Y, mc.Z, mc.W);
         let sc = scr_colors[drawable_idx];
-        gl.uniform_4_f32(m_scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
-        gl.uniform_1_f32(m_opacity_loc.as_ref(), opacity);
+        gl.uniform_4_f32(self.masked_u.scr.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
+        gl.uniform_1_f32(self.masked_u.opacity.as_ref(), opacity);
 
         let pos_slice = std::slice::from_raw_parts(vert_positions[drawable_idx], vc);
         let uv_slice = std::slice::from_raw_parts(vert_uvs[drawable_idx], vc);

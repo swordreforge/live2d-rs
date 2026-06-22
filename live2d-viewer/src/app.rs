@@ -69,6 +69,8 @@ pub struct AppState {
     pub minimized_to_float: bool,
     /// Saved pet mode window size (logical pixels) for restore
     pub saved_window_pet_size: (f64, f64),
+    /// Pre-built parameter name → index lookup (built once at model load)
+    pub param_lookup: HashMap<String, usize>,
     /// Camera (view transform for the model)
     pub camera: Camera,
     /// Current window size in pixels (set from main.rs each frame)
@@ -121,6 +123,7 @@ impl AppState {
             request_restore: false,
             minimized_to_float: false,
             saved_window_pet_size: (0.0, 0.0),
+            param_lookup: HashMap::new(),
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),
@@ -177,6 +180,13 @@ impl AppState {
         self.parameter_mins = params.minimum_values().to_vec();
         self.parameter_maxs = params.maximum_values().to_vec();
         self.parameter_defaults = params.default_values().to_vec();
+
+        // Build param lookup once — reused every frame instead of rebuilding HashMap
+        self.param_lookup.clear();
+        self.param_lookup.reserve(self.parameter_names.len());
+        for (i, name) in self.parameter_names.iter().enumerate() {
+            self.param_lookup.insert(name.clone(), i);
+        }
 
         // Read part IDs for PartOpacity motion curve evaluation
         let parts = model.parts();
@@ -482,6 +492,7 @@ impl AppState {
         // Evaluate motion curves (parameters + part opacities)
         self.motion_queue.do_update_motion(
             &self.parameter_names,
+            &self.param_lookup,
             &mut self.parameter_values,
             &self.eye_blink_param_ids,
             &self.lip_sync_param_ids,
