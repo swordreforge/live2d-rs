@@ -86,6 +86,19 @@ pub struct AffineEnt {
     pub reflect_y: bool,
 }
 
+impl AffineEnt {
+    /// Identity / zero-initialised affine.
+    pub const ZERO: Self = Self {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        scale_x: 1.0,
+        scale_y: 1.0,
+        rotation_deg: 0.0,
+        reflect_x: false,
+        reflect_y: false,
+    };
+}
+
 // ── pivot system ───────────────────────────────────────────────────
 
 /// PivotManager — the multi-parameter interpolation controller.

@@ -109,71 +109,46 @@
 
 ---
 
-## Phase 3 — Deformer Interpolation 🔲 **NOT STARTED** (stubs only)
+## Phase 3 — Deformer Interpolation ✅ **DONE**
 
-### 3a. WarpDeformer
-**Reference: `live2d/core/deformer/warp_deformer.py`**
+### 3a. WarpDeformer — **fully implemented**
+- [x] `DeformerContext` base struct — available, outsideParam, totalScale, opacity tracking
+- [x] `WarpContext` — interpolatedPoints, transformedPoints, tmpDeformerIndex
+- [x] `warp_setup_interpolate` — pivot grid interpolation + opacity, early-out when params unchanged
+- [x] `warp_transform_points` — dispatches to SDK2 algorithm using transformed or interpolated grid
+- [x] **`warp_transform_points_sdk2`** — the core warp algorithm (220 lines):
+  - In-bounds: bilinear interpolation within the grid cell (UV→XY)
+  - Out-of-bounds near grid: 8 directional regions (top-left, top, top-right, left, right,
+    bottom-left, bottom, bottom-right) with barycentric-like extrapolation
+  - Far outside: linear extrapolation using average corner gradients
+  - Corner info computed lazily on first OOB vertex
 
-- `setupInterpolate(mdc, warp_ctx)` → `WarpContext`
-  - Check param update; if unchanged, return early
-  - `interpolatePoints` on the pivot grid → store in `context.interpolatedPoints`
-  - `interpolateOpacity` → store in `context.interpolatedOpacity`
+### 3b. RotationDeformer — **fully implemented**
+- [x] `RotationContext` — interpolatedAffine, transformedAffine, tmpDeformerIndex
+- [x] `rotation_setup_interpolate` — multi-linear affine keyframe blend:
+  - dim=0: copy single affine
+  - dim=1: lerp 2 affines (5 fields)
+  - dim=2: bilinear blend of 4 affines
+  - dim=3: trilinear blend of 8 affines (via `tri_lerp`)
+  - dim=4: quad-linear blend of 16 affines (via `quad_lerp_affine_field`)
+  - dim≥5: generic binary-weight weighted-sum of 2ⁿ affines
+  - Reflect flags always from first affine
+- [x] `rotation_transform_points` — 2D affine transform with rotation/scale/reflect
+- [x] `get_direction_on_dst` — iterative direction search through parent deformer chain
+  (10 iterations, step shrinks 0.1× per iteration)
+- [x] Math helpers: `get_angle_diff`, `get_angle_not_abs`, `tri_lerp`, `quad_lerp_affine_field`
 
-- `setupTransform(mdc, warp_ctx)` → `WarpContext`
-  - Chain through parent deformer if `needTransform()`
-  - Calls parent's `transformPoints` on interpolated grid → `transformedPoints`
-  - Propagates total opacity through hierarchy
+### 3c. DeformerContext types — **fully implemented**
+- [x] `WarpContext` — interpolatedPoints, transformedPoints, tmpDeformerIndex
+- [x] `RotationContext` — interpolatedAffine, transformedAffine, tmpDeformerIndex
 
-- `transformPoints(mdc, warp_ctx, src, dst, numPoints, offset, step)`
-  - If `transformedPoints` available, use those; else use `interpolatedPoints`
-  - Delegate to `transformPoints_sdk2` static method
-
-- **`transformPoints_sdk2`** (the core warp algorithm)
-  - For each input vertex (UV coords in [0,row]×[0,col] space):
-    - If **in bounds**: bilinear interpolation within the grid cell
-    - If **out of bounds**: extrapolate using nearest grid cell + corner averages
-    - Edge cases for all 8 directions (top, bottom, left, right, 4 corners)
-    - `(row+1)×(col+1)` control points, 2 floats each (x, y)
-
-### 3b. RotationDeformer
-**Reference: `live2d/core/deformer/roation_deformer.py`**
-
-- `setupInterpolate(mdc, rot_ctx)` → `RotationContext`
-  - `calcPivotValues` → `calcPivotIndices`
-  - For pivot_count_bit $`n`$ (0..4):
-    - `n=0`: copy single affine
-    - `n=1`: lerp between 2 affines (5 fields each)
-    - `n=2`: bilinear blend of 4 affines
-    - `n=3`: trilinear blend of 8 affines
-    - `n=4`: quad-linear blend of 16 affines
-    - `n≥5`: generic binary-weight sum of $`2^n`$ affines
-  - Reflect flags always taken from first affine
-
-- `setupTransform(mdc, rot_ctx)` → `RotationContext`
-  - Chain to parent deformer
-  - Uses iterative direction search (`getDirectionOnDst`) to measure parent's
-    non-uniform rotation (rotational component accumulation)
-  - Computes `transformedAffine`:
-    - origin: transformed via parent
-    - scale/rotation: composite of interpolated + parent contribution
-  - `setTotalScale`, `setTotalOpacity` with parent multiplication
-
-- `transformPoints(mdc, rot_ctx, src, dst, numPoints, offset, step)`
-  - Standard 2D affine: $`x' = s·cosθ·x - s·sinθ·y + ox`$ (with reflect)
-  - Matrix: `[ a, b ]` where `a = s·cosθ·rx`, `b = -s·sinθ·ry`
-            `[ c, d ]`       `c = s·sinθ·rx`, `d = s·cosθ·ry`
-
-- **`getDirectionOnDst(mdc, target_deformer, target_ctx, srcOrigin, srcDir, retDir)`**
-  - Iterative search for direction vector through parent deformer chain
-  - Starts at step = 1, shrinks by 0.1× per iteration until non-zero found
-  - Used to measure rotation introduced by parent transform
-
-### 3c. DeformerContext types
-- `WarpContext` — `interpolatedPoints`, `transformedPoints`, opacity, available flag
-- `RotationContext` — `interpolatedAffine`, `transformedAffine`, opacity, scale, available
-
-### Phase 3 Files to Create/Modify
-- `live2d-core/src/moc2/deformer.rs` — **currently 2-line stub** → full WarpDeformer + RotationDeformer impl
+### Tests — **19 deformer tests + 25 pivot tests = 44 unit tests, all passing**
+- 2× DeformerContext: default state, availability with outsideParam
+- 4× math: angle_diff identity/half_pi/wrap, angle_not_abs orthogonal
+- 6× warp SDK2: center, top-left, bottom-right, multi-point stride, near OOB, far OOB
+- 4× rotation transform: identity, translation, scale, reflect_x
+- 2× tri_lerp: corner values, midpoint
+- 1× angle_not_abs: opposite direction
 
 ---
 
