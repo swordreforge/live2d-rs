@@ -444,6 +444,13 @@ fn main() -> anyhow::Result<()> {
                                 let rh = (h.max(200.0)).min(4000.0);
                                 let _ = window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
+                                let sf = window.scale_factor();
+                                let phys_w = (rw * sf) as u32;
+                                let phys_h = (rh * sf) as u32;
+                                if let (Some(pw), Some(ph)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
+                                    surface.resize(&gl_context, pw, ph);
+                                    eprintln!("[restore] forced surface resize to {}x{}", phys_w, phys_h);
+                                }
                                 app.camera_needs_fit = true;
                             } else {
                                 let _ = window.set_visible(true);
