@@ -35,6 +35,18 @@ fn main() -> anyhow::Result<()> {
 
     env_logger::init();
 
+    // Parse CLI args: --overlay flag optional, then model path
+    let mut args: Vec<String> = std::env::args().collect();
+    let mut overlay_mode = false;
+    args.retain(|a| {
+        if a == "--overlay" {
+            overlay_mode = true;
+            false
+        } else {
+            true
+        }
+    });
+
     // Initialize GTK for tray icon (required by tray-icon GTK backend)
     let gtk_ok = gtk::init().is_ok();
     if !gtk_ok {
@@ -62,6 +74,23 @@ fn main() -> anyhow::Result<()> {
         .with_name("live2d-viewer", "live2d-viewer")
         .with_transparent(true)
         .build(&event_loop)?);
+
+    // Overlay mode: small window always-on-top at bottom-right corner
+    if overlay_mode {
+        window.set_decorations(false);
+        window.set_window_level(WindowLevel::AlwaysOnTop);
+        let sf = window.scale_factor();
+        let monitor = window.current_monitor();
+        if let Some(mon) = monitor {
+            let phys = mon.size();
+            let log_w = phys.width as f64 / sf;
+            let log_h = phys.height as f64 / sf;
+            let w = 300.0f64;
+            let h = 400.0f64;
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+            window.set_outer_position(winit::dpi::LogicalPosition::new(log_w - w - 10.0, log_h - h - 10.0));
+        }
+    }
 
     let display_handle = window.raw_display_handle();
     let window_handle = window.raw_window_handle();
@@ -129,7 +158,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut prev_idx: Option<usize> = None;
 
-    let model_loaded = if let Some(arg) = std::env::args().nth(1) {
+    let model_path_arg = args.get(1).cloned();
+    let model_loaded = if let Some(arg) = model_path_arg {
         let model_dir = PathBuf::from(&arg);
         if model_dir.exists() {
             let name = model_dir.file_name().and_then(|n| n.to_str()).unwrap_or("model");
