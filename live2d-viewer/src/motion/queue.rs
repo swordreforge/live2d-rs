@@ -188,9 +188,7 @@ impl MotionQueueManager {
             let is_loop = entry.motion.is_loop;
             let duration = entry.motion.data.duration;
 
-            // Evaluate curves — clone motion to avoid borrow conflict
-            let motion = entry.motion.clone();
-            motion.do_update_parameters(
+            entry.motion.do_update_parameters(
                 param_names,
                 param_lookup,
                 param_values,
