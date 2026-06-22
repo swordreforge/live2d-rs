@@ -530,6 +530,7 @@ impl FloatOverlay {
         gl.disable(DEPTH_TEST);
         gl.disable(STENCIL_TEST);
         gl.disable(CULL_FACE);
+        gl.disable(SCISSOR_TEST); // egui may leave scissor enabled
         gl.enable(BLEND);
         gl.blend_func_separate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
 
