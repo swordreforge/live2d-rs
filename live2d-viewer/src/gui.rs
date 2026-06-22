@@ -26,6 +26,8 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
 fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     let screen = ctx.screen_rect();
+    eprintln!("[float] screen_rect={screen:?}");
+
     let size = screen.size().x.min(screen.size().y);
     let btn_size = size - 8.0;
     let margin = (size - btn_size) / 2.0;
