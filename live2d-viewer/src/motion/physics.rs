@@ -175,8 +175,16 @@ struct PhysicsSetting {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct JsonSource {
+    #[allow(dead_code)]
+    target: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct JsonInput {
-    #[serde(rename = "Id")] source_id: String,
+    source: JsonSource,
     #[serde(rename = "Type")] input_type: String,
     weight: f32,
     #[serde(default)] reflect: bool,
@@ -184,12 +192,20 @@ struct JsonInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct JsonDestination {
+    #[allow(dead_code)]
+    target: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct JsonOutput {
-    #[serde(rename = "Id")] destination_id: String,
-    #[serde(rename = "Type")] output_type: String,
+    destination: JsonDestination,
     vertex_index: i32,
     scale: f32,
     weight: f32,
+    #[serde(rename = "Type")] output_type: String,
     #[serde(default)] reflect: bool,
 }
 
@@ -283,7 +299,7 @@ impl PhysicsEngine {
 
             for inp in &s.input {
                 rig.inputs.push(PhysicsInput {
-                    source_id: inp.source_id.clone(), source_index: -1,
+                    source_id: inp.source.id.clone(), source_index: -1,
                     weight: inp.weight,
                     input_type: match inp.input_type.as_str() {
                         "X" => InputType::X, "Y" => InputType::Y,
@@ -296,7 +312,7 @@ impl PhysicsEngine {
 
             for outp in &s.output {
                 rig.outputs.push(PhysicsOutput {
-                    destination_id: outp.destination_id.clone(), destination_index: -1,
+                    destination_id: outp.destination.id.clone(), destination_index: -1,
                     vertex_index: outp.vertex_index,
                     translation_scale: Vec2::new(outp.scale, outp.scale),
                     angle_scale: outp.scale,
@@ -852,8 +868,8 @@ mod tests {
             },
             "PhysicsSettings": [{
                 "Id": "t",
-                "Input": [{ "Id": "P1", "Type": "X", "Weight": 1.0, "Reflect": false }],
-                "Output": [{ "Id": "P2", "Type": "X", "VertexIndex": 1, "Scale": 1.0, "Weight": 1.0, "Reflect": false }],
+                "Input": [{ "Source": { "Target": "Parameter", "Id": "P1" }, "Type": "X", "Weight": 1.0, "Reflect": false }],
+                "Output": [{ "Destination": { "Target": "Parameter", "Id": "P2" }, "Type": "X", "VertexIndex": 1, "Scale": 1.0, "Weight": 1.0, "Reflect": false }],
                 "Vertices": [
                     { "Position": { "X": 0, "Y": 0 }, "Mobility": 0, "Delay": 0, "Acceleration": 0, "Radius": 0 },
                     { "Position": { "X": 0, "Y": -1 }, "Mobility": 10, "Delay": 1.0, "Acceleration": 5.0, "Radius": 1 }
@@ -981,18 +997,18 @@ mod tests {
             },
             "PhysicsSettings": [
                 { "Id": "h1", "Input": [
-                    { "Id": "ParamAngleX", "Type": "X", "Weight": 1.0, "Reflect": false }
+                    { "Source": { "Target": "Parameter", "Id": "ParamAngleX" }, "Type": "X", "Weight": 1.0, "Reflect": false }
                 ], "Output": [
-                    { "Id": "PH1", "Type": "X", "VertexIndex": 2, "Scale": 0.8, "Weight": 0.5, "Reflect": false }
+                    { "Destination": { "Target": "Parameter", "Id": "PH1" }, "Type": "X", "VertexIndex": 2, "Scale": 0.8, "Weight": 0.5, "Reflect": false }
                 ], "Vertices": [
                     { "Position": { "X": 0, "Y": 0 }, "Mobility": 0, "Delay": 0, "Acceleration": 0, "Radius": 0 },
                     { "Position": { "X": 0, "Y": -30 }, "Mobility": 10, "Delay": 1.0, "Acceleration": 5.0, "Radius": 30 },
                     { "Position": { "X": 0, "Y": -60 }, "Mobility": 10, "Delay": 0.8, "Acceleration": 5.0, "Radius": 30 }
                 ], "Normalization": { "Position": { "Minimum": -1, "Maximum": 1, "Default": 0 }, "Angle": { "Minimum": -30, "Maximum": 30, "Default": 0 } } },
                 { "Id": "h2", "Input": [
-                    { "Id": "ParamAngleY", "Type": "Angle", "Weight": 0.5, "Reflect": true }
+                    { "Source": { "Target": "Parameter", "Id": "ParamAngleY" }, "Type": "Angle", "Weight": 0.5, "Reflect": true }
                 ], "Output": [
-                    { "Id": "PH2", "Type": "Angle", "VertexIndex": 1, "Scale": 1.0, "Weight": 1.0, "Reflect": false }
+                    { "Destination": { "Target": "Parameter", "Id": "PH2" }, "Type": "Angle", "VertexIndex": 1, "Scale": 1.0, "Weight": 1.0, "Reflect": false }
                 ], "Vertices": [
                     { "Position": { "X": 0, "Y": 0 }, "Mobility": 0, "Delay": 0, "Acceleration": 0, "Radius": 0 },
                     { "Position": { "X": 0, "Y": -20 }, "Mobility": 5, "Delay": 0.5, "Acceleration": 3.0, "Radius": 20 }
