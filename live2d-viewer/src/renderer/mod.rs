@@ -462,12 +462,14 @@ impl FloatOverlay {
             return;
         }
 
-        // Simplest possible shader: pass NDC through directly
+        // Pixel-coordinate shader: pass (0,0)-(w,h) pixel coords, shader maps to NDC
         let vs_src = "\
             #version 100\n
             attribute vec2 p;\n
+            uniform vec2 u_resolution;\n
             void main() {\n
-                gl_Position = vec4(p, 0.0, 1.0);\n
+                vec2 ndc = 2.0 * p / u_resolution - 1.0;\n
+                gl_Position = vec4(ndc, 0.0, 1.0);\n
             }";
         let fs_src = "\
             #version 100\n
@@ -508,34 +510,37 @@ impl FloatOverlay {
         self.vbo = Some(vbo);
     }
 
-    pub unsafe fn draw_play_button(&mut self, gl: &Context, _w: f32, _h: f32) {
+    pub unsafe fn draw_play_button(&mut self, gl: &Context, w: f32, h: f32) {
         self.ensure_resources(gl);
 
         let prog = self.program.unwrap();
         let vbo = self.vbo.unwrap();
 
-        // TEST 1: Full-screen quad covering entire NDC (-1,-1) to (1,1)
-        // If this fills the window, pipeline is fine. If corner-only,
-        // something fundamental is wrong.
-        let verts: [f32; 12] = [
-            -1.0, -1.0,
-             1.0, -1.0,
-             1.0,  1.0,
-            -1.0, -1.0,
-             1.0,  1.0,
-            -1.0,  1.0,
+        // Centered play triangle in physical pixel coords
+        let margin = w.min(h) * 0.12;
+        let left = margin;
+        let right = w - margin;
+        let top = h - margin;
+        let bottom = margin;
+        let mid_y = h * 0.5;
+        let verts: [f32; 6] = [
+            left,  bottom,
+            left,  top,
+            right, mid_y,
         ];
 
         gl.use_program(Some(prog));
         gl.disable(DEPTH_TEST);
         gl.disable(STENCIL_TEST);
         gl.disable(CULL_FACE);
-        gl.disable(SCISSOR_TEST); // egui may leave scissor enabled
-        gl.enable(BLEND);
-        gl.blend_func_separate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+        gl.disable(SCISSOR_TEST);
+        gl.disable(BLEND);
+
+        let res_loc = gl.get_uniform_location(prog, "u_resolution");
+        gl.uniform_2_f32(res_loc.as_ref(), w, h);
 
         let color_loc = gl.get_uniform_location(prog, "c");
-        gl.uniform_4_f32(color_loc.as_ref(), 1.0, 0.0, 0.0, 1.0); // red full-screen
+        gl.uniform_4_f32(color_loc.as_ref(), 1.0, 1.0, 1.0, 1.0);
 
         if let Some(v) = self.vao {
             gl.bind_vertex_array(Some(v));
@@ -552,7 +557,7 @@ impl FloatOverlay {
         gl.enable_vertex_attrib_array(pos_loc);
         gl.vertex_attrib_pointer_f32(pos_loc, 2, FLOAT, false, 0, 0);
 
-        gl.draw_arrays(TRIANGLES, 0, 6);
+        gl.draw_arrays(TRIANGLES, 0, 3);
 
         gl.disable_vertex_attrib_array(pos_loc);
         if let Some(_) = self.vao {
@@ -560,6 +565,5 @@ impl FloatOverlay {
         }
         gl.bind_buffer(ARRAY_BUFFER, None);
         gl.use_program(None);
-        gl.disable(BLEND);
     }
 }
