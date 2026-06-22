@@ -28,16 +28,16 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     let screen = ctx.screen_rect();
     eprintln!("[float] screen_rect={screen:?}");
 
-    let size = screen.size().x.min(screen.size().y);
-    let btn_size = size - 8.0;
-    let margin = (size - btn_size) / 2.0;
-    let btn_rect = egui::Rect::from_min_size(
-        egui::pos2(screen.left() + margin, screen.top() + margin),
-        egui::vec2(btn_size, btn_size),
-    );
-    let icon_size = btn_size * 0.4;
+    let btn_size = screen.size().x.min(screen.size().y);
+    let pad = 4.0;
+    let inner = btn_size - pad * 2.0;
+    let icon_size = inner * 0.4;
 
-    let hovered = ctx.pointer_hover_pos().map_or(false, |p| btn_rect.contains(p));
+    eprintln!("[float] btn_size={btn_size} pad={pad} inner={inner}");
+
+    let hovered = ctx.pointer_hover_pos().map_or(false, |p| {
+        p.x >= pad && p.x <= pad + inner && p.y >= pad && p.y <= pad + inner
+    });
     let bg = if hovered {
         egui::Color32::from_rgb(0x55, 0xaa, 0xff)
     } else {
@@ -45,12 +45,14 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     };
 
     egui::Area::new(egui::Id::new("float"))
-        .fixed_pos(btn_rect.left_top())
+        .fixed_pos(egui::pos2(pad, pad))
         .interactable(true)
         .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(btn_rect.size(), egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(inner, inner), egui::Sense::click());
+            eprintln!("[float] area_rect={rect:?} center={:?} response.rect={:?}",
+                rect.center(), response.rect);
             let painter = ui.painter();
-            let round = (btn_size * 0.15).max(4.0);
+            let round = (inner * 0.15).max(4.0);
             painter.rect_filled(rect, round, bg);
             painter.text(
                 rect.center(),
