@@ -376,6 +376,10 @@ fn main() -> anyhow::Result<()> {
                         // Render shapes: egui_glow when normal, raw GL triangle when floating
                         if app.minimized_to_float {
                             unsafe {
+                                // Re-bind default FBO and set viewport RIGHT before drawing,
+                                // in case egui texture ops changed GL state
+                                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                                gl.viewport(0, 0, size.width as i32, size.height as i32);
                                 float_overlay.draw_play_button(
                                     &gl, size.width as f32, size.height as f32,
                                 );
