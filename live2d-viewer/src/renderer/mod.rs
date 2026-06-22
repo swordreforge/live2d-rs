@@ -227,7 +227,8 @@ impl Live2dRenderer {
 
                 gl.bind_framebuffer(FRAMEBUFFER, Some(fbo.fbo));
                 gl.viewport(0, 0, fbo_w, fbo_h);
-                gl.clear_color(0.0, 0.0, 0.0, 0.0);
+                // SDK convention: clear mask FBO to white (1 = invalid/masked-out area)
+                gl.clear_color(1.0, 1.0, 1.0, 1.0);
                 gl.clear(COLOR_BUFFER_BIT);
 
                 gl.use_program(Some(self.mask_program));
@@ -236,13 +237,17 @@ impl Live2dRenderer {
 
                 gl.enable(BLEND);
 
-                // SDK convention: mask drawables always use ONE, ONE_MINUS_SRC_ALPHA blending.
-                // The csmIsInvertedMask flag is checked on the MAIN drawable, not mask drawables.
-                gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+                // SDK convention for mask drawable blend:
+                //   glBlendFuncSeparate(GL_ZERO, GL_ONE_MINUS_SRC_COLOR, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA)
+                // RGB: stays unchanged (our shader outputs (0,0,0,alpha) so ONE_MINUS_SRC_COLOR = 1)
+                // A: new = 0 + dst * (1 - src_alpha) = dst * (1 - textureAlpha)
+                // Starting from 1.0: alpha = 0 inside mask shape, 1 outside
+                gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
 
                 for &mask_idx in mask_slice {
                     let mi = mask_idx as usize;
-                    if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
+                    // SDK: mask drawables check VertexPositionsDidChange, NOT csmIsVisible
+                    // Mask drawables may be "invisible" as rendered objects but still define mask shapes
                     let m_vc = vert_counts[mi] as usize;
                     let m_ic = idx_counts[mi] as usize;
                     if m_vc == 0 || m_ic == 0 { continue; }
@@ -397,7 +402,7 @@ impl Live2dRenderer {
         let blend_modes = drawables.blend_modes();
         let tex_indices = drawables.texture_indices();
         let constant_flags = drawables.constant_flags();
-        let dynamic_flags = drawables.dynamic_flags();
+        let _dynamic_flags = drawables.dynamic_flags();
 
         let vc = vert_counts[drawable_idx] as usize;
         let ic = idx_counts[drawable_idx] as usize;
@@ -423,7 +428,8 @@ impl Live2dRenderer {
 
         gl.bind_framebuffer(FRAMEBUFFER, Some(fbo.fbo));
         gl.viewport(0, 0, fbo_w, fbo_h);
-        gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        // SDK convention: clear mask FBO to white
+        gl.clear_color(1.0, 1.0, 1.0, 1.0);
         gl.clear(COLOR_BUFFER_BIT);
 
         gl.use_program(Some(self.mask_program));
@@ -432,13 +438,12 @@ impl Live2dRenderer {
 
         gl.enable(BLEND);
 
-        // SDK convention: mask drawables always use ONE, ONE_MINUS_SRC_ALPHA.
-        // The csmIsInvertedMask flag is on the MAIN drawable, not mask drawables.
-        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);
+        // SDK convention: mask drawable blend
+        gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ZERO, ONE_MINUS_SRC_ALPHA);
 
         for &mask_idx in mask_indices {
             let mi = mask_idx as usize;
-            if dynamic_flags[mi] & ffi::csmIsVisible as u8 == 0 { continue; }
+            // SDK: mask drawables check VertexPositionsDidChange, NOT csmIsVisible
             let m_vc = vert_counts[mi] as usize;
             let m_ic = idx_counts[mi] as usize;
             if m_vc == 0 || m_ic == 0 { continue; }

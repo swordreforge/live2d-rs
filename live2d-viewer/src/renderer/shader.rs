@@ -80,7 +80,9 @@ void main() {
 
     // When uInvertMask = 1.0, invert so that mask drawable opaque → hidden
     // (SDK convention: inverted mask uses (1.0 - maskVal) instead of maskVal)
-    float maskFactor = mix(maskAlpha, 1.0 - maskAlpha, uInvertMask);
+    // SDK convention: mask buffer has 0 inside shape, 1 outside (clear to white, ZERO,ONE_MINUS_SRC_ALPHA blend)
+    // Normal: invert 0→1 so inside shape is visible; Inverted: use raw value (hide inside shape)
+    float maskFactor = mix(1.0 - maskAlpha, maskAlpha, uInvertMask);
 
     vec4 tex = texture(uTexture, vUV);
     tex.rgb = tex.rgb * uMultiplyColor.rgb;
