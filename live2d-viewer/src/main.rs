@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Instant;
+use winit::platform::x11::WindowBuilderExtX11;
 use winit::window::WindowBuilder;
 use winit::event::{Event, WindowEvent, ElementState};
 use winit::window::WindowLevel;
@@ -58,6 +59,7 @@ fn main() -> anyhow::Result<()> {
 
     let window = Arc::new(WindowBuilder::new()
         .with_title("Live2D Viewer")
+        .with_name("live2d-viewer", "live2d-viewer")
         .with_transparent(true)
         .build(&event_loop)?);
 
