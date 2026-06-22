@@ -510,7 +510,7 @@ impl FloatOverlay {
 
         gl.use_program(Some(prog));
         let color_loc = gl.get_uniform_location(prog, "c");
-        gl.uniform_4_f32(color_loc.as_ref(), 0.2, 0.6, 0.9, 1.0);
+        gl.uniform_4_f32(color_loc.as_ref(), 1.0, 1.0, 1.0, 1.0); // white triangle on blue bg
 
         gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
         gl.buffer_data_u8_slice(ARRAY_BUFFER, std::slice::from_raw_parts(

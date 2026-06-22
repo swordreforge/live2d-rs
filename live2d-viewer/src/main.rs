@@ -355,28 +355,32 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        if app.minimized_to_float {
-                            unsafe {
-                                gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                float_overlay.draw_play_button(&gl, size.width as f32, size.height as f32);
-                            }
+                        // --- Egui frame (always runs for input, rendering skipped when floating) ---
+                        unsafe {
+                            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                            gl.viewport(0, 0, size.width as i32, size.height as i32);
+                        }
+                        let raw_input = egui_state.take_egui_input(&window);
+                        egui_ctx.begin_frame(raw_input);
+                        gui::draw_ui(&egui_ctx, &mut app);
+                        let output = egui_ctx.end_frame();
+
+                        // Always process textures
+                        for (id, delta) in &output.textures_delta.set {
+                            painter.set_texture(*id, delta);
+                        }
+                        for id in &output.textures_delta.free {
+                            painter.free_texture(*id);
                         }
 
-                        if !app.minimized_to_float {
-                            // Ensure default framebuffer is bound and viewport matches window
+                        // Render shapes: egui_glow when normal, raw GL triangle when floating
+                        if app.minimized_to_float {
                             unsafe {
-                                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                                gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                float_overlay.draw_play_button(
+                                    &gl, size.width as f32, size.height as f32,
+                                );
                             }
-                            let raw_input = egui_state.take_egui_input(&window);
-                            egui_ctx.begin_frame(raw_input);
-                            gui::draw_ui(&egui_ctx, &mut app);
-                            let output = egui_ctx.end_frame();
-
-                            for (id, delta) in &output.textures_delta.set {
-                                painter.set_texture(*id, delta);
-                            }
-
+                        } else {
                             let clipped_primitives =
                                 egui_ctx.tessellate(output.shapes, output.pixels_per_point);
                             painter.paint_primitives(
@@ -384,10 +388,6 @@ fn main() -> anyhow::Result<()> {
                                 output.pixels_per_point,
                                 &clipped_primitives,
                             );
-
-                            for id in &output.textures_delta.free {
-                                painter.free_texture(*id);
-                            }
                         }
 
                         // Minimize (X11 → hide; Wayland → small float window)
