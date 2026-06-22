@@ -26,7 +26,6 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
 fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     let screen = ctx.screen_rect();
-    eprintln!("[float] screen_rect={screen:?}");
 
     let btn_size = screen.size().x.min(screen.size().y) - 4.0;
     let btn_rect = egui::Rect::from_center_size(
@@ -34,8 +33,6 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
         egui::vec2(btn_size, btn_size),
     );
     let icon_size = btn_size * 0.45;
-
-    eprintln!("[float] btn_rect={btn_rect:?} icon_size={icon_size}");
 
     let painter = ctx.debug_painter();
     // Draw a RED rect to contrast with blue GL clear

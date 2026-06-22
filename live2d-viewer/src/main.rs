@@ -376,20 +376,6 @@ fn main() -> anyhow::Result<()> {
                         // Render shapes: egui_glow when normal, raw GL triangle when floating
                         if app.minimized_to_float {
                             unsafe {
-                                // Log actual GL viewport state right before our draw
-                                let mut vp = [0i32; 4];
-                                gl.get_parameter_i32_slice(glow::VIEWPORT, &mut vp);
-                                let mut sc = [0i32; 4];
-                                gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut sc);
-                                let fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-                                let stencil = gl.get_parameter_i32(glow::STENCIL_TEST);
-                                let scissor = gl.get_parameter_i32(glow::SCISSOR_TEST);
-                                eprintln!(
-                                    "[float] GL state: viewport={vp:?} scissor_box={sc:?} fbo={fbo} \
-                                     stencil_test={stencil} scissor_test={scissor} window={}x{}",
-                                    size.width, size.height,
-                                );
-
                                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                                 gl.viewport(0, 0, size.width as i32, size.height as i32);
                                 float_overlay.draw_play_button(
@@ -431,7 +417,6 @@ fn main() -> anyhow::Result<()> {
                                 let phys_h = (50.0_f64 * sf) as u32;
                                 if let (Some(rw), Some(rh)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
                                     surface.resize(&gl_context, rw, rh);
-                                    eprintln!("[float] forced surface resize to {}x{}", phys_w, phys_h);
                                 }
                             }
                         }
@@ -449,7 +434,6 @@ fn main() -> anyhow::Result<()> {
                                 let phys_h = (rh * sf) as u32;
                                 if let (Some(pw), Some(ph)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
                                     surface.resize(&gl_context, pw, ph);
-                                    eprintln!("[restore] forced surface resize to {}x{}", phys_w, phys_h);
                                 }
                                 app.camera_needs_fit = true;
                             } else {
@@ -485,14 +469,10 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::Resized(size) => {
-                                    eprintln!("[Resized] {}x{} (physical)", size.width, size.height);
-                                    // If the compositor resized our float window (e.g. via drag),
-                                    // force it back to 50x50 logical immediately.
                                     if app.minimized_to_float {
                                         let float_logical = 50.0;
                                         let max_phys = (float_logical * window.scale_factor()).ceil() as u32;
                                         if size.width > max_phys || size.height > max_phys {
-                                            eprintln!("[Resized] wayland compositor enlarged float window, forcing back");
                                             let _ = window.request_inner_size(
                                                 winit::dpi::LogicalSize::new(float_logical, float_logical),
                                             );
@@ -502,7 +482,7 @@ fn main() -> anyhow::Result<()> {
                                             ) {
                                                 surface.resize(&gl_context, rw, rh);
                                             }
-                                            return; // skip viewport update, will be handled next frame
+                                            return;
                                         }
                                     }
                                     if let (Some(w), Some(h)) = (
