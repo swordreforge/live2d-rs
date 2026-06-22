@@ -376,8 +376,20 @@ fn main() -> anyhow::Result<()> {
                         // Render shapes: egui_glow when normal, raw GL triangle when floating
                         if app.minimized_to_float {
                             unsafe {
-                                // Re-bind default FBO and set viewport RIGHT before drawing,
-                                // in case egui texture ops changed GL state
+                                // Log actual GL viewport state right before our draw
+                                let mut vp = [0i32; 4];
+                                gl.get_parameter_i32_slice(glow::VIEWPORT, &mut vp);
+                                let mut sc = [0i32; 4];
+                                gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut sc);
+                                let fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+                                let stencil = gl.get_parameter_i32(glow::STENCIL_TEST);
+                                let scissor = gl.get_parameter_i32(glow::SCISSOR_TEST);
+                                eprintln!(
+                                    "[float] GL state: viewport={vp:?} scissor_box={sc:?} fbo={fbo} \
+                                     stencil_test={stencil} scissor_test={scissor} window={}x{}",
+                                    size.width, size.height,
+                                );
+
                                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                                 gl.viewport(0, 0, size.width as i32, size.height as i32);
                                 float_overlay.draw_play_button(
