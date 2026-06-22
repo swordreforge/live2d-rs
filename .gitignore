@@ -14,8 +14,9 @@
 # macOS
 .DS_Store
 
-# Manual test binaries
-live2d-viewer*
+# Manual test binaries (not source files)
+live2d-viewer
+live2d-viewer.exe
 
 # Build artifacts
 *.o
