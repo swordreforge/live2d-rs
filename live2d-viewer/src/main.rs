@@ -354,6 +354,11 @@ fn main() -> anyhow::Result<()> {
 
                         // --- egui overlay ---
                         {
+                            // Ensure default framebuffer is bound and viewport matches window
+                            unsafe {
+                                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                                gl.viewport(0, 0, size.width as i32, size.height as i32);
+                            }
                             let raw_input = egui_state.take_egui_input(&window);
                             if app.minimized_to_float {
                                 eprintln!(
