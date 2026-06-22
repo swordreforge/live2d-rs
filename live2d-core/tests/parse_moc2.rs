@@ -35,13 +35,13 @@ fn test_parse_model_moc() {
     }
 
     for (i, d) in model.deformers.iter().enumerate() {
-        let kind = match d.kind {
-            live2d_core::moc2::DeformerKind::Warp { col, row, .. } =>
-                format!("Warp({}x{})", col, row),
-            live2d_core::moc2::DeformerKind::Rotation { ref affine_indices } =>
-                format!("Rotation({} affines)", affine_indices.len()),
+        let (kind_str, pivot_len) = match &d.kind {
+            live2d_core::moc2::DeformerKind::Warp { col, row, pivot_points } =>
+                (format!("Warp({}x{})", col, row), pivot_points.len()),
+            live2d_core::moc2::DeformerKind::Rotation { affine_indices } =>
+                (format!("Rotation({} affines)", affine_indices.len()), 0),
         };
-        println!("  Deformer[{i}]: id=\"{}\" target=\"{}\" kind={kind} pmgr={}",
+        println!("  Deformer[{i}]: id=\"{}\" target=\"{}\" kind={kind_str} pivot_len={pivot_len} pmgr={}",
             d.id, d.target_id, d.pivot_manager_index);
     }
 
@@ -52,4 +52,80 @@ fn test_parse_model_moc() {
             d.average_draw_order,
             d.clip_id.as_deref());
     }
+}
+
+#[test]
+fn test_moc2_model_runtime() {
+    let path = Path::new(TEST_MOC_PATH);
+    if !path.exists() {
+        eprintln!("[SKIP] test data not found at {TEST_MOC_PATH}");
+        return;
+    }
+
+    let data = std::fs::read(path).expect("read .moc file");
+    let parsed = live2d_core::moc2::parse_moc2(&data).expect("parse MOC2");
+    let param_count = parsed.param_defs.len();
+    let angle_x_index = parsed.param_defs.iter()
+        .position(|p| p.id.as_ref() == "PARAM_ANGLE_X")
+        .expect("PARAM_ANGLE_X should exist in model");
+
+    let mut model = live2d_core::moc2::Moc2Model::new(std::sync::Arc::new(parsed));
+
+    // Check initial state
+    assert_eq!(model.param_count(), param_count,
+        "param_count should match parsed data");
+
+    // Default values should match param definitions
+    println!("=== Initial parameter values ===");
+    for i in 0..model.param_count() {
+        println!("  param[{i}] = {}", model.param_value(i));
+    }
+
+    // Run first update
+    model.update();
+
+    // Check drawable output
+    let drawables = model.drawable_data();
+    let render_order = model.render_order();
+    println!("=== After first update ===");
+    println!("  Drawables: {}  Render order: {:?}", drawables.len(), render_order);
+
+    for (i, d) in drawables.iter().enumerate() {
+        println!(
+            "  Drawable[{i}]: {} verts, opacity={:.4}, order={}, available={}",
+            d.transformed_vertices.len() / 2,
+            d.opacity,
+            d.draw_order,
+            d.available,
+        );
+        // All vertex values should be finite
+        for &v in &d.transformed_vertices {
+            assert!(v.is_finite(), "vertex value should be finite");
+        }
+    }
+
+    // Set parameter value and update
+    model.set_param_value_by_index(angle_x_index, 15.0);
+    model.update();
+
+    let drawables = model.drawable_data();
+    println!("=== After PARAM_ANGLE_X = 15 ===");
+    for (i, d) in drawables.iter().enumerate() {
+        println!(
+            "  Drawable[{i}]: {} verts, opacity={:.4}, order={}",
+            d.transformed_vertices.len() / 2,
+            d.opacity,
+            d.draw_order,
+        );
+    }
+
+    // Second update with same value — should short-circuit
+    model.set_param_value_by_index(angle_x_index, 15.0);
+    model.update();
+    println!("=== After second update (same value) — should short-circuit ===");
+
+    // Update with different value
+    model.set_param_value_by_index(angle_x_index, -30.0);
+    model.update();
+    println!("=== After PARAM_ANGLE_X = -30 ===");
 }

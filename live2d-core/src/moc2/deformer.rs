@@ -11,10 +11,10 @@
 //!            `live2d/core/deformer/deformer.py`,
 //!            `live2d/core/deformer/deformer_context.py`
 
-use super::types::{AffineEnt, Deformer, DeformerKind, Id, ParamPivot};
+use super::types::{AffineEnt, Deformer, DeformerKind, Drawable, Id, ParamPivot};
 use crate::moc2::pivot::{
     calc_pivot_indices, calc_pivot_values, check_param_updated, interpolate_float,
-    ParamPivotState, PivotContext,
+    interpolate_int, ParamPivotState, PivotContext,
 };
 use std::f32::consts::PI;
 
@@ -236,6 +236,70 @@ pub(crate) fn warp_point_count(row: i32, col: i32) -> i32 {
     (row + 1) * (col + 1)
 }
 
+/// Build deformer tree: parent indices + topological order.
+///
+/// A deformer whose `target_id` is empty / "DST_BASE" / "BASE" is a root.
+/// Otherwise, the parent is the deformer whose `id` matches `target_id`.
+/// Returns `(parents, order)` where `parents[i] = Some(j)` if deformer `i`
+/// has parent `j`, and `order` is a topological ordering (parents before
+/// children).
+pub(crate) fn build_deformer_tree(
+    deformers: &[Deformer],
+) -> (Vec<Option<usize>>, Vec<usize>) {
+    let count = deformers.len();
+    let mut parents = vec![None; count];
+
+    // Build id → index lookup
+    let id_to_idx: std::collections::HashMap<&str, usize> = deformers
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.id.as_ref(), i))
+        .collect();
+
+    // Find parent for each deformer
+    for (i, def) in deformers.iter().enumerate() {
+        if !deformer_need_transform(&def.target_id) {
+            continue; // root deformer
+        }
+        if let Some(&parent_idx) = id_to_idx.get(def.target_id.as_ref()) {
+            parents[i] = Some(parent_idx);
+        }
+    }
+
+    // Topological sort via Kahn's algorithm
+    let mut in_degree = vec![0usize; count];
+    for i in 0..count {
+        if parents[i].is_some() {
+            in_degree[i] += 1;
+        }
+    }
+
+    let mut queue: Vec<usize> = (0..count).filter(|&i| in_degree[i] == 0).collect();
+    let mut order = Vec::with_capacity(count);
+
+    while let Some(idx) = queue.pop() {
+        order.push(idx);
+        for child in 0..count {
+            if parents[child] == Some(idx) {
+                in_degree[child] = in_degree[child].saturating_sub(1);
+                if in_degree[child] == 0 {
+                    queue.push(child);
+                }
+            }
+        }
+    }
+
+    (parents, order)
+}
+
+/// Returns `TYPE_WARP` or `TYPE_ROTATION` for a deformer.
+pub(crate) fn deformer_get_type(deformer: &Deformer) -> i32 {
+    match deformer.kind {
+        DeformerKind::Warp { .. } => TYPE_WARP,
+        DeformerKind::Rotation { .. } => TYPE_ROTATION,
+    }
+}
+
 /// Grid index helper: x of control-point `(r, c)` in row-major grid.
 #[inline]
 fn gx(grid: &[f32], r: i32, c: i32, a1: i32) -> f32 {
@@ -275,7 +339,7 @@ pub(crate) fn warp_setup_interpolate(
         return;
     }
 
-    let pivot_points = match &deformer.kind {
+    let pivot_arrays = match &deformer.kind {
         DeformerKind::Warp { pivot_points, .. } => pivot_points.as_slice(),
         _ => return,
     };
@@ -299,7 +363,7 @@ pub(crate) fn warp_setup_interpolate(
 
     if dim_count == 0 {
         let len = point_count * 2;
-        context.interpolated_points[..len].copy_from_slice(&pivot_points[..len]);
+        context.interpolated_points[..len].copy_from_slice(&pivot_arrays[0][..len]);
     } else {
         calc_pivot_indices(
             &[deformer.pivot_manager_index],
@@ -312,7 +376,6 @@ pub(crate) fn warp_setup_interpolate(
 
         let num_vertices = 1usize << dim_count;
         let coord_count = point_count * 2;
-        let points_per_corner = coord_count;
 
         let mut weights = [0.0f32; 64];
         debug_assert!(num_vertices <= weights.len());
@@ -324,7 +387,7 @@ pub(crate) fn warp_setup_interpolate(
             let mut sum = 0.0f32;
             for v in 0..num_vertices {
                 let corner = tmp_indices[v] as usize;
-                sum += weights[v] * pivot_points[corner * points_per_corner + ci];
+                sum += weights[v] * pivot_arrays[corner][ci];
             }
             context.interpolated_points[ci] = sum;
         }
@@ -343,6 +406,39 @@ pub(crate) fn warp_setup_interpolate(
         tmp_t,
     );
     context.base.set_interpolated_opacity(opacity);
+}
+
+/// Chain-transform a warp deformer's interpolated grid through the
+/// parent deformer.
+///
+/// For root deformers (`need_transform == false`): no-op — the engine
+/// falls back to `interpolated_points` automatically.
+///
+/// For child deformers: transforms every grid control point through
+/// the parent's `transform_fn`.
+///
+/// Reference: `WarpDeformer.setupTransform`
+pub(crate) fn warp_setup_transform(
+    context: &mut WarpContext,
+    need_transform: bool,
+    parent_idx: Option<usize>,
+    transform_fn: &dyn Fn(usize, &[f32], &mut [f32], i32, i32, i32),
+) {
+    if !need_transform {
+        return;
+    }
+    let Some(parent) = parent_idx else { return };
+    let Some(transformed) = context.transformed_points.as_mut() else { return };
+
+    let num_points = (context.interpolated_points.len() / 2) as i32;
+    transform_fn(
+        parent,
+        &context.interpolated_points,
+        transformed,
+        num_points,
+        0,
+        2,
+    );
 }
 
 /// Compute the multi-linear blend weight for `vertex_index` (a binary
@@ -895,6 +991,151 @@ pub(crate) fn rotation_setup_interpolate(
     let first_affine = &affines[affine_indices[tmp_indices[0] as usize]];
     context.interpolated_affine.reflect_x = first_affine.reflect_x;
     context.interpolated_affine.reflect_y = first_affine.reflect_y;
+}
+
+/// Chain-transform a rotation deformer's interpolated affine through
+/// the parent deformer.
+///
+/// For root deformers: `transformed_affine = Some(interpolated_affine)`.
+///
+/// For child deformers: measures parent rotation with
+/// `get_direction_on_dst`, computes composite affine with total
+/// rotation accumulated from parent.
+///
+/// Reference: `RotationDeformer.setupTransform`
+pub(crate) fn rotation_setup_transform(
+    context: &mut RotationContext,
+    need_transform: bool,
+    parent_idx: Option<usize>,
+    transform_fn: &dyn Fn(usize, &[f32], &mut [f32], i32, i32, i32),
+) {
+    if !need_transform {
+        context.transformed_affine = Some(context.interpolated_affine);
+        return;
+    }
+    let Some(parent) = parent_idx else {
+        context.transformed_affine = Some(context.interpolated_affine);
+        return;
+    };
+
+    // Measure parent rotation using iterative direction search.
+    let src_origin = [
+        context.interpolated_affine.origin_x,
+        context.interpolated_affine.origin_y,
+    ];
+    let src_dir = [1.0f32, 0.0f32];
+    let mut ret_dir = [0.0f32; 2];
+
+    get_direction_on_dst(parent, &src_origin, &src_dir, &mut ret_dir, transform_fn);
+
+    let angle = get_angle_not_abs((src_dir[0], src_dir[1]), (ret_dir[0], ret_dir[1]));
+
+    let mut out = context.interpolated_affine;
+    out.rotation_deg += angle * RAD_TO_DEG;
+    context.transformed_affine = Some(out);
+}
+
+/// Interpolate drawable vertex positions, opacity, and draw order
+/// through the drawable's pivot manager.
+///
+/// Returns `true` if any parameter was outside its defined range.
+///
+/// Reference: `Mesh.setupInterpolate`
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drawable_setup_interpolate(
+    drawable: &Drawable,
+    pivot_states: &mut [ParamPivotState],
+    ctx: &PivotContext,
+    param_pivots: &[ParamPivot],
+    tmp_indices: &mut [u16],
+    tmp_t: &mut [f32],
+    out_vertices: &mut [f32],
+    out_draw_order: &mut i32,
+    out_opacity: &mut f32,
+) -> bool {
+    let pivot_indices = &[drawable.pivot_manager_index];
+    let mut outside = false;
+
+    if !check_param_updated(pivot_indices, param_pivots, pivot_states, ctx) {
+        return false;
+    }
+
+    let dim_count = calc_pivot_values(
+        pivot_indices,
+        param_pivots,
+        pivot_states,
+        ctx,
+        &mut outside,
+    );
+
+    // Interpolate vertices
+    let vert_count = drawable.vertex_count as usize;
+    let coord_count = vert_count * 2;
+    let dst = &mut out_vertices[..coord_count];
+
+    if dim_count == 0 {
+        dst.copy_from_slice(&drawable.pivot_points[..coord_count]);
+    } else {
+        calc_pivot_indices(
+            pivot_indices,
+            pivot_states,
+            param_pivots,
+            dim_count,
+            tmp_indices,
+            tmp_t,
+        );
+
+        let num_corners = 1usize << dim_count;
+        let points_per_corner = coord_count;
+        let mut weights = [0.0f32; 64];
+        for v in 0..num_corners {
+            let mut w = 1.0f32;
+            let mut bits = v;
+            for d in 0..dim_count {
+                w *= if bits & 1 == 0 { 1.0 - tmp_t[d] } else { tmp_t[d] };
+                bits >>= 1;
+            }
+            weights[v] = w;
+        }
+
+        for ci in 0..coord_count {
+            let mut sum = 0.0f32;
+            for v in 0..num_corners {
+                let corner = tmp_indices[v] as usize;
+                sum += weights[v] * drawable.pivot_points[corner * points_per_corner + ci];
+            }
+            dst[ci] = sum;
+        }
+    }
+
+    // Interpolate opacity
+    *out_opacity = interpolate_opacity(
+        &drawable.pivot_opacities,
+        pivot_indices,
+        param_pivots,
+        pivot_states,
+        ctx,
+        tmp_indices,
+        tmp_t,
+    );
+
+    // Interpolate draw order
+    if drawable.pivot_draw_orders.is_empty() {
+        *out_draw_order = drawable.average_draw_order;
+    } else {
+        let (order, _) = interpolate_int(
+            pivot_indices,
+            param_pivots,
+            pivot_states,
+            ctx,
+            &drawable.pivot_draw_orders,
+            tmp_indices,
+            tmp_t,
+        );
+        *out_draw_order = order;
+    }
+
+    outside
 }
 
 /// Trilinear interpolation helper.

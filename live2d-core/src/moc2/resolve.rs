@@ -143,7 +143,7 @@ pub(crate) fn resolve_registry(registry: &Registry) -> MocResult<Moc2Data> {
                         kind: DeformerKind::Warp {
                             col,
                             row,
-                            pivot_points: resolve_f32_array(ppts, registry),
+                            pivot_points: resolve_f32_array_array(ppts, registry),
                         },
                     };
                 }

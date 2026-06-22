@@ -67,7 +67,7 @@ pub enum DeformerKind {
     Warp {
         col: i32,
         row: i32,
-        pivot_points: Vec<f32>,
+        pivot_points: Vec<Vec<f32>>,
     },
     Rotation {
         affine_indices: Vec<usize>,

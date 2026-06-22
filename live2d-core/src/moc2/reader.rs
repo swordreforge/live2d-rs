@@ -235,7 +235,8 @@ fn read_model_impl(reader: &mut BinaryReader, registry: &mut Registry) -> MocRes
 
 fn read_avatar(reader: &mut BinaryReader, registry: &mut Registry) -> MocResult<ObjIndex> {
     let id = read_moc_object(reader, registry, read_known_type)?;
-    let draw_list = read_moc_object(reader, registry, read_known_type)?;
+    // Binary stores def_list BEFORE draw_list
     let def_list = read_moc_object(reader, registry, read_known_type)?;
-    Ok(registry.push(pack_opaque(142, &[id, draw_list, def_list])))
+    let draw_list = read_moc_object(reader, registry, read_known_type)?;
+    Ok(registry.push(pack_opaque(142, &[id, def_list, draw_list])))
 }

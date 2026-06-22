@@ -78,6 +78,24 @@ pub(crate) fn resolve_f32_array(idx: ObjIndex, registry: &Registry) -> Vec<f32> 
     }
 }
 
+/// Resolve an ObjArray of F32Arrays into `Vec<Vec<f32>>`.
+///
+/// In MOC2, a WarpDeformer's pivot points are stored as an ObjArray of
+/// Float32Arrays — one array per keyframe combination of the deformer's
+/// pivot parameters.  If the index points to a bare Float32Array (some
+/// simpler deformers), it is wrapped as a single-element Vec.
+pub(crate) fn resolve_f32_array_array(idx: ObjIndex, registry: &Registry) -> Vec<Vec<f32>> {
+    let resolved = resolve_ref(idx, registry);
+    match registry.get(resolved) {
+        Ok(Blob::ObjArray(refs)) => refs
+            .iter()
+            .map(|&r| resolve_f32_array(r, registry))
+            .collect(),
+        Ok(Blob::F32Array(arr)) => vec![arr.to_vec()],
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn resolve_i32_array(idx: ObjIndex, registry: &Registry) -> Vec<i32> {
     let resolved = resolve_ref(idx, registry);
     if let Ok(Blob::I32Array(arr)) = registry.get(resolved) {
