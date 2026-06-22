@@ -144,6 +144,9 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("renderer: {e}"))?
     };
 
+    // Floating button overlay (raw GL, bypasses egui_glow coordinate bug)
+    let mut float_overlay = renderer::FloatOverlay::new();
+
     // egui setup
     let egui_ctx = egui::Context::default();
     let mut painter = egui_glow::Painter::new(gl.clone(), "", None)
@@ -352,30 +355,23 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // --- egui overlay ---
-                        {
+                        if app.minimized_to_float {
+                            unsafe {
+                                gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                float_overlay.draw_play_button(&gl, size.width as f32, size.height as f32);
+                            }
+                        }
+
+                        if !app.minimized_to_float {
                             // Ensure default framebuffer is bound and viewport matches window
                             unsafe {
                                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                                 gl.viewport(0, 0, size.width as i32, size.height as i32);
                             }
                             let raw_input = egui_state.take_egui_input(&window);
-                            if app.minimized_to_float {
-                                eprintln!(
-                                    "[float] diag: window_size={size:?} scale_factor={}",
-                                    window.scale_factor(),
-                                );
-                            }
                             egui_ctx.begin_frame(raw_input);
                             gui::draw_ui(&egui_ctx, &mut app);
                             let output = egui_ctx.end_frame();
-                            if app.minimized_to_float {
-                                eprintln!(
-                                    "[float] output: ppp={:?} shapes={}",
-                                    output.pixels_per_point,
-                                    output.shapes.len(),
-                                );
-                            }
 
                             for (id, delta) in &output.textures_delta.set {
                                 painter.set_texture(*id, delta);

@@ -443,3 +443,88 @@ impl Live2dRenderer {
         gl.use_program(None);
     }
 }
+
+/// Raw GL overlay for the floating/minimized play button.
+/// Bypasses egui_glow entirely since its coordinate transform is bugged at small sizes.
+pub struct FloatOverlay {
+    program: Option<NativeProgram>,
+    vbo: Option<NativeBuffer>,
+}
+
+impl FloatOverlay {
+    pub fn new() -> Self {
+        Self { program: None, vbo: None }
+    }
+
+    unsafe fn ensure_resources(&mut self, gl: &Context) {
+        if self.program.is_some() {
+            return;
+        }
+        let vs_src = "\
+            #version 100\n
+            attribute vec2 p;\n
+            void main() {\n
+                gl_Position = vec4(p, 0.0, 1.0);\n
+            }";
+        let fs_src = "\
+            #version 100\n
+            precision mediump float;\n
+            uniform vec4 c;\n
+            void main() {\n
+                gl_FragColor = c;\n
+            }";
+
+        let vs = gl.create_shader(VERTEX_SHADER).unwrap();
+        gl.shader_source(vs, vs_src);
+        gl.compile_shader(vs);
+
+        let fs = gl.create_shader(FRAGMENT_SHADER).unwrap();
+        gl.shader_source(fs, fs_src);
+        gl.compile_shader(fs);
+
+        let prog = gl.create_program().unwrap();
+        gl.attach_shader(prog, vs);
+        gl.attach_shader(prog, fs);
+        gl.link_program(prog);
+        gl.delete_shader(vs);
+        gl.delete_shader(fs);
+
+        let vbo = gl.create_buffer().unwrap();
+        self.program = Some(prog);
+        self.vbo = Some(vbo);
+    }
+
+    pub unsafe fn draw_play_button(&mut self, gl: &Context, w: f32, h: f32) {
+        self.ensure_resources(gl);
+
+        let prog = self.program.unwrap();
+        let vbo = self.vbo.unwrap();
+
+        let aspect = w / h;
+        let s = 0.45;
+        let verts: [f32; 6] = [
+            -s / aspect, -s,
+            -s / aspect,  s,
+             s / aspect,  0.0,
+        ];
+
+        gl.use_program(Some(prog));
+        let color_loc = gl.get_uniform_location(prog, "c");
+        gl.uniform_4_f32(color_loc.as_ref(), 0.2, 0.6, 0.9, 1.0);
+
+        gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
+        gl.buffer_data_u8_slice(ARRAY_BUFFER, std::slice::from_raw_parts(
+            &verts as *const _ as *const u8,
+            std::mem::size_of_val(&verts),
+        ), STATIC_DRAW);
+
+        let pos_loc = gl.get_attrib_location(prog, "p")
+            .expect("float overlay attribute 'p' not found");
+        gl.enable_vertex_attrib_array(pos_loc);
+        gl.vertex_attrib_pointer_f32(pos_loc, 2, FLOAT, false, 0, 0);
+
+        gl.draw_arrays(TRIANGLES, 0, 3);
+        gl.disable_vertex_attrib_array(pos_loc);
+        gl.use_program(None);
+    }
+}
