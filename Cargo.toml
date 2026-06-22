@@ -5,3 +5,7 @@ members = [
     "live2d-core",
     "live2d-viewer",
 ]
+
+[profile.release]
+strip = true
+lto = true
