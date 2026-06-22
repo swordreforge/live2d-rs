@@ -467,11 +467,25 @@ impl AppState {
             }
         }
 
-        // Apply Breath controller
+        // Apply Breath controller (delta-additive oscillation)
         self.breath.update(delta_time, &mut self.parameter_values, &self.parameter_names);
 
-        // Apply Look controller (head/eye tracking from mouse position)
-        self.look.update(delta_time, &mut self.parameter_values, &self.parameter_names);
+        // Apply Look controller (subtract old offset → update → add new offset)
+        for p in &self.look.params {
+            if let Some(idx) = self.parameter_names.iter().position(|n| n == &p.id) {
+                if idx < self.parameter_values.len() {
+                    self.parameter_values[idx] -= p.current_offset;
+                }
+            }
+        }
+        self.look.compute_raw(delta_time);
+        for p in &self.look.params {
+            if let Some(idx) = self.parameter_names.iter().position(|n| n == &p.id) {
+                if idx < self.parameter_values.len() {
+                    self.parameter_values[idx] += p.current_offset;
+                }
+            }
+        }
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {
