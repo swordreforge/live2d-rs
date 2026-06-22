@@ -152,36 +152,50 @@
 
 ---
 
-## Phase 4 — Runtime Model 🔲 **NOT STARTED** (stubs only)
+## Phase 4 — Runtime Model ✅ **DONE**
 
 ### 4a. Moc2Model (`runtime.rs`)
 **Reference: `live2d/core/model_context.py`**
 
-Wraps `Moc2Data` + mutable runtime state:
+Wraps `Moc2Data` + mutable runtime state — **fully implemented**:
 
-- **Parameter storage**: `param_values: [f32]`, `param_min: [f32]`, `param_max: [f32]`
-- **Parameter update tracking**: `updated_param_flags: [bool]`, version counter
-- **Parameter operations**: `get_param_index(id)`, `get_param_float(idx)`, `set_param_float(idx, val)`
-- **`get_param(id)`** → resolve string id to index at runtime
+- [x] **Parameter storage**: `param_values: Vec<f32>`, `param_prev_values: Vec<f32>`, `param_updated: Vec<bool>`
+- [x] **Parameter operations**: `set_param_value(id)`, `set_param_value_by_index(idx, val)`, `param_value(idx)`, `param_values()`, `param_count()`
+- [x] **Init tracking**: `init_version` (monotonic counter), `setup_required` (first-frame flag)
+- [x] **Deformer tree**: `build_deformer_tree` — parent index + topological order (Kahn's algorithm)
+- [x] **Deformer runtime contexts**: `Vec<Option<WarpContext>>` + `Vec<Option<RotationContext>>` (allocated once)
+- [x] **Temp scratch buffers**: `tmp_indices: [u16; 65]`, `tmp_t: [f32; 65]` (reused per frame)
+- [x] **DrawableState**: `interpolated_vertices`, `transformed_vertices`, `opacity`, `draw_order`, `available`
 
-- **Deformer contexts**: `Vec<WarpContext>` + `Vec<RotationContext>` (allocated once)
-- **Deformer operations**: `get_deformer_index(target_id)`, `get_deformer(idx)`, `get_deformer_context(idx)`
+### 4b. Deformer pipeline functions
+- [x] `build_deformer_tree` — Kahn topological sort (parent before child)
+- [x] `deformer_get_type` — returns TYPE_WARP / TYPE_ROTATION
+- [x] `warp_setup_transform` — chain-transform warp grid through parent
+- [x] `rotation_setup_transform` — composite affine with parent rotation/scale
+- [x] `drawable_setup_interpolate` — pivot-based vertex/opacity/draw-order interpolation
+- [x] `drawable_transform_vertices` — chain-transform drawable vertices through deformer tree
 
-- **Parts contexts**: visibility/opacity tracking per `PartsData`
+### 4c. `Moc2Model::update()` main pipeline
+- [x] Increment `init_version`, detect param changes
+- [x] Build `PivotContext` for the frame
+- [x] For each deformer in topological order:
+  - `warp_setup_interpolate` / `rotation_setup_interpolate`
+  - `warp_setup_transform` / `rotation_setup_transform`
+  - Accumulate deformer opacity
+- [x] For each drawable:
+  - Resolve target deformer via `target_id`
+  - `drawable_setup_interpolate` (vertices, opacity, draw order)
+  - Chain-transform through deformer parents
+  - Accumulate total opacity
+- [x] Sort render order by draw_order
 
-- **Draw context**: per-drawable transformed vertex/index buffers
-
-- **`update()` entry point**:
-  1. Check which params changed
-  2. For each deformer in tree order:
-     - `setupInterpolate` *→* `setupTransform`
-  3. For each drawable:
-     - Resolve target deformer chain → transform mesh vertices
-     - Apply parts opacity
-
-### Phase 4 Files to Create/Modify
-- `live2d-core/src/moc2/runtime.rs` — currently 2-line stub → full runtime model
-- May need: `deformer_context.rs` for WarpContext/RotationContext types
+### Integration Test
+- [x] `test_moc2_model_runtime` — runs full update pipeline, verifies:
+  - Initial param values match definitions
+  - First update runs without error (setup_required)
+  - Setting parameter values and updating
+  - Same-value update short-circuit path
+  - Drawable output consistency
 
 ---
 
