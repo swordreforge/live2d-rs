@@ -374,7 +374,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // Minimize (X11 → hide; Wayland → floating overlay, no resize)
+                        // Minimize (X11 → hide; Wayland → small float window)
                         if app.request_minimize {
                             app.request_minimize = false;
                             let on_x11 = match window.raw_window_handle() {
@@ -386,13 +386,25 @@ fn main() -> anyhow::Result<()> {
                                 let _ = window.set_visible(false);
                             } else {
                                 app.minimized_to_float = true;
+                                let sf = window.scale_factor();
+                                app.saved_window_pet_size = (
+                                    app.window_size.0 as f64 / sf,
+                                    app.window_size.1 as f64 / sf,
+                                );
                                 app.camera_needs_fit = false;
+                                let _ = window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(100.0, 100.0)));
+                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(100.0, 100.0));
                             }
                         }
                         if app.request_restore {
                             app.request_restore = false;
                             if app.minimized_to_float {
                                 app.minimized_to_float = false;
+                                let (w, h) = app.saved_window_pet_size;
+                                let rw = (w.max(200.0)).min(4000.0);
+                                let rh = (h.max(200.0)).min(4000.0);
+                                let _ = window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
+                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
                                 app.camera_needs_fit = true;
                             } else {
                                 let _ = window.set_visible(true);
