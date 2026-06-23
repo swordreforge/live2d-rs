@@ -57,18 +57,18 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
     // Collect model info first to avoid borrow conflict with switch_to
-    let model_entries: Vec<(String, bool)> = app
+    let model_names: Vec<String> = app
         .model_list
         .iter()
-        .map(|e| (e.name.clone(), e.loaded))
+        .map(|e| e.name.clone())
         .collect();
 
     Window::new("Model List")
         .default_width(250.0)
         .show(ctx, |ui| {
-            for (i, (name, loaded)) in model_entries.iter().enumerate() {
+            for (i, name) in model_names.iter().enumerate() {
                 let selected = current_idx == Some(i);
-                let label = format!("{} {}", if *loaded { "\u{25cf}" } else { "\u{25cb}" }, name,);
+                let label = format!("{} {}", if selected { "\u{25cf}" } else { "\u{25cb}" }, name,);
                 if ui.selectable_label(selected, label).clicked() {
                     if let Err(e) = app.begin_switch(i) {
                         app.error_message = Some(e);
