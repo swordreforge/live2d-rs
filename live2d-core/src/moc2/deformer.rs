@@ -10,12 +10,18 @@
 //!            `live2d/core/deformer/roation_deformer.py`,
 //!            `live2d/core/deformer/deformer.py`,
 //!            `live2d/core/deformer/deformer_context.py`
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
 
-use super::types::{AffineEnt, Deformer, DeformerKind, Drawable, Id, ParamPivot};
+use super::types::{AffineEnt, Deformer, DeformerKind, Drawable, Id, ParamPivot, PartsData};
 use crate::moc2::pivot::{
     calc_pivot_indices, calc_pivot_values, check_param_updated, interpolate_float,
     interpolate_int, ParamPivotState, PivotContext,
 };
+use std::collections::HashMap;
 use std::f32::consts::PI;
 
 // ── constants ──────────────────────────────────────────────────────
@@ -35,6 +41,7 @@ pub(crate) const TYPE_WARP: i32 = 2;
 /// Reference: `DeformerContext` in `deformer_context.py`
 #[derive(Debug, Clone)]
 pub(crate) struct DeformerContext {
+    #[allow(dead_code)]
     pub parts_index: Option<usize>,
     pub outside_param: bool,
     pub available: bool,
@@ -57,6 +64,7 @@ impl Default for DeformerContext {
 }
 
 impl DeformerContext {
+    #[allow(dead_code)]
     pub fn is_available(&self) -> bool {
         self.available && !self.outside_param
     }
@@ -65,6 +73,7 @@ impl DeformerContext {
         self.available = value;
     }
 
+    #[allow(dead_code)]
     pub fn is_outside_param(&self) -> bool {
         self.outside_param
     }
@@ -73,10 +82,12 @@ impl DeformerContext {
         self.outside_param = value;
     }
 
+    #[allow(dead_code)]
     pub fn get_total_scale(&self) -> f32 {
         self.total_scale
     }
 
+    #[allow(dead_code)]
     pub fn set_total_scale(&mut self, value: f32) {
         self.total_scale = value;
     }
@@ -106,6 +117,7 @@ impl DeformerContext {
 #[derive(Debug, Clone)]
 pub(crate) struct WarpContext {
     pub base: DeformerContext,
+    #[allow(dead_code)]
     pub tmp_deformer_index: i32,
     pub interpolated_points: Vec<f32>,
     pub transformed_points: Option<Vec<f32>>,
@@ -135,8 +147,9 @@ impl WarpContext {
 ///
 /// Reference: `RotationContext` in `rotation_context.py`
 #[derive(Debug, Clone)]
-pub(crate) struct RotationContext {
-    pub base: DeformerContext,
+pub struct RotationContext {
+    pub(crate) base: DeformerContext,
+    #[allow(dead_code)]
     pub tmp_deformer_index: i32,
     pub interpolated_affine: AffineEnt,
     pub transformed_affine: Option<AffineEnt>,
@@ -154,6 +167,31 @@ impl RotationContext {
                 None
             },
         }
+    }
+
+    /// Returns (origin_x, origin_y, rotation_deg, scale_x, scale_y) from the
+    /// interpolated affine — convenience for debug logging.
+    pub fn interpolated_affine(&self) -> (f32, f32, f32, f32, f32) {
+        (
+            self.interpolated_affine.origin_x,
+            self.interpolated_affine.origin_y,
+            self.interpolated_affine.rotation_deg,
+            self.interpolated_affine.scale_x,
+            self.interpolated_affine.scale_y,
+        )
+    }
+
+    /// Returns the transformed affine as a tuple, if present.
+    pub fn transformed_affine_ref(&self) -> Option<(f32, f32, f32, f32, f32)> {
+        self.transformed_affine.map(|a| {
+            (
+                a.origin_x,
+                a.origin_y,
+                a.rotation_deg,
+                a.scale_x,
+                a.scale_y,
+            )
+        })
     }
 }
 
@@ -190,7 +228,7 @@ pub(crate) fn get_angle_not_abs(v1: (f32, f32), v2: (f32, f32)) -> f32 {
 /// Returns `true` when `target_id` is not the base (root) id.
 ///
 /// Reference: `Deformer.needTransform`
-pub(crate) fn deformer_need_transform(target_id: &Id) -> bool {
+pub fn deformer_need_transform(target_id: &Id) -> bool {
     !is_base_id(target_id)
 }
 
@@ -238,19 +276,25 @@ pub(crate) fn warp_point_count(row: i32, col: i32) -> i32 {
 
 /// Build deformer tree: parent indices + topological order.
 ///
+/// Matches Python `ModelContext.init()` which:
+/// 1. Collects deformers only from parts' `def_list` (in part order)
+/// 2. Sorts them using a multi-pass BFS: roots first, then children level-by-level
+///
 /// A deformer whose `target_id` is empty / "DST_BASE" / "BASE" is a root.
 /// Otherwise, the parent is the deformer whose `id` matches `target_id`.
+///
 /// Returns `(parents, order)` where `parents[i] = Some(j)` if deformer `i`
 /// has parent `j`, and `order` is a topological ordering (parents before
-/// children).
+/// children) using only deformers referenced by parts.
 pub(crate) fn build_deformer_tree(
     deformers: &[Deformer],
+    parts: &[PartsData],
 ) -> (Vec<Option<usize>>, Vec<usize>) {
     let count = deformers.len();
     let mut parents = vec![None; count];
 
     // Build id → index lookup
-    let id_to_idx: std::collections::HashMap<&str, usize> = deformers
+    let id_to_idx: HashMap<&str, usize> = deformers
         .iter()
         .enumerate()
         .map(|(i, d)| (d.id.as_ref(), i))
@@ -266,26 +310,47 @@ pub(crate) fn build_deformer_tree(
         }
     }
 
-    // Topological sort via Kahn's algorithm
-    let mut in_degree = vec![0usize; count];
-    for i in 0..count {
-        if parents[i].is_some() {
-            in_degree[i] += 1;
+    // Collect only deformers referenced by parts (Python semantics)
+    let mut referenced: Vec<usize> = Vec::new();
+    let mut seen = vec![false; count];
+    for part in parts {
+        for &def_idx in &part.deformer_indices {
+            if def_idx < count && !seen[def_idx] {
+                referenced.push(def_idx);
+                seen[def_idx] = true;
+            }
         }
     }
 
-    let mut queue: Vec<usize> = (0..count).filter(|&i| in_degree[i] == 0).collect();
-    let mut order = Vec::with_capacity(count);
+    // Multi-pass BFS topological sort (matching Python reference)
+    let mut temp: Vec<Option<usize>> = referenced.iter().copied().map(Some).collect();
+    let total = temp.len();
+    let mut order = Vec::with_capacity(total);
+    let mut in_result = vec![false; count];
 
-    while let Some(idx) = queue.pop() {
-        order.push(idx);
-        for child in 0..count {
-            if parents[child] == Some(idx) {
-                in_degree[child] = in_degree[child].saturating_sub(1);
-                if in_degree[child] == 0 {
-                    queue.push(child);
+    loop {
+        let mut added = false;
+        for i in 0..total {
+            if let Some(def_idx) = temp[i] {
+                let def = &deformers[def_idx];
+                let can_add = if !deformer_need_transform(&def.target_id) {
+                    true
+                } else if let Some(&parent_idx) = id_to_idx.get(def.target_id.as_ref()) {
+                    in_result[parent_idx]
+                } else {
+                    true
+                };
+
+                if can_add {
+                    order.push(def_idx);
+                    in_result[def_idx] = true;
+                    temp[i] = None;
+                    added = true;
                 }
             }
+        }
+        if !added {
+            break;
         }
     }
 
@@ -419,6 +484,7 @@ pub(crate) fn warp_setup_interpolate(
 /// the parent's `transform_fn`.
 ///
 /// Reference: `WarpDeformer.setupTransform`
+#[allow(dead_code)]
 pub(crate) fn warp_setup_transform(
     context: &mut WarpContext,
     need_transform: bool,
@@ -909,7 +975,7 @@ pub(crate) fn rotation_setup_interpolate(
         );
     } else if dim_count == 4 {
         quad_lerp_affine_field(
-            &affines,
+            affines,
             affine_indices,
             tmp_indices,
             tmp_t,
@@ -917,7 +983,7 @@ pub(crate) fn rotation_setup_interpolate(
             &mut context.interpolated_affine.origin_x,
         );
         quad_lerp_affine_field(
-            &affines,
+            affines,
             affine_indices,
             tmp_indices,
             tmp_t,
@@ -925,7 +991,7 @@ pub(crate) fn rotation_setup_interpolate(
             &mut context.interpolated_affine.origin_y,
         );
         quad_lerp_affine_field(
-            &affines,
+            affines,
             affine_indices,
             tmp_indices,
             tmp_t,
@@ -933,7 +999,7 @@ pub(crate) fn rotation_setup_interpolate(
             &mut context.interpolated_affine.scale_x,
         );
         quad_lerp_affine_field(
-            &affines,
+            affines,
             affine_indices,
             tmp_indices,
             tmp_t,
@@ -941,7 +1007,7 @@ pub(crate) fn rotation_setup_interpolate(
             &mut context.interpolated_affine.scale_y,
         );
         quad_lerp_affine_field(
-            &affines,
+            affines,
             affine_indices,
             tmp_indices,
             tmp_t,
@@ -1003,6 +1069,7 @@ pub(crate) fn rotation_setup_interpolate(
 /// rotation accumulated from parent.
 ///
 /// Reference: `RotationDeformer.setupTransform`
+#[allow(dead_code)]
 pub(crate) fn rotation_setup_transform(
     context: &mut RotationContext,
     need_transform: bool,
@@ -1053,11 +1120,18 @@ pub(crate) fn drawable_setup_interpolate(
     out_vertices: &mut [f32],
     out_draw_order: &mut i32,
     out_opacity: &mut f32,
+    // Previous outside flag — preserved when no param has changed,
+    // matching Python's Mesh.setupInterpolate which does NOT reset
+    // paramOutside when checkParamUpdated returns false.
+    prev_outside: bool,
 ) -> bool {
     let mut outside = false;
 
     if !check_param_updated(pivot_indices, param_pivots, pivot_states, ctx) {
-        return false;
+        // No driving param changed → interpolation is skipped (stale values kept)
+        // and the outside flag must be preserved. Python keeps `paramOutside`
+        // unchanged in this path, so we return the previous outside value here.
+        return prev_outside;
     }
 
     let dim_count = calc_pivot_values(
@@ -1221,7 +1295,7 @@ pub(crate) fn rotation_transform_points(
 /// `transform_fn` is called as `transform_fn(parent_idx, src, dst, 1, 0, 2)`.
 ///
 /// Reference: `RotationDeformer.getDirectionOnDst`
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn get_direction_on_dst(
     parent_idx: usize,
     src_origin: &[f32; 2],
@@ -1282,10 +1356,12 @@ mod tests {
     use crate::moc2::types::ParamPivot;
     use std::sync::Arc;
 
+    #[allow(dead_code)]
     fn make_id(s: &str) -> Id {
         Arc::from(s)
     }
 
+    #[allow(dead_code)]
     fn make_pivot(id: &str, count: i32, values: Vec<f32>) -> ParamPivot {
         ParamPivot {
             param_id: make_id(id),

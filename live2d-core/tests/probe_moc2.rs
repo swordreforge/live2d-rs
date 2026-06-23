@@ -25,7 +25,7 @@ fn probe_deformer_tree_trace() {
     
     // Find drawable chains
     println!("=== DRAWABLE -> FULL CHAIN ===");
-    'next_drawable: for (di, d) in parsed.drawables.iter().enumerate().take(66) {
+    for (di, d) in parsed.drawables.iter().enumerate().take(66) {
         let is_base = d.target_id.is_empty()
             || d.target_id.as_ref() == "DST_BASE"
             || d.target_id.as_ref() == "BASE";

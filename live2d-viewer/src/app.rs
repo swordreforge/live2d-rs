@@ -36,7 +36,7 @@ pub struct AppState {
     pub eye_blink: motion::eye_blink::EyeBlink,
     pub breath: motion::breath::Breath,
     pub look: motion::look::Look,
-    /// Loaded motions by category (e.g. "Idle", "TapBody")
+    /// Loaded motions by category (e.g. "idle", "tap_body")
     pub loaded_motions: HashMap<String, Vec<motion::CubismMotion>>,
     /// Loaded expressions by name
     pub loaded_expressions: HashMap<String, motion::ExpressionMotion>,
@@ -167,7 +167,7 @@ impl AppState {
 
         // Detect MOC format: .moc (Cubism 2.x) vs .moc3 (Cubism 3+)
         // Look for a model3.json or model.json in the directory
-        let model3_path = entry.dir.join(format!("{}.model3.json", &entry.name));
+        let model3_path = entry.dir.join(format!("{}.model3.json", entry.name));
         let model2_path = entry.dir.join("model.json");
 
         if model3_path.exists() {
@@ -223,10 +223,10 @@ impl AppState {
             self.load_pose(&loaded.base_dir, &loaded.model3_json);
             self.apply_pose_reset();
             self.load_physics(&loaded.base_dir, &loaded.model3_json);
-        } else if model2_path.exists() || entry.dir.join(format!("{}.model.json", &entry.name)).exists() || entry.dir.join(format!("{}.moc", &entry.name)).exists() {
+        } else if model2_path.exists() || entry.dir.join(format!("{}.model.json", entry.name)).exists() || entry.dir.join(format!("{}.moc", entry.name)).exists() {
             // ── Cubism 2.x (MOC2) path ──
             // Find the .moc file
-            let moc_file = entry.dir.join(format!("{}.moc", &entry.name));
+            let moc_file = entry.dir.join(format!("{}.moc", entry.name));
             let moc_data = std::fs::read(&moc_file)
                 .map_err(|e| format!("read .moc: {e}"))?;
 
@@ -259,7 +259,7 @@ impl AppState {
             let model_json_path = if model2_path.exists() {
                 Some(model2_path)
             } else {
-                let candidate = entry.dir.join(format!("{}.model.json", &entry.name));
+                let candidate = entry.dir.join(format!("{}.model.json", entry.name));
                 if candidate.exists() { Some(candidate) } else { None }
             };
 
@@ -292,7 +292,7 @@ impl AppState {
             }
 
             self.current_moc = None;
-            self.current_model = Some(LoadedModelVariant::V2(adapter));
+            self.current_model = Some(LoadedModelVariant::V2(Box::new(adapter)));
             self.base_dir = Some(entry.dir.clone());
 
             // ── Load motions, expressions, physics from model.json ──
@@ -596,8 +596,7 @@ impl AppState {
                 }
             }
         }
-        drop(popac);
-        // Propagate part opacities to drawables
+        // popac dropped here — propagate part opacities to drawables
         model.update();
         self.pose_fade_remaining = 0.0;
     }
@@ -630,7 +629,7 @@ impl AppState {
         }
     }
 
-    /// Start a motion from a specific category (e.g. "Idle", "TapBody").
+    /// Start a motion from a specific category (e.g. "idle", "tap_body").
     /// If `index` is provided, plays that specific motion; otherwise plays the first one.
     pub fn start_motion(&mut self, category: &str, index: Option<usize>) -> bool {
         let motions = match self.loaded_motions.get(category) {
@@ -737,7 +736,7 @@ impl AppState {
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {
-            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
+            if let Some(idle_motions) = self.loaded_motions.get("idle") {
                 if let Some(first) = idle_motions.first() {
                     self.motion_queue.start_motion(first.clone());
                 }
@@ -753,6 +752,7 @@ impl AppState {
     }
 
     /// Handle tap interaction with camera values passed directly (avoids borrow conflict).
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_tap_with_cam(
         &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
         cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
@@ -810,7 +810,7 @@ impl AppState {
                 let cy = verts[tri[2] as usize * 2 + 1];
 
                 if point_in_triangle(model_x, model_y, ax, ay, bx, by, cx, cy) {
-                    if let Some(motions) = self.loaded_motions.get("TapBody") {
+                    if let Some(motions) = self.loaded_motions.get("tap_body") {
                         if !motions.is_empty() {
                             let idx = self.tap_count % motions.len();
                             self.tap_count += 1;
@@ -827,6 +827,7 @@ impl AppState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32) -> bool {
     let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
     let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);

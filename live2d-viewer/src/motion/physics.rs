@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Physics simulation engine — pendulum/spring physics for Live2D models.
 //!
 //! Ported from CubismSdkForNative Framework (CubismPhysics.cpp / CubismPhysicsInternal.hpp).
@@ -693,7 +694,7 @@ fn normalize_parameter_value(
         _ => mid_norm,
     };
 
-    if is_inverted { result } else { result * -1.0 }
+    if is_inverted { result } else { -result }
 }
 
 /// Exact mirror of C++ UpdateParticles.

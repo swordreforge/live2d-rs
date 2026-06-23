@@ -40,7 +40,7 @@ impl<'a> BinaryReader<'a> {
         let version = buf[3];
         // Version 8..=11 are supported.
         // (Some MOC3-derived files incorrectly claim version < 8.)
-        if version < 8 || version > 11 {
+        if !(8..=11).contains(&version) {
             return Err(MocError::UnsupportedVersion { version });
         }
         Ok(Self {

@@ -125,17 +125,17 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             // Action buttons
             ui.horizontal(|ui| {
                 if ui.button("Replay Idle").clicked() {
-                    app.start_motion("Idle", Some(0));
+                    app.start_motion("idle", Some(0));
                 }
                 if ui.button("Stop All").clicked() {
                     app.motion_queue.stop_all_motions();
                 }
             });
 
-            if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
+            if let Some(tap_motions) = app.loaded_motions.get("tap_body") {
                 if !tap_motions.is_empty() && ui.button("Tap Body").clicked() {
                     let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
-                    app.start_motion("TapBody", Some(idx));
+                    app.start_motion("tap_body", Some(idx));
                 }
             }
 

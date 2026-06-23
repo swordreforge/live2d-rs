@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 //! Motion/animation system for Live2D Cubism models.
 //!
 //! Implements the motion playback pipeline from the Cubism Framework:

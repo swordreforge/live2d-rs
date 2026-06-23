@@ -13,7 +13,7 @@ fn probe_drawable_state() {
     runtime.update();
 
     let drawable_states = runtime.drawable_data();
-    let render_order = runtime.render_order();
+    let _render_order = runtime.render_order();
 
     let nd = data.drawables.len();
     println!("=== Drawable State Probe ===");

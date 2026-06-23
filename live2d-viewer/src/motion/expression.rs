@@ -72,6 +72,12 @@ pub struct ExpressionManager {
     pub is_active: bool,
 }
 
+impl Default for ExpressionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExpressionManager {
     pub fn new() -> Self {
         Self {

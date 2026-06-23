@@ -132,6 +132,7 @@ impl MotionQueueManager {
     }
 
     /// Update all active motions, evaluating curves and writing to parameters and part opacities.
+    #[allow(clippy::too_many_arguments)]
     pub fn do_update_motion(
         &mut self,
         param_names: &[String],
@@ -209,10 +210,7 @@ impl MotionQueueManager {
             let time_offset = user_time - entry_start_time;
             let is_done = !is_loop && time_offset >= duration;
 
-            if is_done {
-                entry.set_finished(true);
-                finished_indices.push(i);
-            } else if entry.is_triggered_fade_out() && entry_end_time < user_time {
+            if is_done || (entry.is_triggered_fade_out() && entry_end_time < user_time) {
                 entry.set_finished(true);
                 finished_indices.push(i);
             }

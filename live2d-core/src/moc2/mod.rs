@@ -7,7 +7,7 @@ mod types;
 
 // Phase 3–5 stubs
 pub(crate) mod pivot;
-pub(crate) mod deformer;
+pub mod deformer;
 mod runtime;
 pub use runtime::Moc2Model;
 

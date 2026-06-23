@@ -4,6 +4,7 @@
 //! the full update pipeline: parameter change detection → deformer
 //! interpolation → deformer chain transform → drawable vertex transform
 //! → render order sort.
+#![allow(clippy::too_many_arguments)]
 
 use std::sync::Arc;
 
@@ -15,10 +16,10 @@ use crate::moc2::deformer::{
 use crate::moc2::pivot::{ParamPivotState, PivotContext, PIVOT_TABLE_SIZE};
 use crate::moc2::types::*;
 
-fn resolve_pivot_indices<'a>(
+fn resolve_pivot_indices(
     pmgr_idx: usize,
-    pivot_managers: &'a [PivotManager],
-) -> &'a [usize] {
+    pivot_managers: &[PivotManager],
+) -> &[usize] {
     if pmgr_idx != usize::MAX {
         &pivot_managers[pmgr_idx].pivot_indices
     } else {
@@ -32,6 +33,9 @@ pub struct DrawableState {
     pub interpolated_vertices: Vec<f32>,
     pub transformed_vertices: Vec<f32>,
     pub opacity: f32,
+    /// Base opacity from the target deformer's totalOpacity chain
+    /// (parent-deformer-chain cumulative opacity: interpolated × parent total).
+    pub base_opacity: f32,
     pub draw_order: i32,
     pub available: bool,
 }
@@ -43,6 +47,7 @@ impl DrawableState {
             interpolated_vertices: vec![0.0f32; len],
             transformed_vertices: vec![0.0f32; len],
             opacity: 1.0,
+            base_opacity: 1.0,
             draw_order: 0,
             available: true,
         }
@@ -75,7 +80,7 @@ impl Moc2Model {
         let param_values: Vec<f32> =
             data.param_defs.iter().map(|p| p.default_value).collect();
 
-        let (deformer_parents, deformer_order) = build_deformer_tree(&data.deformers);
+        let (deformer_parents, deformer_order) = build_deformer_tree(&data.deformers, &data.parts);
 
         let warp_states: Vec<Option<WarpContext>> = data
             .deformers
@@ -170,6 +175,18 @@ impl Moc2Model {
 
     pub fn render_order(&self) -> &[usize] {
         &self.render_order
+    }
+
+    pub fn deformer_parents(&self) -> &[Option<usize>] {
+        &self.deformer_parents
+    }
+
+    pub fn deformer_order(&self) -> &[usize] {
+        &self.deformer_order
+    }
+
+    pub fn rotation_states(&self) -> &[Option<RotationContext>] {
+        &self.rotation_states
     }
 
     // ── main pipeline ──
@@ -293,6 +310,17 @@ impl Moc2Model {
                             );
                         }
                     }
+
+                    // Propagate parent availability (Python: WarpDeformer.setupTransform)
+                    let parent_available = deformer_is_available(
+                        p,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        &self.data.deformers,
+                    );
+                    if let Some(ref mut w) = warp {
+                        w.base.set_available(parent_available);
+                    }
                 }
                 TYPE_ROTATION => {
                     if !need_transform {
@@ -330,7 +358,16 @@ impl Moc2Model {
 
                     // Compute parent rotation contribution (uses shared refs only).
                     let src_origin = [ox, oy];
-                    let src_dir = [1.0f32, 0.0f32];
+
+                    // Python: RotationDeformer.setupTransform direction vector
+                    //   (0, -0.1) = upward in Y-down space for warp parents
+                    //   (0, -10)  = larger step for rotation parents
+                    let parent_type = deformer_get_type(&self.data.deformers[p]);
+                    let (dx, dy) = match parent_type {
+                        TYPE_ROTATION => (0.0f32, -10.0f32),
+                        _ => (0.0f32, -0.1f32),
+                    };
+                    let src_dir = [dx, dy];
                     let mut ret_dir = [0.0f32; 2];
 
                     get_direction_inline(
@@ -362,6 +399,14 @@ impl Moc2Model {
                         2,
                     );
 
+                    // Propagate parent availability (Python: RotationDeformer.setupTransform)
+                    let parent_available = deformer_is_available(
+                        p,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        &self.data.deformers,
+                    );
+
                     // Now mutate transformed_affine via raw pointer.
                     let rot_ptr: *mut Option<RotationContext> =
                         &mut self.rotation_states[def_idx];
@@ -377,10 +422,44 @@ impl Moc2Model {
                         out.origin_x = transformed_origin[0];
                         out.origin_y = transformed_origin[1];
                         r.transformed_affine = Some(out);
+                        r.base.set_available(parent_available);
                     }
                 }
                 _ => {}
             }
+        }
+
+        // ── Pass 2.5: Propagate totalOpacity through deformer chain ──
+        // Python: WarpDeformer.setupTransform / RotationDeformer.setupTransform
+        //   root: totalOpacity = interpolatedOpacity
+        //   child: totalOpacity = parent.totalOpacity * interpolatedOpacity
+        for &def_idx in &order {
+            let parent = self.deformer_parents[def_idx];
+            let interp_op = deformer_interpolated_opacity(
+                def_idx,
+                &self.warp_states,
+                &self.rotation_states,
+                &self.data.deformers,
+            );
+            let total_op = match parent {
+                Some(p) => {
+                    let parent_total = deformer_total_opacity(
+                        p,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        &self.data.deformers,
+                    );
+                    parent_total * interp_op
+                }
+                None => interp_op,
+            };
+            set_deformer_total_opacity(
+                def_idx,
+                total_op,
+                &mut self.warp_states,
+                &mut self.rotation_states,
+                &self.data.deformers,
+            );
         }
 
         // ── Pass 3: Drawable processing ──
@@ -393,6 +472,10 @@ impl Moc2Model {
                 drawable.pivot_manager_index,
                 &self.data.pivot_managers,
             );
+            // Save previous outside state BEFORE calling drawable_setup_interpolate.
+            // When no driving param has changed, Python preserves the previous
+            // `paramOutside` — we must do the same via the `prev_outside` parameter.
+            let prev_outside = !ds.available;
             let outside = drawable_setup_interpolate(
                 drawable,
                 &mut self.pivot_states,
@@ -404,6 +487,7 @@ impl Moc2Model {
                 &mut ds.interpolated_vertices,
                 &mut ds.draw_order,
                 &mut ds.opacity,
+                prev_outside,
             );
 
             match resolve_drawable_deformer(&self.data.deformers, drawable) {
@@ -411,6 +495,7 @@ impl Moc2Model {
                     ds.transformed_vertices
                         .copy_from_slice(&ds.interpolated_vertices);
                     ds.available = !outside;
+                    ds.base_opacity = 1.0;
                 }
                 Some(target_def) => {
                     let vert_count = drawable.vertex_count;
@@ -427,6 +512,12 @@ impl Moc2Model {
                         2,
                     );
                     ds.available = !outside;
+                    ds.base_opacity = deformer_total_opacity(
+                        target_def,
+                        &self.warp_states,
+                        &self.rotation_states,
+                        &self.data.deformers,
+                    );
                 }
             }
 
@@ -574,5 +665,84 @@ fn get_direction_inline(
         }
 
         step *= 0.1;
+    }
+}
+
+fn deformer_is_available(
+    def_idx: usize,
+    warp_states: &[Option<WarpContext>],
+    rotation_states: &[Option<RotationContext>],
+    deformers: &[Deformer],
+) -> bool {
+    match deformer_get_type(&deformers[def_idx]) {
+        TYPE_WARP => warp_states[def_idx]
+            .as_ref()
+            .map(|w| w.base.is_available())
+            .unwrap_or(false),
+        TYPE_ROTATION => rotation_states[def_idx]
+            .as_ref()
+            .map(|r| r.base.is_available())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn deformer_interpolated_opacity(
+    def_idx: usize,
+    warp_states: &[Option<WarpContext>],
+    rotation_states: &[Option<RotationContext>],
+    deformers: &[Deformer],
+) -> f32 {
+    match deformer_get_type(&deformers[def_idx]) {
+        TYPE_WARP => warp_states[def_idx]
+            .as_ref()
+            .map(|w| w.base.get_interpolated_opacity())
+            .unwrap_or(1.0),
+        TYPE_ROTATION => rotation_states[def_idx]
+            .as_ref()
+            .map(|r| r.base.get_interpolated_opacity())
+            .unwrap_or(1.0),
+        _ => 1.0,
+    }
+}
+
+fn deformer_total_opacity(
+    def_idx: usize,
+    warp_states: &[Option<WarpContext>],
+    rotation_states: &[Option<RotationContext>],
+    deformers: &[Deformer],
+) -> f32 {
+    match deformer_get_type(&deformers[def_idx]) {
+        TYPE_WARP => warp_states[def_idx]
+            .as_ref()
+            .map(|w| w.base.get_total_opacity())
+            .unwrap_or(1.0),
+        TYPE_ROTATION => rotation_states[def_idx]
+            .as_ref()
+            .map(|r| r.base.get_total_opacity())
+            .unwrap_or(1.0),
+        _ => 1.0,
+    }
+}
+
+fn set_deformer_total_opacity(
+    def_idx: usize,
+    opacity: f32,
+    warp_states: &mut [Option<WarpContext>],
+    rotation_states: &mut [Option<RotationContext>],
+    deformers: &[Deformer],
+) {
+    match deformer_get_type(&deformers[def_idx]) {
+        TYPE_WARP => {
+            if let Some(w) = &mut warp_states[def_idx] {
+                w.base.set_total_opacity(opacity);
+            }
+        }
+        TYPE_ROTATION => {
+            if let Some(r) = &mut rotation_states[def_idx] {
+                r.base.set_total_opacity(opacity);
+            }
+        }
+        _ => {}
     }
 }

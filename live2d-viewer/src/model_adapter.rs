@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use live2d_core::Model;
-use live2d_core::moc2::{Moc2Data, Moc2Model, ColorComposition};
+use live2d_core::moc2::{Moc2Data, Moc2Model, ColorComposition, DeformerKind};
 use live2d_core::canvas::CanvasInfo;
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ impl FrameDrawables {
 
 pub enum LoadedModelVariant {
     Core(Model<'static>),
-    V2(Moc2ModelAdapter),
+    V2(Box<Moc2ModelAdapter>),
 }
 
 // SAFETY: Moc2ModelAdapter contains only Send + Sync types internally.
@@ -92,6 +92,7 @@ pub enum LoadedModelVariant {
 unsafe impl Send for LoadedModelVariant {}
 unsafe impl Sync for LoadedModelVariant {}
 
+#[allow(dead_code)]
 impl LoadedModelVariant {
     /// Run the per-frame update.
     /// For Core models this also resets dynamic flags (csmIsVisible etc.)
@@ -268,18 +269,10 @@ impl LoadedModelVariant {
         let idx_ptrs = drawables.indices();
         let mask_ptrs = drawables.masks();
 
-        let vert_positions: Vec<*const f32> = vpos_ptrs.iter()
-            .map(|&p| p as *const f32)
-            .collect();
-        let vert_uvs: Vec<*const f32> = vuv_ptrs.iter()
-            .map(|&p| p as *const f32)
-            .collect();
-        let indices: Vec<*const u16> = idx_ptrs.iter()
-            .map(|&p| p)
-            .collect();
-        let masks: Vec<*const i32> = mask_ptrs.iter()
-            .map(|&p| p)
-            .collect();
+        let vert_positions: Vec<*const f32> = vpos_ptrs.iter().map(|&p| p.cast()).collect();
+        let vert_uvs: Vec<*const f32> = vuv_ptrs.iter().map(|&p| p.cast()).collect();
+        let indices: Vec<*const u16> = idx_ptrs.to_vec();
+        let masks: Vec<*const i32> = mask_ptrs.to_vec();
 
         FrameDrawables {
             n,
@@ -349,8 +342,87 @@ impl Moc2ModelAdapter {
             return FrameDrawables::empty();
         }
 
-        let render_order = self.model.render_order();
         let drawable_states = self.model.drawable_data();
+
+        // ── DEBUG: dump deformer tree + coordinates once ──
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static DUMPED: AtomicBool = AtomicBool::new(false);
+        if !DUMPED.swap(true, Ordering::Relaxed) {
+            eprintln!("=== DEFORMER TREE ===");
+            let parents = self.model.deformer_parents();
+            let order = self.model.deformer_order();
+            for &def_idx in order.iter() {
+                let def = &self.data.deformers[def_idx];
+                let kind = match &def.kind {
+                    DeformerKind::Warp { row, col, .. } =>
+                        format!("Warp({}x{})", row, col),
+                    DeformerKind::Rotation { .. } =>
+                        "Rotation".to_string(),
+                };
+                let parent_info = match parents[def_idx] {
+                    Some(p) => format!("parent=#{}", p),
+                    None => "root".to_string(),
+                };
+                eprintln!("  def#{} id={:?} {} target={:?} {}", 
+                    def_idx, def.id, kind, def.target_id, parent_info);
+            }
+            eprintln!("=== DRAWABLE DEFORMER MAP ===");
+            for (i, d) in drawables.iter().enumerate() {
+                let is_base = d.target_id.is_empty() || *d.target_id == *"DST_BASE" || *d.target_id == *"BASE";
+                let target = if is_base {
+                    "none(base)".to_string()
+                } else {
+                    let def_idx = self.data.deformers.iter().position(|def| def.id == d.target_id);
+                    match def_idx {
+                        Some(idx) => format!("deformer#{}", idx),
+                        None => "MISSING!".to_string(),
+                    }
+                };
+                eprintln!("  draw#{} id={:?} -> {}", i, d.id, target);
+            }
+            // Dump rotation deformer origins (key for hand positioning)
+            eprintln!("=== ROTATION ORIGINS (hand chain) ===");
+            let hand_rot_ids = ["B_HAND.08", "B_HAND.17", "B_HAND.18", "B_CLOTHES.04", "B_CLOTHES.07", 
+                "B_CLOTHES.38", "B_CLOTHES.39", "B_CLOTHES.40", "B_CLOTHES.41",
+                "B_CLOTHES.31", "B_CLOTHES.32", "B_CLOTHES.33"];
+            for (i, rot) in self.model.rotation_states().iter().enumerate() {
+                if let Some(r) = rot {
+                    let name = &self.data.deformers[i].id;
+                    if hand_rot_ids.contains(&name.as_ref()) {
+                        let ia = r.interpolated_affine();
+                        let ta = r.transformed_affine_ref();
+                        eprintln!("  rot#{} id={:?} interp=({:.1},{:.1}) rot={:.1} scale=({:.3},{:.3})", 
+                            i, name, ia.0, ia.1, ia.2, ia.3, ia.4);
+                        if let Some(ta) = ta {
+                            eprintln!("         trans=({:.1},{:.1}) rot={:.1} scale=({:.3},{:.3})", 
+                                ta.0, ta.1, ta.2, ta.3, ta.4);
+                        }
+                    }
+                }
+            }
+            // Dump bounding boxes of all drawables
+            eprintln!("=== DRAWABLE BOUNDING BOXES ===");
+            for (i, d) in drawables.iter().enumerate() {
+                let ds = if i < drawable_states.len() { &drawable_states[i] } else { continue };
+                let vc = d.vertex_count as usize;
+                if ds.transformed_vertices.len() >= vc * 2 {
+                    let mut min_x = f32::MAX;
+                    let mut min_y = f32::MAX;
+                    let mut max_x = f32::MIN;
+                    let mut max_y = f32::MIN;
+                    for j in 0..vc {
+                        let x = ds.transformed_vertices[j*2];
+                        let y = ds.transformed_vertices[j*2+1];
+                        min_x = min_x.min(x);
+                        min_y = min_y.min(y);
+                        max_x = max_x.max(x);
+                        max_y = max_y.max(y);
+                    }
+                    eprintln!("  draw#{} id={:?} bbox=[{:.0},{:.0}]-[{:.0},{:.0}] opacity={:.3} base_op={:.3} available={}", 
+                        i, d.id, min_x, min_y, max_x, max_y, ds.opacity, ds.base_opacity, ds.available);
+                }
+            }
+        }
 
         let mut fd = FrameDrawables {
             n,
@@ -376,16 +448,28 @@ impl Moc2ModelAdapter {
             _backing_masks: Vec::with_capacity(n),
         };
 
-        // Build render_orders array (render_order content is drawable indices)
-        for &di in render_order.iter() {
-            fd.render_orders.push(di as i32);
+        // Build render_orders array with actual draw_order values per drawable index
+        for ds in drawable_states.iter().take(n) {
+            fd.render_orders.push(ds.draw_order);
         }
 
         for (i, d) in drawables.iter().enumerate() {
             let ds = if i < drawable_states.len() { &drawable_states[i] } else { continue };
 
+            // Parent part index: map drawable back to its owning part
+            let part_idx = self.data.parts.iter()
+                .position(|p| p.drawable_indices.contains(&i))
+                .unwrap_or(0) as i32;
+            let part_opacity = if (part_idx as usize) < self.part_opacities_runtime.len() {
+                self.part_opacities_runtime[part_idx as usize]
+            } else {
+                1.0
+            };
+
+            // Python reference: opacity = drawable.opacity * partsOpacity * baseOpacity
             fd.tex_indices.push(d.texture_no);
-            fd.opacities.push(ds.opacity);
+            let final_opacity = ds.opacity * part_opacity * ds.base_opacity;
+            fd.opacities.push(final_opacity);
             fd.vert_counts.push(d.vertex_count);
             fd.idx_counts.push(d.index_array.len() as i32);
 
@@ -396,7 +480,7 @@ impl Moc2ModelAdapter {
             } else {
                 vec![0.0f32; vc * 2]
             };
-            fd.vert_positions.push(pos_data.as_ptr() as *const f32);
+            fd.vert_positions.push(pos_data.as_ptr());
             fd._backing_pos.push(pos_data);
 
             // UV data (static from Moc2Data)
@@ -405,12 +489,12 @@ impl Moc2ModelAdapter {
             } else {
                 vec![0.0f32; vc * 2]
             };
-            fd.vert_uvs.push(uv_data.as_ptr() as *const f32);
+            fd.vert_uvs.push(uv_data.as_ptr());
             fd._backing_uv.push(uv_data);
 
             // Index data (static from Moc2Data)
             let idx_data = d.index_array.clone();
-            fd.indices.push(idx_data.as_ptr() as *const u16);
+            fd.indices.push(idx_data.as_ptr());
             fd._backing_idx.push(idx_data);
 
             // Default multiply/screen colors (MOC2 doesn't have per-vertex colors)
@@ -431,14 +515,10 @@ impl Moc2ModelAdapter {
 
             // Constant flags: no inverted mask in MOC2
             fd.constant_flags.push(0u8);
-            // Dynamic flags: visible if opacity > 0
-            let is_vis = if ds.opacity > 0.001 && ds.available { 1u8 } else { 0u8 };
+            // Dynamic flags: visible if final opacity > 0
+            let is_vis = if final_opacity > 0.001 && ds.available { 1u8 } else { 0u8 };
             fd.dynamic_flags.push(is_vis);
 
-            // Parent part index: map drawable back to its owning part
-            let part_idx = self.data.parts.iter()
-                .position(|p| p.drawable_indices.contains(&i))
-                .unwrap_or(0) as i32;
             fd.parent_parts.push(part_idx);
         }
 
@@ -489,7 +569,7 @@ mod tests {
         let data = Arc::new(parsed);
         let runtime = Moc2Model::new(data.clone());
         let adapter = Moc2ModelAdapter::new(runtime, data);
-        let mut model = LoadedModelVariant::V2(adapter);
+        let mut model = LoadedModelVariant::V2(Box::new(adapter));
 
         let canvas = model.canvas_info();
         assert!(canvas.size_in_pixels.X > 0.0);

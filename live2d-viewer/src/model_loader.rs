@@ -179,6 +179,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
 /// }
 /// ```
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Moc2ModelJson {
     pub version: Option<serde_json::Value>,
     pub model: Option<String>,
@@ -194,6 +195,7 @@ pub struct Moc2ModelJson {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Moc2MotionRef {
     pub file: String,
     #[serde(default)]
@@ -251,6 +253,7 @@ struct Moc2HairSetup {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct Moc2HairSrc {
     id: String,
     ptype: String,
@@ -423,8 +426,7 @@ pub fn parse_mtn_motion(buffer: &[u8]) -> anyhow::Result<crate::motion::ParsedMo
             }
             continue;
         }
-        if line.starts_with("VISIBLE:") {
-            let rest = &line["VISIBLE:".len()..];
+        if let Some(rest) = line.strip_prefix("VISIBLE:") {
             if let Some(eq_pos) = rest.find('=') {
                 let name = rest[..eq_pos].trim().to_string();
                 let vals_str = rest[eq_pos + 1..].trim();

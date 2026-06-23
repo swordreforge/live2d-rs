@@ -17,6 +17,12 @@ pub struct TargetPoint {
     user_time: f32,
 }
 
+impl Default for TargetPoint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TargetPoint {
     pub fn new() -> Self {
         Self {
@@ -88,6 +94,12 @@ pub struct LookParam {
 pub struct Look {
     pub params: Vec<LookParam>,
     pub target: TargetPoint,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Look {

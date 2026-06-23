@@ -13,6 +13,7 @@
 //! 3. [`calc_pivot_indices`] — build the multi-dimensional corner lookup
 //!    table (`tmp_indices`) and interpolation factors (`tmp_t`)
 //! 4. Multi-linear blend using the computed indices
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 //!
 //! Reference: `live2d/core/param/pivot_manager.py`,
 //!            `live2d/core/util/ut_interpolate.py`
@@ -28,6 +29,7 @@ pub(crate) const GOSA: f32 = 0.0001;
 pub(crate) const PIVOT_TABLE_SIZE: usize = 65;
 
 /// Maximum number of interpolation dimensions.
+#[allow(dead_code)]
 pub(crate) const MAX_INTERPOLATION: usize = 5;
 
 /// Sentinel value for an uninitialized param index.
@@ -480,6 +482,7 @@ pub(crate) fn interpolate_int(
 /// Returns `true` if any parameter was outside its pivot range.
 ///
 /// Reference: `UtInterpolate.interpolatePoints`
+#[allow(dead_code)]
 pub(crate) fn interpolate_points(
     param_pivot_indices: &[usize],
     param_pivots: &[ParamPivot],
@@ -502,8 +505,7 @@ pub(crate) fn interpolate_points(
     );
 
     if dim_count == 0 {
-        let src = &pivot_points
-            [0 * points_per_corner..][..num_points * 2];
+        let src = &pivot_points[..num_points * 2];
         dst[..num_points * 2].copy_from_slice(src);
         return outside;
     }
@@ -728,7 +730,7 @@ mod tests {
     fn test_calc_pivot_indices_one_param_no_interp() {
         // One param, no interpolation (t=0).
         let pivots = vec![make_pivot("ParamA", 3, vec![0.0, 0.5, 1.0])];
-        let mut states = vec![ParamPivotState {
+        let states = vec![ParamPivotState {
             tmp_pivot_index: 1, // at second pivot
             tmp_t: 0.0,
             ..Default::default()

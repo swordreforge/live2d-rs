@@ -86,12 +86,11 @@ pub fn parse_moc(
 
     let _root_idx = read_typed_object(&mut reader, &mut registry, known_type_fn)?;
 
-    if reader.version() >= 8 {
-        if reader.remaining() >= 4 {
+    if reader.version() >= 8
+        && reader.remaining() >= 4 {
             let _check1 = reader.read_u16()?;
             let _check2 = reader.read_u16()?;
         }
-    }
 
     Ok(registry)
 }
