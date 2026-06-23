@@ -7,11 +7,32 @@ use live2d_core::{Moc, Model};
 use crate::camera::Camera;
 use crate::motion;
 
-/// Determine whether a model directory contains a V2 or V3 model
-/// by looking for *.model.json (V2) vs *.model3.json (V3).
+/// Determine whether a model directory contains a V2 or V3 model.
 pub enum ModelFormat {
     V2,
     V3,
+}
+
+/// Check if a filename looks like a V2 model JSON (e.g. model.json, model0.json, xxx.model.json)
+fn is_v2_model_json(name: &str) -> bool {
+    // V2 model JSON: contains "model" (case-insensitive) in the name, ends with .json,
+    // and is NOT a V3 .model3.json
+    let lower = name.to_lowercase();
+    lower.contains("model")
+        && name.ends_with(".json")
+        && !name.ends_with(".model3.json")
+}
+
+/// Find the V2 model JSON file in a directory (e.g. model.json, model0.json).
+fn find_v2_model_json(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_v2_model_json(&name) {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 pub fn detect_model_format(dir: &Path) -> Option<ModelFormat> {
@@ -21,11 +42,9 @@ pub fn detect_model_format(dir: &Path) -> Option<ModelFormat> {
         if name.ends_with(".model3.json") {
             return Some(ModelFormat::V3);
         }
-        if name.ends_with(".model.json") {
-            return Some(ModelFormat::V2);
-        }
     }
-    None
+    // No .model3.json found — check if there's a V2 model JSON
+    find_v2_model_json(dir).map(|_| ModelFormat::V2)
 }
 
 pub struct ModelEntry {
@@ -454,13 +473,9 @@ impl AppState {
 
         if self.is_v2 {
             // ── V2 model path ──
-            // Find the .model.json file
-            let model_json = std::fs::read_dir(&entry.dir)
-                .map_err(|e| format!("read dir: {e}"))?
-                .filter_map(|e| e.ok())
-                .find(|e| e.file_name().to_string_lossy().ends_with(".model.json"))
-                .ok_or_else(|| "no .model.json found".to_string())?
-                .path();
+            // Find the model JSON (model.json, model0.json, xxx.model.json, etc.)
+            let model_json = find_v2_model_json(&entry.dir)
+                .ok_or_else(|| format!("no V2 model JSON found in {:?}", entry.dir))?;
 
             let mut m = live2d_v2_core::Model::new()
                 .map_err(|e| format!("create V2 model: {e}"))?;
