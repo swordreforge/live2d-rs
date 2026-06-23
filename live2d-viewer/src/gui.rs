@@ -224,9 +224,37 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
                     ui.add_space(3.0);
 
-                    small_btn(ui, "\u{21ba}").clicked().then(|| app.camera.reset_pan());
-                    small_btn(ui, "+").clicked().then(|| app.camera.zoom_in());
-                    small_btn(ui, "-").clicked().then(|| app.camera.zoom_out());
+                    small_btn(ui, "\u{21ba}").clicked().then(|| {
+                        if app.is_v2 {
+                            app.v2_scale = 1.0;
+                            if let Some(v2) = app.v2_model.as_mut() {
+                                v2.set_scale(1.0);
+                                v2.set_offset(0.0, 0.0);
+                            }
+                        } else {
+                            app.camera.reset_pan();
+                        }
+                    });
+                    small_btn(ui, "+").clicked().then(|| {
+                        if app.is_v2 {
+                            app.v2_scale = (app.v2_scale * 1.1).min(10.0);
+                            if let Some(v2) = app.v2_model.as_mut() {
+                                v2.set_scale(app.v2_scale);
+                            }
+                        } else {
+                            app.camera.zoom_in();
+                        }
+                    });
+                    small_btn(ui, "-").clicked().then(|| {
+                        if app.is_v2 {
+                            app.v2_scale = (app.v2_scale * 0.9).max(0.1);
+                            if let Some(v2) = app.v2_model.as_mut() {
+                                v2.set_scale(app.v2_scale);
+                            }
+                        } else {
+                            app.camera.zoom_out();
+                        }
+                    });
 
                     ui.add_space(3.0);
 
