@@ -355,6 +355,7 @@ fn main() -> anyhow::Result<()> {
                                         // Bind VAO so V2's glVertexAttribPointer works (V2 uses GL 2.1 style without VAO)
                                         gl.bind_vertex_array(Some(v2_vao));
                                     }
+                                    v2.resize(size.width as i32, size.height as i32);
                                     v2.update();
                                     v2.draw();
                                     unsafe {
@@ -479,6 +480,12 @@ fn main() -> anyhow::Result<()> {
                             app.last_mouse_y = my;
                             let size = window.inner_size();
                             app.update_mouse_for_look(mx, my, size.width as f32, size.height as f32);
+                            // V2 head tracking: feed mouse to drag manager (screen → scene internally)
+                            if app.is_v2 {
+                                if let Some(ref mut v2) = app.v2_model {
+                                    v2.drag(mx as f32, my as f32);
+                                }
+                            }
                         }
 
                         let egui_consumed = egui_state.on_window_event(&window, &event).consumed;
@@ -520,6 +527,12 @@ fn main() -> anyhow::Result<()> {
                                         surface.resize(&gl_context, w, h);
                                     }
                                     unsafe { gl.viewport(0, 0, size.width as i32, size.height as i32); }
+                                    // V2: update matrix manager projection
+                                    if app.is_v2 {
+                                        if let Some(ref mut v2) = app.v2_model {
+                                            v2.resize(size.width as i32, size.height as i32);
+                                        }
+                                    }
                                     // Recalculate camera when window size changes (skip when floating)
                                     if !app.minimized_to_float {
                                         app.camera_needs_fit = true;
@@ -545,12 +558,20 @@ fn main() -> anyhow::Result<()> {
                                             winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                                             winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
                                         };
-                                        app.camera.zoom(d, 0.5, 0.5);
+                                        if app.is_v2 {
+                                            // V2 zoom via MatrixManager.setScale (tracked in app.v2_scale)
+                                            app.v2_scale = (app.v2_scale + d * 0.1).max(0.1).min(10.0);
+                                            if let Some(ref mut v2) = app.v2_model {
+                                                v2.set_scale(app.v2_scale);
+                                            }
+                                        } else {
+                                            app.camera.zoom(d, 0.5, 0.5);
+                                        }
                                     }
                                 }
                                 WindowEvent::CursorMoved { position, .. } => {
-                                    // Camera pan (mouse_down in normal mode)
-                                    if app.mouse_down && !app.pet_mode {
+                                    // Camera pan (mouse_down in normal mode) — V2 uses drag() above instead
+                                    if app.mouse_down && !app.pet_mode && !app.is_v2 {
                                         let dx = position.x - app.last_mouse_x;
                                         let dy = position.y - app.last_mouse_y;
                                         app.camera.pan(dx as f32, dy as f32);

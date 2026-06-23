@@ -104,6 +104,8 @@ pub struct AppState {
     pub canvas_pixel_size: (f32, f32),
     /// Physics engine loaded from physics3.json
     pub physics: Option<motion::physics::PhysicsEngine>,
+    /// V2 zoom scale factor (tracked here because MatrixManager has no getter)
+    pub v2_scale: f32,
 }
 
 impl AppState {
@@ -155,6 +157,7 @@ impl AppState {
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),
             physics: None,
+            v2_scale: 1.0,
         }
     }
 
@@ -641,10 +644,24 @@ impl AppState {
     }
 
     /// Handle tap interaction with camera values passed directly (avoids borrow conflict).
+    /// V2 uses built-in hitTest() with raw screen coordinates.
     pub fn handle_tap_with_cam(
         &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
         cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
     ) {
+        if self.is_v2 {
+            // V2: built-in hit test — takes raw screen coordinates, converts internally
+            let hit = self.v2_model.as_ref()
+                .map(|v2| v2.hit_test("TapBody", x as f32, y as f32))
+                .unwrap_or(false);
+            if hit {
+                if let Some(ref mut v2) = self.v2_model {
+                    v2.start_random_motion("TapBody", 3);
+                }
+            }
+            return;
+        }
+
         let model = match self.current_model {
             Some(ref m) => m,
             None => return,
