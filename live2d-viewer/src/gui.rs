@@ -98,6 +98,42 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             app.pet_mode = true;
             app.pet_mode_changed = true;
         }
+
+        // Zoom controls — always visible regardless of model type
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("-").clicked() {
+                if app.is_v2 {
+                    app.v2_scale = (app.v2_scale * 0.85).max(0.1);
+                    if let Some(ref mut v2) = app.v2_model {
+                        v2.set_scale(app.v2_scale);
+                    }
+                } else {
+                    app.camera.zoom_out();
+                }
+            }
+            if ui.button("Reset").clicked() {
+                if app.is_v2 {
+                    app.v2_scale = 1.0;
+                    if let Some(ref mut v2) = app.v2_model {
+                        v2.set_scale(1.0);
+                        v2.set_offset(0.0, 0.0);
+                    }
+                } else {
+                    app.camera.reset_pan();
+                }
+            }
+            if ui.button("+").clicked() {
+                if app.is_v2 {
+                    app.v2_scale = (app.v2_scale * 1.15).min(10.0);
+                    if let Some(ref mut v2) = app.v2_model {
+                        v2.set_scale(app.v2_scale);
+                    }
+                } else {
+                    app.camera.zoom_in();
+                }
+            }
+        });
     });
 
     if app.current_model.is_some() {
@@ -109,7 +145,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             if motion_count > 0 {
                 ui.label(format!("Motions: {}", motion_count));
                 for (i, entry) in app.motion_queue.entries.iter().enumerate() {
-                    let loop_str = if entry.motion.is_loop { "loop" } else { "once" };
+                    let loop_str = if entry.motion.is_loop { "循环" } else { "一次" };
                     let fw = entry.cached_fade_weight;
                     ui.label(format!(
                         "  [{}] {} ({:.1}s, {}, fade={:.2})",
@@ -125,63 +161,26 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 
             // Expression status
             if app.expression_manager.is_active {
-                ui.label("Expression: active");
+                ui.label("表情: 启用");
                 ui.separator();
             }
 
             // Action buttons
             ui.horizontal(|ui| {
-                if ui.button("Replay Idle").clicked() {
+                if ui.button("重放待机").clicked() {
                     app.start_motion("Idle", Some(0));
                 }
-                if ui.button("Stop All").clicked() {
+                if ui.button("全部停止").clicked() {
                     app.motion_queue.stop_all_motions();
                 }
             });
 
             if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
-                if !tap_motions.is_empty() && ui.button("Tap Body").clicked() {
+                if !tap_motions.is_empty() && ui.button("点击身体").clicked() {
                     let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
                     app.start_motion("TapBody", Some(idx));
                 }
             }
-
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.label("Zoom:");
-                if ui.button("-").clicked() {
-                    if app.is_v2 {
-                        app.v2_scale = (app.v2_scale * 0.85).max(0.1);
-                        if let Some(ref mut v2) = app.v2_model {
-                            v2.set_scale(app.v2_scale);
-                        }
-                    } else {
-                        app.camera.zoom_out();
-                    }
-                }
-                if ui.button("Reset").clicked() {
-                    if app.is_v2 {
-                        app.v2_scale = 1.0;
-                        if let Some(ref mut v2) = app.v2_model {
-                            v2.set_scale(1.0);
-                            v2.set_offset(0.0, 0.0);
-                        }
-                    } else {
-                        app.camera.reset_pan();
-                    }
-                }
-                if ui.button("+").clicked() {
-                    if app.is_v2 {
-                        app.v2_scale = (app.v2_scale * 1.15).min(10.0);
-                        if let Some(ref mut v2) = app.v2_model {
-                            v2.set_scale(app.v2_scale);
-                        }
-                    } else {
-                        app.camera.zoom_in();
-                    }
-                }
-            });
 
             ui.separator();
 

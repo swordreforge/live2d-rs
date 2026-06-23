@@ -8,6 +8,7 @@ use crate::camera::Camera;
 use crate::motion;
 
 /// Determine whether a model directory contains a V2 or V3 model.
+#[derive(Clone, Copy)]
 pub enum ModelFormat {
     V2,
     V3,
@@ -51,6 +52,7 @@ pub struct ModelEntry {
     pub name: String,
     pub dir: PathBuf,
     pub loaded: bool,
+    pub format: Option<ModelFormat>,
 }
 
 /// Raw V3 model data loaded from background thread (all I/O done off main thread).
@@ -210,7 +212,8 @@ impl AppState {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
-        self.model_list.push(ModelEntry { name, dir: path, loaded: false });
+        let format = detect_model_format(&path);
+        self.model_list.push(ModelEntry { name, dir: path, loaded: false, format });
     }
 
     /// Start switching to model at `idx` asynchronously.
@@ -221,7 +224,7 @@ impl AppState {
             return Err("index out of range".into());
         }
         let entry = &self.model_list[idx];
-        let fmt = detect_model_format(&entry.dir)
+        let fmt = entry.format
             .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
 
         self.is_v2 = matches!(fmt, ModelFormat::V2);
@@ -466,7 +469,7 @@ impl AppState {
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
-        let fmt = detect_model_format(&entry.dir)
+        let fmt = entry.format
             .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
 
         self.is_v2 = matches!(fmt, ModelFormat::V2);

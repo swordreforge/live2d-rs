@@ -187,7 +187,7 @@ fn main() -> anyhow::Result<()> {
         let model_dir = PathBuf::from(&arg);
         if model_dir.exists() {
             let name = model_dir.file_name().and_then(|n| n.to_str()).unwrap_or("model");
-            app.model_list.push(app::ModelEntry { name: name.into(), dir: model_dir, loaded: false });
+            app.model_list.push(app::ModelEntry { name: name.into(), dir: model_dir, loaded: false, format: None });
             true
         } else {
             eprintln!("model directory not found: {arg}");
