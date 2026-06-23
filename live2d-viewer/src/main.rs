@@ -130,6 +130,11 @@ fn main() -> anyhow::Result<()> {
     let gl_context = not_current.make_current(&surface)?;
     let _ = surface.set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
+    // Initialize V2's glad OpenGL loader (must happen after GL context is current)
+    if live2d_v2_core::gl_init() == 0 {
+        log::warn!("V2 glInit returned 0 — V2 rendering may not work");
+    }
+
     #[allow(clippy::arc_with_non_send_sync)]
     let gl = Arc::new(unsafe {
         glow::Context::from_loader_function(|s| {
@@ -137,6 +142,9 @@ fn main() -> anyhow::Result<()> {
             gl_display.get_proc_address(&c_str) as *const _
         })
     });
+
+    // Create a VAO for V2 rendering (V2 uses core-profile-incompatible no-VAO GL 2.1 pattern)
+    let v2_vao = unsafe { gl.create_vertex_array().expect("create V2 VAO") };
 
     let mut app = app::AppState::new();
     let mut renderer = unsafe {
@@ -189,12 +197,7 @@ fn main() -> anyhow::Result<()> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_dir() {
-                        let has_model3 = std::fs::read_dir(&path)
-                            .map(|rd| rd.flat_map(|e| e.ok()).any(|e| {
-                                e.path().extension().map(|ext| ext == "json").unwrap_or(false)
-                            }))
-                            .unwrap_or(false);
-                        if has_model3 {
+                        if app::detect_model_format(&path).is_some() {
                             app.add_model_dir(path);
                         }
                     }
@@ -296,8 +299,8 @@ fn main() -> anyhow::Result<()> {
                             app.camera_needs_fit = false;
                         }
 
-                        // --- Advance motion system (skip when floating) ---
-                        if !app.minimized_to_float {
+                        // --- Advance motion system (V3 only, skip when floating) ---
+                        if !app.is_v2 && !app.minimized_to_float {
                             app.advance_motion(delta);
                             app.update_parameters();
                             app.update_pose(delta);
@@ -344,7 +347,32 @@ fn main() -> anyhow::Result<()> {
                             gl.clear(glow::COLOR_BUFFER_BIT);
                         }
 
-                        if let Some(ref mut model) = app.current_model {
+                        if app.is_v2 {
+                            if let Some(ref mut v2) = app.v2_model {
+                                if !app.minimized_to_float {
+                                    unsafe {
+                                        gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                        // Bind VAO so V2's glVertexAttribPointer works (V2 uses GL 2.1 style without VAO)
+                                        gl.bind_vertex_array(Some(v2_vao));
+                                    }
+                                    v2.update();
+                                    v2.draw();
+                                    unsafe {
+                                        // Reset GL state V2 left dirty, drain stale errors
+                                        gl.bind_vertex_array(None);
+                                        while gl.get_error() != glow::NO_ERROR {}
+                                        gl.use_program(None);
+                                        gl.active_texture(glow::TEXTURE0);
+                                        gl.front_face(glow::CCW);
+                                        gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+                                        gl.blend_func_separate(
+                                            glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                                            glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                                        );
+                                    }
+                                }
+                            }
+                        } else if let Some(ref mut model) = app.current_model {
                             if !app.minimized_to_float {
                                 unsafe {
                                     gl.viewport(0, 0, size.width as i32, size.height as i32);

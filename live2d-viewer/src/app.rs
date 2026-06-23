@@ -1,9 +1,30 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use live2d_core::{Moc, Model};
 
 use crate::camera::Camera;
 use crate::motion;
+
+/// Determine whether a model directory contains a V2 or V3 model
+/// by looking for *.model.json (V2) vs *.model3.json (V3).
+pub enum ModelFormat {
+    V2,
+    V3,
+}
+
+pub fn detect_model_format(dir: &Path) -> Option<ModelFormat> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".model3.json") {
+            return Some(ModelFormat::V3);
+        }
+        if name.ends_with(".model.json") {
+            return Some(ModelFormat::V2);
+        }
+    }
+    None
+}
 
 pub struct ModelEntry {
     pub name: String,
@@ -14,6 +35,10 @@ pub struct ModelEntry {
 pub struct AppState {
     pub model_list: Vec<ModelEntry>,
     pub current_idx: Option<usize>,
+    /// V2-specific model handle
+    pub v2_model: Option<live2d_v2_core::Model>,
+    /// True when current model is V2 format
+    pub is_v2: bool,
     pub current_moc: Option<Moc>,
     pub current_model: Option<Model<'static>>,
     pub parameter_values: Vec<f32>,
@@ -86,6 +111,8 @@ impl AppState {
         Self {
             model_list: Vec::new(),
             current_idx: None,
+            v2_model: None,
+            is_v2: false,
             current_moc: None,
             current_model: None,
             parameter_values: Vec::new(),
@@ -144,9 +171,10 @@ impl AppState {
             return Err("index out of range".into());
         }
 
-        // Drop order: Model first, then Moc
+        // Clear V3 state
         self.current_model = None;
         self.current_moc = None;
+        self.v2_model = None;
         self.parameter_values.clear();
         self.parameter_names.clear();
         self.parameter_mins.clear();
@@ -161,86 +189,119 @@ impl AppState {
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
-        let loaded = crate::model_loader::LoadedModel::load(&entry.dir)
-            .map_err(|e| format!("load model: {e}"))?;
+        let fmt = detect_model_format(&entry.dir)
+            .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
 
-        let moc = Moc::revive(&loaded.moc3_data)
-            .map_err(|e| format!("revive moc: {e}"))?;
+        self.is_v2 = matches!(fmt, ModelFormat::V2);
 
-        let moc_ptr: *const Moc = &moc as *const Moc;
-        let model = unsafe { Model::initialize(&*moc_ptr) }
-            .map_err(|e| format!("init model: {e}"))?;
-        let model: Model<'static> = unsafe { std::mem::transmute(model) };
+        if self.is_v2 {
+            // ── V2 model path ──
+            // Find the .model.json file
+            let model_json = std::fs::read_dir(&entry.dir)
+                .map_err(|e| format!("read dir: {e}"))?
+                .filter_map(|e| e.ok())
+                .find(|e| e.file_name().to_string_lossy().ends_with(".model.json"))
+                .ok_or_else(|| "no .model.json found".to_string())?
+                .path();
 
-        let params = model.parameters();
-        for id in params.ids() {
-            self.parameter_names.push(id.to_string_lossy().into_owned());
-        }
-        self.parameter_values = params.default_values().to_vec();
-        self.parameter_mins = params.minimum_values().to_vec();
-        self.parameter_maxs = params.maximum_values().to_vec();
-        self.parameter_defaults = params.default_values().to_vec();
+            let mut m = live2d_v2_core::Model::new()
+                .map_err(|e| format!("create V2 model: {e}"))?;
+            m.load_json(&model_json.to_string_lossy())
+                .map_err(|e| format!("V2 load_json: {e}"))?;
 
-        // Build param lookup once — reused every frame instead of rebuilding HashMap
-        self.param_lookup.clear();
-        self.param_lookup.reserve(self.parameter_names.len());
-        for (i, name) in self.parameter_names.iter().enumerate() {
-            self.param_lookup.insert(name.clone(), i);
-        }
+            // Pre-fetch V2 canvas info for window sizing
+            let cw = m.canvas_width();
+            let ch = m.canvas_height();
+            self.canvas_pixel_size = (cw, ch);
 
-        // Read part IDs for PartOpacity motion curve evaluation
-        let parts = model.parts();
-        self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
-
-        // Read canvas info for pet mode toolbar positioning
-        let canvas = model.canvas_info();
-        self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
-
-        self.current_moc = Some(moc);
-        self.current_model = Some(model);
-        self.current_idx = Some(idx);
-        self.texture_paths = loaded.texture_paths();
-        self.base_dir = Some(loaded.base_dir.clone());
-        self.model_list[idx].loaded = true;
-
-        // Extract eye blink and lip sync parameter IDs from model3.json Groups
-        if let Some(ref groups) = loaded.model3_json.groups {
-            for group in groups {
-                match group.name.as_str() {
-                    "EyeBlink" => {
-                        self.eye_blink_param_ids = group.ids.clone();
-                    }
-                    "LipSync" => {
-                        self.lip_sync_param_ids = group.ids.clone();
-                    }
-                    _ => {}
+            // Fill basic parameter names for GUI display
+            let nparams = m.param_count();
+            for i in 0..nparams {
+                if let Ok(id) = m.param_id(i) {
+                    self.parameter_names.push(id);
                 }
             }
-        }
 
-        // Load hit areas for tap interaction
-        if let Some(ref areas) = loaded.model3_json.hit_areas {
-            self.hit_areas = areas.clone();
-        }
+            let name = entry.name.clone();
+            let _ = entry; // end borrow
+            self.v2_model = Some(m);
+            self.current_idx = Some(idx);
+            self.model_list[idx].loaded = true;
+            log::info!("Loaded V2 model: {} (params={})", name, nparams);
+        } else {
+            // ── V3 model path (existing code) ──
+            let loaded = crate::model_loader::LoadedModel::load(&entry.dir)
+                .map_err(|e| format!("load model: {e}"))?;
 
-        // Load all motion files
-        self.load_all_motions(&loaded.base_dir, &loaded.model3_json);
+            let moc = Moc::revive(&loaded.moc3_data)
+                .map_err(|e| format!("revive moc: {e}"))?;
 
-        // Load all expression files
-        self.load_all_expressions(&loaded.base_dir, &loaded.model3_json);
+            let moc_ptr: *const Moc = &moc as *const Moc;
+            let model = unsafe { Model::initialize(&*moc_ptr) }
+                .map_err(|e| format!("init model: {e}"))?;
+            let model: Model<'static> = unsafe { std::mem::transmute(model) };
 
-        self.load_pose(&loaded.base_dir, &loaded.model3_json);
-        self.apply_pose_reset();
+            let params = model.parameters();
+            for id in params.ids() {
+                self.parameter_names.push(id.to_string_lossy().into_owned());
+            }
+            self.parameter_values = params.default_values().to_vec();
+            self.parameter_mins = params.minimum_values().to_vec();
+            self.parameter_maxs = params.maximum_values().to_vec();
+            self.parameter_defaults = params.default_values().to_vec();
 
-        // Load physics engine
-        self.load_physics(&loaded.base_dir, &loaded.model3_json);
+            // Build param lookup once — reused every frame
+            self.param_lookup.clear();
+            self.param_lookup.reserve(self.parameter_names.len());
+            for (i, name) in self.parameter_names.iter().enumerate() {
+                self.param_lookup.insert(name.clone(), i);
+            }
 
-        // Start the first idle motion
-        if self.auto_play_idle {
-            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
-                if let Some(first) = idle_motions.first() {
-                    self.motion_queue.start_motion(first.clone());
-                    log::info!("Started idle motion");
+            // Read part IDs for PartOpacity motion curve evaluation
+            let parts = model.parts();
+            self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+
+            // Read canvas info
+            let canvas = model.canvas_info();
+            self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+
+            self.current_moc = Some(moc);
+            self.current_model = Some(model);
+            self.current_idx = Some(idx);
+            self.texture_paths = loaded.texture_paths();
+            self.base_dir = Some(loaded.base_dir.clone());
+            self.model_list[idx].loaded = true;
+
+            // Extract eye blink and lip sync parameter IDs
+            if let Some(ref groups) = loaded.model3_json.groups {
+                for group in groups {
+                    match group.name.as_str() {
+                        "EyeBlink" => self.eye_blink_param_ids = group.ids.clone(),
+                        "LipSync" => self.lip_sync_param_ids = group.ids.clone(),
+                        _ => {}
+                    }
+                }
+            }
+
+            // Load hit areas
+            if let Some(ref areas) = loaded.model3_json.hit_areas {
+                self.hit_areas = areas.clone();
+            }
+
+            // Load all motion/expression/pose/physics
+            self.load_all_motions(&loaded.base_dir, &loaded.model3_json);
+            self.load_all_expressions(&loaded.base_dir, &loaded.model3_json);
+            self.load_pose(&loaded.base_dir, &loaded.model3_json);
+            self.apply_pose_reset();
+            self.load_physics(&loaded.base_dir, &loaded.model3_json);
+
+            // Start idle motion
+            if self.auto_play_idle {
+                if let Some(idle_motions) = self.loaded_motions.get("Idle") {
+                    if let Some(first) = idle_motions.first() {
+                        self.motion_queue.start_motion(first.clone());
+                        log::info!("Started idle motion");
+                    }
                 }
             }
         }

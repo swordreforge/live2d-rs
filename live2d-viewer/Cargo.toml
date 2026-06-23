@@ -11,6 +11,8 @@ static-link = ["live2d-core-sys/static-link"]
 [dependencies]
 live2d-core = { path = "../live2d-core" }
 live2d-core-sys = { path = "../live2d-core-sys" }
+live2d-v2-core = { path = "../live2d-v2-core" }
+live2d-v2-core-sys = { path = "../live2d-v2-core-sys" }
 
 winit = { version = "0.29", features = ["rwh_05"] }
 glutin = "0.31"

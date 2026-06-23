@@ -3,6 +3,6 @@
 //! This crate provides a safe, idiomatic Rust interface to V2 models,
 //! mirroring the pattern used by `live2d-core` for V3.
 
-pub use model::Model;
+pub use model::{gl_init, clear_buffer, Model};
 
 pub mod model;
