@@ -17,6 +17,9 @@
 # Manual test binaries
 live2d-viewer*
 
+# External dependency (separate git repo: EasyLive2D/live2d-py)
+live2d-py/
+
 # Build artifacts
 *.o
 *.so

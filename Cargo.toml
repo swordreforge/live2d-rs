@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "live2d-core-sys",
     "live2d-core",
+    "live2d-v2-core-sys",
+    "live2d-v2-core",
     "live2d-viewer",
 ]
 
