@@ -920,9 +920,9 @@ impl AppState {
         cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
     ) {
         if self.is_v2 {
-            // V2: built-in hit test — takes raw screen coordinates, converts internally
+            // V2: hit test all body parts using full MVP transform (accounts for zoom/pan)
             let hit = self.v2_model.as_ref()
-                .map(|v2| v2.hit_test("TapBody", x as f32, y as f32))
+                .map(|v2| !v2.hit_part(x as f32, y as f32, false).is_empty())
                 .unwrap_or(false);
             if hit {
                 if let Some(ref mut v2) = self.v2_model {
