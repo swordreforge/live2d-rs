@@ -41,18 +41,58 @@ impl Breath {
         Self {
             time: 0.0,
             params: vec![
-                BreathParam { id: "ParamAngleX".into(),    offset: 0.0, peak: 15.0,  cycle: 6.5345, weight: 0.5, prev_raw: 0.0 },
-                BreathParam { id: "ParamAngleY".into(),    offset: 0.0, peak: 8.0,   cycle: 3.5345, weight: 0.5, prev_raw: 0.0 },
-                BreathParam { id: "ParamAngleZ".into(),    offset: 0.0, peak: 10.0,  cycle: 5.5345, weight: 0.5, prev_raw: 0.0 },
-                BreathParam { id: "ParamBodyAngleX".into(),offset: 0.0, peak: 4.0,   cycle: 15.5345,weight: 0.5, prev_raw: 0.0 },
-                BreathParam { id: "ParamBreath".into(),    offset: 0.5, peak: 0.5,   cycle: 3.2345, weight: 0.5, prev_raw: 0.0 },
+                BreathParam {
+                    id: "ParamAngleX".into(),
+                    offset: 0.0,
+                    peak: 15.0,
+                    cycle: 6.5345,
+                    weight: 0.5,
+                    prev_raw: 0.0,
+                },
+                BreathParam {
+                    id: "ParamAngleY".into(),
+                    offset: 0.0,
+                    peak: 8.0,
+                    cycle: 3.5345,
+                    weight: 0.5,
+                    prev_raw: 0.0,
+                },
+                BreathParam {
+                    id: "ParamAngleZ".into(),
+                    offset: 0.0,
+                    peak: 10.0,
+                    cycle: 5.5345,
+                    weight: 0.5,
+                    prev_raw: 0.0,
+                },
+                BreathParam {
+                    id: "ParamBodyAngleX".into(),
+                    offset: 0.0,
+                    peak: 4.0,
+                    cycle: 15.5345,
+                    weight: 0.5,
+                    prev_raw: 0.0,
+                },
+                BreathParam {
+                    id: "ParamBreath".into(),
+                    offset: 0.5,
+                    peak: 0.5,
+                    cycle: 3.2345,
+                    weight: 0.5,
+                    prev_raw: 0.0,
+                },
             ],
         }
     }
 
     /// Advance time and compute breath deltas.
     /// Returns Vec of (parameter_name, delta_value) — apply these as additive changes.
-    pub fn update(&mut self, delta_time: f32, param_values: &mut [f32], param_lookup: &HashMap<String, usize>) {
+    pub fn update(
+        &mut self,
+        delta_time: f32,
+        param_values: &mut [f32],
+        param_lookup: &HashMap<String, usize>,
+    ) {
         self.time += delta_time;
         let t = self.time * 2.0 * std::f32::consts::PI;
 

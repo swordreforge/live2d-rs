@@ -24,32 +24,47 @@ pub struct Vec2 {
 }
 
 impl Vec2 {
-    pub const fn new(x: f32, y: f32) -> Self { Self { x, y } }
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
     pub fn normalize(&self) -> Self {
         let len = (self.x * self.x + self.y * self.y).sqrt();
-        if len < 1e-8 { return Vec2::default(); }
+        if len < 1e-8 {
+            return Vec2::default();
+        }
         Vec2::new(self.x / len, self.y / len)
     }
 }
 
 impl std::ops::Add for Vec2 {
     type Output = Self;
-    fn add(self, rhs: Self) -> Self { Vec2::new(self.x + rhs.x, self.y + rhs.y) }
+    fn add(self, rhs: Self) -> Self {
+        Vec2::new(self.x + rhs.x, self.y + rhs.y)
+    }
 }
 impl std::ops::AddAssign for Vec2 {
-    fn add_assign(&mut self, rhs: Self) { self.x += rhs.x; self.y += rhs.y; }
+    fn add_assign(&mut self, rhs: Self) {
+        self.x += rhs.x;
+        self.y += rhs.y;
+    }
 }
 impl std::ops::Sub for Vec2 {
     type Output = Self;
-    fn sub(self, rhs: Self) -> Self { Vec2::new(self.x - rhs.x, self.y - rhs.y) }
+    fn sub(self, rhs: Self) -> Self {
+        Vec2::new(self.x - rhs.x, self.y - rhs.y)
+    }
 }
 impl std::ops::Mul<f32> for Vec2 {
     type Output = Self;
-    fn mul(self, s: f32) -> Self { Vec2::new(self.x * s, self.y * s) }
+    fn mul(self, s: f32) -> Self {
+        Vec2::new(self.x * s, self.y * s)
+    }
 }
 impl std::ops::Div<f32> for Vec2 {
     type Output = Self;
-    fn div(self, s: f32) -> Self { Vec2::new(self.x / s, self.y / s) }
+    fn div(self, s: f32) -> Self {
+        Vec2::new(self.x / s, self.y / s)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +72,11 @@ impl std::ops::Div<f32> for Vec2 {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
-struct Normalization { minimum: f32, maximum: f32, default_val: f32 }
+struct Normalization {
+    minimum: f32,
+    maximum: f32,
+    default_val: f32,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Particle {
@@ -74,10 +93,18 @@ struct Particle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum InputType { X, Y, Angle }
+enum InputType {
+    X,
+    Y,
+    Angle,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum OutputType { X, Y, Angle }
+enum OutputType {
+    X,
+    Y,
+    Angle,
+}
 
 #[derive(Debug, Clone)]
 struct PhysicsInput {
@@ -133,8 +160,10 @@ struct Rig {
 
 #[derive(Deserialize)]
 struct JsonXY {
-    #[serde(rename = "X")] x: f32,
-    #[serde(rename = "Y")] y: f32,
+    #[serde(rename = "X")]
+    x: f32,
+    #[serde(rename = "Y")]
+    y: f32,
 }
 
 #[derive(Deserialize)]
@@ -160,7 +189,10 @@ struct Meta {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct EffectiveForces { gravity: JsonXY, wind: JsonXY }
+struct EffectiveForces {
+    gravity: JsonXY,
+    wind: JsonXY,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -185,9 +217,11 @@ struct JsonSource {
 #[serde(rename_all = "PascalCase")]
 struct JsonInput {
     source: JsonSource,
-    #[serde(rename = "Type")] input_type: String,
+    #[serde(rename = "Type")]
+    input_type: String,
     weight: f32,
-    #[serde(default)] reflect: bool,
+    #[serde(default)]
+    reflect: bool,
 }
 
 #[derive(Deserialize)]
@@ -205,28 +239,36 @@ struct JsonOutput {
     vertex_index: i32,
     scale: f32,
     weight: f32,
-    #[serde(rename = "Type")] output_type: String,
-    #[serde(default)] reflect: bool,
+    #[serde(rename = "Type")]
+    output_type: String,
+    #[serde(default)]
+    reflect: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct JsonVertex {
     position: JsonXY,
-    mobility: f32, delay: f32, acceleration: f32, radius: f32,
+    mobility: f32,
+    delay: f32,
+    acceleration: f32,
+    radius: f32,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct JsonNormalization {
-    position: JsonNormRange, angle: JsonNormRange,
+    position: JsonNormRange,
+    angle: JsonNormRange,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct JsonNormRange {
-    minimum: f32, maximum: f32,
-    #[serde(rename = "Default")] default_val: f32,
+    minimum: f32,
+    maximum: f32,
+    #[serde(rename = "Default")]
+    default_val: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +283,10 @@ pub struct PhysicsOptions {
 
 impl Default for PhysicsOptions {
     fn default() -> Self {
-        Self { gravity: Vec2::new(0.0, -1.0), wind: Vec2::new(0.0, 0.0) }
+        Self {
+            gravity: Vec2::new(0.0, -1.0),
+            wind: Vec2::new(0.0, 0.0),
+        }
     }
 }
 
@@ -264,11 +309,13 @@ pub struct PhysicsEngine {
 }
 
 impl PhysicsEngine {
-    pub fn sub_rig_count(&self) -> i32 { self.rig.sub_rig_count }
+    pub fn sub_rig_count(&self) -> i32 {
+        self.rig.sub_rig_count
+    }
 
     pub fn from_json(buffer: &[u8]) -> Result<Self, String> {
-        let json: Physics3Json = serde_json::from_slice(buffer)
-            .map_err(|e| format!("physics3.json: {e}"))?;
+        let json: Physics3Json =
+            serde_json::from_slice(buffer).map_err(|e| format!("physics3.json: {e}"))?;
 
         let mut rig = Rig {
             sub_rig_count: json.meta.physics_setting_count,
@@ -276,8 +323,14 @@ impl PhysicsEngine {
             inputs: Vec::with_capacity(json.meta.total_input_count as usize),
             outputs: Vec::with_capacity(json.meta.total_output_count as usize),
             particles: Vec::with_capacity(json.meta.vertex_count as usize),
-            gravity: Vec2::new(json.meta.effective_forces.gravity.x, json.meta.effective_forces.gravity.y),
-            wind: Vec2::new(json.meta.effective_forces.wind.x, json.meta.effective_forces.wind.y),
+            gravity: Vec2::new(
+                json.meta.effective_forces.gravity.x,
+                json.meta.effective_forces.gravity.y,
+            ),
+            wind: Vec2::new(
+                json.meta.effective_forces.wind.x,
+                json.meta.effective_forces.wind.y,
+            ),
             fps: json.meta.fps,
         };
 
@@ -299,10 +352,12 @@ impl PhysicsEngine {
 
             for inp in &s.input {
                 rig.inputs.push(PhysicsInput {
-                    source_id: inp.source.id.clone(), source_index: -1,
+                    source_id: inp.source.id.clone(),
+                    source_index: -1,
                     weight: inp.weight,
                     input_type: match inp.input_type.as_str() {
-                        "X" => InputType::X, "Y" => InputType::Y,
+                        "X" => InputType::X,
+                        "Y" => InputType::Y,
                         "Angle" => InputType::Angle,
                         other => return Err(format!("unknown input type: {other}")),
                     },
@@ -312,29 +367,36 @@ impl PhysicsEngine {
 
             for outp in &s.output {
                 rig.outputs.push(PhysicsOutput {
-                    destination_id: outp.destination.id.clone(), destination_index: -1,
+                    destination_id: outp.destination.id.clone(),
+                    destination_index: -1,
                     vertex_index: outp.vertex_index,
                     translation_scale: Vec2::new(outp.scale, outp.scale),
                     angle_scale: outp.scale,
                     weight: outp.weight,
                     output_type: match outp.output_type.as_str() {
-                        "X" => OutputType::X, "Y" => OutputType::Y,
+                        "X" => OutputType::X,
+                        "Y" => OutputType::Y,
                         "Angle" => OutputType::Angle,
                         other => return Err(format!("unknown output type: {other}")),
                     },
                     reflect: outp.reflect,
-                    value_below_minimum: 0.0, value_exceeded_maximum: 0.0,
+                    value_below_minimum: 0.0,
+                    value_exceeded_maximum: 0.0,
                 });
             }
 
             for v in &s.vertices {
                 rig.particles.push(Particle {
                     initial_position: Vec2::new(v.position.x, v.position.y),
-                    mobility: v.mobility, delay: v.delay, acceleration: v.acceleration, radius: v.radius,
+                    mobility: v.mobility,
+                    delay: v.delay,
+                    acceleration: v.acceleration,
+                    radius: v.radius,
                     position: Vec2::new(v.position.x, v.position.y),
                     last_position: Vec2::new(v.position.x, v.position.y),
                     last_gravity: Vec2::new(0.0, -1.0),
-                    force: Vec2::default(), velocity: Vec2::default(),
+                    force: Vec2::default(),
+                    velocity: Vec2::default(),
                 });
             }
 
@@ -345,7 +407,8 @@ impl PhysicsEngine {
                 base_input_index: input_index,
                 base_output_index: output_index,
                 base_particle_index: particle_index,
-                norm_position: np, norm_angle: na,
+                norm_position: np,
+                norm_angle: na,
             });
 
             input_index += s.input.len() as i32;
@@ -355,16 +418,25 @@ impl PhysicsEngine {
 
         initialize_particles(&mut rig);
 
-        let current_rig_outputs = rig.settings.iter()
-            .map(|s| vec![0.0f32; s.output_count as usize]).collect();
-        let previous_rig_outputs = rig.settings.iter()
-            .map(|s| vec![0.0f32; s.output_count as usize]).collect();
+        let current_rig_outputs = rig
+            .settings
+            .iter()
+            .map(|s| vec![0.0f32; s.output_count as usize])
+            .collect();
+        let previous_rig_outputs = rig
+            .settings
+            .iter()
+            .map(|s| vec![0.0f32; s.output_count as usize])
+            .collect();
 
         Ok(Self {
-            rig, options: PhysicsOptions::default(),
-            current_rig_outputs, previous_rig_outputs,
+            rig,
+            options: PhysicsOptions::default(),
+            current_rig_outputs,
+            previous_rig_outputs,
             current_remain_time: 0.0,
-            parameter_caches: Vec::new(), parameter_input_caches: Vec::new(),
+            parameter_caches: Vec::new(),
+            parameter_input_caches: Vec::new(),
         })
     }
 
@@ -373,15 +445,23 @@ impl PhysicsEngine {
         self.rig.gravity = Vec2::new(0.0, 0.0);
         self.rig.wind = Vec2::new(0.0, 0.0);
         self.current_remain_time = 0.0;
-        for v in &mut self.current_rig_outputs { v.fill(0.0); }
-        for v in &mut self.previous_rig_outputs { v.fill(0.0); }
+        for v in &mut self.current_rig_outputs {
+            v.fill(0.0);
+        }
+        for v in &mut self.previous_rig_outputs {
+            v.fill(0.0);
+        }
         self.parameter_caches.clear();
         self.parameter_input_caches.clear();
         initialize_particles(&mut self.rig);
     }
 
-    pub fn options(&self) -> &PhysicsOptions { &self.options }
-    pub fn set_options(&mut self, opts: PhysicsOptions) { self.options = opts; }
+    pub fn options(&self) -> &PhysicsOptions {
+        &self.options
+    }
+    pub fn set_options(&mut self, opts: PhysicsOptions) {
+        self.options = opts;
+    }
 
     // -------------------------------------------------------------------
     // Stabilization
@@ -415,8 +495,14 @@ impl PhysicsEngine {
                 let params_maxs = params.maximums;
                 let params_defs = params.defaults;
                 load_inputs_stabilization(
-                    inputs, params_names, params_mins, params_maxs, params_defs,
-                    &self.parameter_caches, norm_pos, &setting.norm_angle,
+                    inputs,
+                    params_names,
+                    params_mins,
+                    params_maxs,
+                    params_defs,
+                    &self.parameter_caches,
+                    norm_pos,
+                    &setting.norm_angle,
                 )
             };
 
@@ -426,30 +512,46 @@ impl PhysicsEngine {
 
             let particles = &mut self.rig.particles[bp as usize..][..particle_count as usize];
             update_particles_for_stabilization(
-                particles, total_translation, total.1,
-                self.options.wind, threshold,
+                particles,
+                total_translation,
+                total.1,
+                self.options.wind,
+                threshold,
             );
 
             // Outputs
             for i in 0..output_count as usize {
                 let oi = (bo as usize) + i;
                 let dst = resolve_output_dst(&mut self.rig.outputs[oi..=oi], 0, params.names);
-                if dst < 0 { continue; }
+                if dst < 0 {
+                    continue;
+                }
                 let dst = dst as usize;
 
-                if !valid_vertex(&self.rig.outputs[oi], particle_count) { continue; }
+                if !valid_vertex(&self.rig.outputs[oi], particle_count) {
+                    continue;
+                }
                 let vi = self.rig.outputs[oi].vertex_index as usize;
 
                 let seg = particles[vi].position - particles[vi - 1].position;
-                let out_val = get_output_value(seg, particles, vi as i32,
-                    &self.rig.outputs[oi], self.options.gravity);
+                let out_val = get_output_value(
+                    seg,
+                    particles,
+                    vi as i32,
+                    &self.rig.outputs[oi],
+                    self.options.gravity,
+                );
 
                 self.current_rig_outputs[si][i] = out_val;
                 self.previous_rig_outputs[si][i] = out_val;
 
                 update_output_parameter_value(
-                    &mut params.values[dst], params.minimums[dst], params.maximums[dst],
-                    out_val, &self.rig.outputs[oi]);
+                    &mut params.values[dst],
+                    params.minimums[dst],
+                    params.maximums[dst],
+                    out_val,
+                    &self.rig.outputs[oi],
+                );
                 self.parameter_caches[dst] = params.values[dst];
             }
         }
@@ -460,15 +562,23 @@ impl PhysicsEngine {
     // -------------------------------------------------------------------
 
     pub fn evaluate(&mut self, params: &mut PhysicsParams, delta_time: f32) {
-        if delta_time <= 0.0 { return; }
+        if delta_time <= 0.0 {
+            return;
+        }
 
         let n = params.values.len();
         self.grow_caches(n);
 
         self.current_remain_time += delta_time;
-        if self.current_remain_time > MAX_DELTA_TIME { self.current_remain_time = 0.0; }
+        if self.current_remain_time > MAX_DELTA_TIME {
+            self.current_remain_time = 0.0;
+        }
 
-        let physics_dt = if self.rig.fps > 0.0 { 1.0 / self.rig.fps } else { delta_time };
+        let physics_dt = if self.rig.fps > 0.0 {
+            1.0 / self.rig.fps
+        } else {
+            delta_time
+        };
 
         while self.current_remain_time >= physics_dt {
             // Copy current → previous
@@ -499,8 +609,14 @@ impl PhysicsEngine {
                 let total = {
                     let inputs = &mut self.rig.inputs[bi as usize..][..input_count as usize];
                     load_inputs_evaluate(
-                        inputs, params.names, params.minimums, params.maximums, params.defaults,
-                        &self.parameter_caches, norm_pos, &setting.norm_angle,
+                        inputs,
+                        params.names,
+                        params.minimums,
+                        params.maximums,
+                        params.defaults,
+                        &self.parameter_caches,
+                        norm_pos,
+                        &setting.norm_angle,
                     )
                 };
 
@@ -510,29 +626,46 @@ impl PhysicsEngine {
 
                 let particles = &mut self.rig.particles[bp as usize..][..particle_count as usize];
                 update_particles(
-                    particles, total_translation, total.1,
-                    self.options.wind, threshold, physics_dt, AIR_RESISTANCE,
+                    particles,
+                    total_translation,
+                    total.1,
+                    self.options.wind,
+                    threshold,
+                    physics_dt,
+                    AIR_RESISTANCE,
                 );
 
                 for i in 0..output_count as usize {
                     let oi = (bo as usize) + i;
                     let dst = resolve_output_dst(&mut self.rig.outputs[oi..=oi], 0, params.names);
-                    if dst < 0 { continue; }
+                    if dst < 0 {
+                        continue;
+                    }
                     let dst = dst as usize;
 
-                    if !valid_vertex(&self.rig.outputs[oi], particle_count) { continue; }
+                    if !valid_vertex(&self.rig.outputs[oi], particle_count) {
+                        continue;
+                    }
                     let vi = self.rig.outputs[oi].vertex_index as usize;
 
                     let seg = particles[vi].position - particles[vi - 1].position;
-                    let out_val = get_output_value(seg, particles, vi as i32,
-                        &self.rig.outputs[oi], self.options.gravity);
+                    let out_val = get_output_value(
+                        seg,
+                        particles,
+                        vi as i32,
+                        &self.rig.outputs[oi],
+                        self.options.gravity,
+                    );
 
                     self.current_rig_outputs[si][i] = out_val;
 
                     update_output_parameter_value(
                         &mut self.parameter_caches[dst],
-                        params.minimums[dst], params.maximums[dst],
-                        out_val, &self.rig.outputs[oi]);
+                        params.minimums[dst],
+                        params.maximums[dst],
+                        out_val,
+                        &self.rig.outputs[oi],
+                    );
                 }
             }
 
@@ -548,8 +681,12 @@ impl PhysicsEngine {
     // -------------------------------------------------------------------
 
     fn grow_caches(&mut self, n: usize) {
-        if self.parameter_caches.len() < n { self.parameter_caches.resize(n, 0.0); }
-        if self.parameter_input_caches.len() < n { self.parameter_input_caches.resize(n, 0.0); }
+        if self.parameter_caches.len() < n {
+            self.parameter_caches.resize(n, 0.0);
+        }
+        if self.parameter_input_caches.len() < n {
+            self.parameter_input_caches.resize(n, 0.0);
+        }
     }
 
     fn interpolate(&mut self, params: &mut PhysicsParams, weight: f32) {
@@ -558,7 +695,9 @@ impl PhysicsEngine {
             for i in 0..setting.output_count as usize {
                 let oi = (setting.base_output_index as usize) + i;
                 let dst = resolve_output_dst(&mut self.rig.outputs[oi..=oi], 0, params.names);
-                if dst < 0 { continue; }
+                if dst < 0 {
+                    continue;
+                }
                 let dst = dst as usize;
 
                 let interp = self.previous_rig_outputs[si][i] * (1.0 - weight)
@@ -566,8 +705,11 @@ impl PhysicsEngine {
 
                 update_output_parameter_value(
                     &mut params.values[dst],
-                    params.minimums[dst], params.maximums[dst],
-                    interp, &self.rig.outputs[oi]);
+                    params.minimums[dst],
+                    params.maximums[dst],
+                    interp,
+                    &self.rig.outputs[oi],
+                );
             }
         }
     }
@@ -581,8 +723,11 @@ impl PhysicsEngine {
 fn resolve_output_dst(outputs: &mut [PhysicsOutput], idx: usize, names: &[String]) -> i32 {
     let o = &mut outputs[idx];
     if o.destination_index < 0 {
-        o.destination_index = names.iter()
-            .position(|n| n == &o.destination_id).map(|i| i as i32).unwrap_or(-1);
+        o.destination_index = names
+            .iter()
+            .position(|n| n == &o.destination_id)
+            .map(|i| i as i32)
+            .unwrap_or(-1);
     }
     o.destination_index
 }
@@ -595,26 +740,41 @@ fn valid_vertex(output: &PhysicsOutput, particle_count: i32) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn load_inputs_stabilization(
     inputs: &mut [PhysicsInput],
-    names: &[String], mins: &[f32], maxs: &[f32], defs: &[f32],
+    names: &[String],
+    mins: &[f32],
+    maxs: &[f32],
+    defs: &[f32],
     param_values: &[f32],
-    norm_pos: Normalization, _norm_angle: &Normalization,
+    norm_pos: Normalization,
+    _norm_angle: &Normalization,
 ) -> (Vec2, f32) {
     let mut tt = Vec2::default();
     let mut ta = 0.0f32;
 
     for inp in inputs.iter_mut() {
         if inp.source_index < 0 {
-            inp.source_index = names.iter()
-                .position(|n| n == &inp.source_id).map(|i| i as i32).unwrap_or(-1);
+            inp.source_index = names
+                .iter()
+                .position(|n| n == &inp.source_id)
+                .map(|i| i as i32)
+                .unwrap_or(-1);
         }
         let idx = inp.source_index;
-        if idx < 0 { continue; }
+        if idx < 0 {
+            continue;
+        }
         let idx = idx as usize;
 
         let weight = inp.weight / MAXIMUM_WEIGHT;
         let normalized = normalize_parameter_value(
-            param_values[idx], mins[idx], maxs[idx], defs[idx],
-            norm_pos.minimum, norm_pos.maximum, norm_pos.default_val, inp.reflect,
+            param_values[idx],
+            mins[idx],
+            maxs[idx],
+            defs[idx],
+            norm_pos.minimum,
+            norm_pos.maximum,
+            norm_pos.default_val,
+            inp.reflect,
         );
 
         match inp.input_type {
@@ -631,49 +791,90 @@ fn load_inputs_stabilization(
 #[allow(clippy::too_many_arguments)]
 fn load_inputs_evaluate(
     inputs: &mut [PhysicsInput],
-    names: &[String], mins: &[f32], maxs: &[f32], defs: &[f32],
+    names: &[String],
+    mins: &[f32],
+    maxs: &[f32],
+    defs: &[f32],
     param_values: &[f32],
-    norm_pos: Normalization, _norm_angle: &Normalization,
+    norm_pos: Normalization,
+    _norm_angle: &Normalization,
 ) -> (Vec2, f32) {
     #[allow(unused_variables)]
     let _ = _norm_angle;
-    load_inputs_stabilization(inputs, names, mins, maxs, defs, param_values, norm_pos, _norm_angle)
+    load_inputs_stabilization(
+        inputs,
+        names,
+        mins,
+        maxs,
+        defs,
+        param_values,
+        norm_pos,
+        _norm_angle,
+    )
 }
 
 // ---------------------------------------------------------------------------
 // Math functions (exact mirror of CubismPhysics.cpp)
 // ---------------------------------------------------------------------------
 
-fn degrees_to_radians(deg: f32) -> f32 { deg * std::f32::consts::PI / 180.0 }
+fn degrees_to_radians(deg: f32) -> f32 {
+    deg * std::f32::consts::PI / 180.0
+}
 
 fn direction_to_radian(from: Vec2, to: Vec2) -> f32 {
     let mut ret = to.y.atan2(to.x) - from.y.atan2(from.x);
-    while ret < -std::f32::consts::PI { ret += std::f32::consts::TAU; }
-    while ret > std::f32::consts::PI { ret -= std::f32::consts::TAU; }
+    while ret < -std::f32::consts::PI {
+        ret += std::f32::consts::TAU;
+    }
+    while ret > std::f32::consts::PI {
+        ret -= std::f32::consts::TAU;
+    }
     ret
 }
 
-fn radian_to_direction(angle: f32) -> Vec2 { Vec2::new(angle.sin(), angle.cos()) }
+fn radian_to_direction(angle: f32) -> Vec2 {
+    Vec2::new(angle.sin(), angle.cos())
+}
 
-fn get_range_value(min: f32, max: f32) -> f32 { (max.min(min) - min.max(max)).abs() }
+fn get_range_value(min: f32, max: f32) -> f32 {
+    (max.min(min) - min.max(max)).abs()
+}
 
-fn get_default_value(min: f32, max: f32) -> f32 { min.min(max) + get_range_value(min, max) / 2.0 }
+fn get_default_value(min: f32, max: f32) -> f32 {
+    min.min(max) + get_range_value(min, max) / 2.0
+}
 
-fn sign(x: f32) -> i32 { if x > 0.0 { 1 } else if x < 0.0 { -1 } else { 0 } }
+fn sign(x: f32) -> i32 {
+    if x > 0.0 {
+        1
+    } else if x < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
 
 /// Exact mirror of C++ NormalizeParameterValue.
 #[allow(clippy::too_many_arguments)]
 fn normalize_parameter_value(
     value: f32,
-    param_min: f32, param_max: f32, _param_default: f32,
-    norm_min: f32, norm_max: f32, norm_default: f32,
+    param_min: f32,
+    param_max: f32,
+    _param_default: f32,
+    norm_min: f32,
+    norm_max: f32,
+    norm_default: f32,
     is_inverted: bool,
 ) -> f32 {
     let max_value = param_max.max(param_min);
     let mut value = value;
-    if max_value < value { value = max_value; }
+    if max_value < value {
+        value = max_value;
+    }
     let min_value = param_max.min(param_min);
-    if min_value > value { value = min_value; }
+    if min_value > value {
+        value = min_value;
+    }
 
     let min_norm = norm_min.min(norm_max);
     let max_norm = norm_min.max(norm_max);
@@ -686,27 +887,44 @@ fn normalize_parameter_value(
         1 => {
             let nl = max_norm - mid_norm;
             let pl = max_value - mid_value;
-            if pl != 0.0 { pv * (nl / pl) + mid_norm } else { mid_norm }
+            if pl != 0.0 {
+                pv * (nl / pl) + mid_norm
+            } else {
+                mid_norm
+            }
         }
         -1 => {
             let nl = min_norm - mid_norm;
             let pl = min_value - mid_value;
-            if pl != 0.0 { pv * (nl / pl) + mid_norm } else { mid_norm }
+            if pl != 0.0 {
+                pv * (nl / pl) + mid_norm
+            } else {
+                mid_norm
+            }
         }
         _ => mid_norm,
     };
 
-    if is_inverted { result } else { -result }
+    if is_inverted {
+        result
+    } else {
+        -result
+    }
 }
 
 /// Exact mirror of C++ UpdateParticles.
 fn update_particles(
     strand: &mut [Particle],
-    total_translation: Vec2, total_angle: f32,
-    wind_direction: Vec2, threshold_value: f32,
-    delta_time_seconds: f32, air_resistance: f32,
+    total_translation: Vec2,
+    total_angle: f32,
+    wind_direction: Vec2,
+    threshold_value: f32,
+    delta_time_seconds: f32,
+    air_resistance: f32,
 ) {
-    if strand.is_empty() { return; }
+    if strand.is_empty() {
+        return;
+    }
     strand[0].position = total_translation;
 
     let total_radian = degrees_to_radians(total_angle);
@@ -727,7 +945,8 @@ fn update_particles(
         let (cr, sr) = (rad.cos(), rad.sin());
         let dx = cr * dir.x - dir.y * sr;
         let dy = sr * dir.x + dir.y * cr;
-        dir.x = dx; dir.y = dy;
+        dir.x = dx;
+        dir.y = dy;
 
         strand[i].position = strand[i - 1].position + dir;
         let vel = strand[i].velocity * dc;
@@ -737,7 +956,9 @@ fn update_particles(
         let nd = (strand[i].position - strand[i - 1].position).normalize();
         strand[i].position = strand[i - 1].position + nd * strand[i].radius;
 
-        if strand[i].position.x.abs() < threshold_value { strand[i].position.x = 0.0; }
+        if strand[i].position.x.abs() < threshold_value {
+            strand[i].position.x = 0.0;
+        }
 
         if dc != 0.0 {
             strand[i].velocity = (strand[i].position - strand[i].last_position) / dc;
@@ -753,10 +974,14 @@ fn update_particles(
 /// Simplified initial stabilization (no velocity/delay).
 fn update_particles_for_stabilization(
     strand: &mut [Particle],
-    total_translation: Vec2, total_angle: f32,
-    wind_direction: Vec2, threshold_value: f32,
+    total_translation: Vec2,
+    total_angle: f32,
+    wind_direction: Vec2,
+    threshold_value: f32,
 ) {
-    if strand.is_empty() { return; }
+    if strand.is_empty() {
+        return;
+    }
     strand[0].position = total_translation;
 
     let total_radian = degrees_to_radians(total_angle);
@@ -770,7 +995,9 @@ fn update_particles_for_stabilization(
         let f = strand[i].force.normalize() * strand[i].radius;
         strand[i].position = strand[i - 1].position + f;
 
-        if strand[i].position.x.abs() < threshold_value { strand[i].position.x = 0.0; }
+        if strand[i].position.x.abs() < threshold_value {
+            strand[i].position.x = 0.0;
+        }
 
         strand[i].force = Vec2::default();
         strand[i].last_gravity = current_gravity;
@@ -779,12 +1006,27 @@ fn update_particles_for_stabilization(
 
 /// Get output value from particle segment.
 fn get_output_value(
-    translation: Vec2, particles: &[Particle], particle_index: i32,
-    output: &PhysicsOutput, parent_gravity: Vec2,
+    translation: Vec2,
+    particles: &[Particle],
+    particle_index: i32,
+    output: &PhysicsOutput,
+    parent_gravity: Vec2,
 ) -> f32 {
     match output.output_type {
-        OutputType::X => { let mut v = translation.x; if output.reflect { v *= -1.0; } v }
-        OutputType::Y => { let mut v = translation.y; if output.reflect { v *= -1.0; } v }
+        OutputType::X => {
+            let mut v = translation.x;
+            if output.reflect {
+                v *= -1.0;
+            }
+            v
+        }
+        OutputType::Y => {
+            let mut v = translation.y;
+            if output.reflect {
+                v *= -1.0;
+            }
+            v
+        }
         OutputType::Angle => {
             let pg = if particle_index >= 2 {
                 particles[(particle_index - 1) as usize].position
@@ -793,7 +1035,9 @@ fn get_output_value(
                 parent_gravity * -1.0
             };
             let mut v = direction_to_radian(pg, translation);
-            if output.reflect { v *= -1.0; }
+            if output.reflect {
+                v *= -1.0;
+            }
             v
         }
     }
@@ -802,20 +1046,28 @@ fn get_output_value(
 /// Clamp and blend output parameter value.
 fn update_output_parameter_value(
     param_value: &mut f32,
-    param_min: f32, param_max: f32,
-    translation: f32, output: &PhysicsOutput,
+    param_min: f32,
+    param_max: f32,
+    translation: f32,
+    output: &PhysicsOutput,
 ) {
     let oscale = match output.output_type {
         OutputType::X | OutputType::Y => output.translation_scale.x,
         OutputType::Angle => output.angle_scale,
     };
     let mut value = translation * oscale;
-    if value < param_min { value = param_min; }
-    else if value > param_max { value = param_max; }
+    if value < param_min {
+        value = param_min;
+    } else if value > param_max {
+        value = param_max;
+    }
 
     let w = output.weight / MAXIMUM_WEIGHT;
-    if w >= 1.0 { *param_value = value; }
-    else { *param_value = *param_value * (1.0 - w) + value * w; }
+    if w >= 1.0 {
+        *param_value = value;
+    } else {
+        *param_value = *param_value * (1.0 - w) + value * w;
+    }
 }
 
 /// Initialize particle chain.
@@ -825,7 +1077,9 @@ fn initialize_particles(rig: &mut Rig) {
         let base = setting.base_particle_index as usize;
         let count = setting.particle_count as usize;
         let strand = &mut rig.particles[base..base + count];
-        if strand.is_empty() { continue; }
+        if strand.is_empty() {
+            continue;
+        }
 
         strand[0].initial_position = Vec2::default();
         strand[0].last_position = strand[0].initial_position;
@@ -918,7 +1172,13 @@ mod tests {
         let maxs = vec![30.0, 360.0];
         let defs = vec![0.0, 0.0];
         let names = vec!["P1".into(), "P2".into()];
-        let mut params = PhysicsParams { values: &mut values, minimums: &mins, maximums: &maxs, defaults: &defs, names: &names };
+        let mut params = PhysicsParams {
+            values: &mut values,
+            minimums: &mins,
+            maximums: &maxs,
+            defaults: &defs,
+            names: &names,
+        };
 
         engine.stabilization(&mut params);
         // P1 clamped to 30, normalized to 1.0 with reflect=false → -1.0
@@ -938,7 +1198,13 @@ mod tests {
         let maxs = vec![30.0, 360.0];
         let defs = vec![0.0, 0.0];
         let names = vec!["P1".into(), "P2".into()];
-        let mut params = PhysicsParams { values: &mut values, minimums: &mins, maximums: &maxs, defaults: &defs, names: &names };
+        let mut params = PhysicsParams {
+            values: &mut values,
+            minimums: &mins,
+            maximums: &maxs,
+            defaults: &defs,
+            names: &names,
+        };
 
         engine.stabilization(&mut params);
         engine.evaluate(&mut params, 1.0 / 30.0);
@@ -965,20 +1231,44 @@ mod tests {
     #[test]
     fn test_update_particles_2() {
         let mut p = [
-            Particle { initial_position: Vec2::default(), mobility: 0.0, delay: 0.0,
-                acceleration: 0.0, radius: 0.0, position: Vec2::default(),
-                last_position: Vec2::default(), last_gravity: Vec2::new(0.0,-1.0),
-                force: Vec2::default(), velocity: Vec2::default() },
-            Particle { initial_position: Vec2::new(0.0,-30.0), mobility: 10.0, delay: 1.0,
-                acceleration: 5.0, radius: 30.0, position: Vec2::new(0.0,-30.0),
-                last_position: Vec2::new(0.0,-30.0), last_gravity: Vec2::new(0.0,-1.0),
-                force: Vec2::default(), velocity: Vec2::default() },
+            Particle {
+                initial_position: Vec2::default(),
+                mobility: 0.0,
+                delay: 0.0,
+                acceleration: 0.0,
+                radius: 0.0,
+                position: Vec2::default(),
+                last_position: Vec2::default(),
+                last_gravity: Vec2::new(0.0, -1.0),
+                force: Vec2::default(),
+                velocity: Vec2::default(),
+            },
+            Particle {
+                initial_position: Vec2::new(0.0, -30.0),
+                mobility: 10.0,
+                delay: 1.0,
+                acceleration: 5.0,
+                radius: 30.0,
+                position: Vec2::new(0.0, -30.0),
+                last_position: Vec2::new(0.0, -30.0),
+                last_gravity: Vec2::new(0.0, -1.0),
+                force: Vec2::default(),
+                velocity: Vec2::default(),
+            },
         ];
-        update_particles(&mut p, Vec2::new(1.0, 0.0), 0.0, Vec2::default(), 0.001, 1.0/30.0, AIR_RESISTANCE);
+        update_particles(
+            &mut p,
+            Vec2::new(1.0, 0.0),
+            0.0,
+            Vec2::default(),
+            0.001,
+            1.0 / 30.0,
+            AIR_RESISTANCE,
+        );
         assert!((p[0].position.x - 1.0).abs() < 1e-5);
         let dx = p[1].position.x - p[0].position.x;
         let dy = p[1].position.y - p[0].position.y;
-        let d = (dx*dx + dy*dy).sqrt();
+        let d = (dx * dx + dy * dy).sqrt();
         assert!((d - 30.0).abs() < 1.0, "dist={d} expected ~30");
     }
 
@@ -1021,9 +1311,9 @@ mod tests {
         let e = PhysicsEngine::from_json(json.as_bytes()).unwrap();
         assert_eq!(e.sub_rig_count(), 2);
         assert_eq!(e.rig.inputs.len(), 2); // total 2 (1+1)
-        // Actually 1+1=2, but JSON says 3... let me fix the test
-        // The actual input count from the JSON is 2 (first has 1, second has 1)
-        // But our meta says 3. This is a test mistake. Let me just check structure.
+                                           // Actually 1+1=2, but JSON says 3... let me fix the test
+                                           // The actual input count from the JSON is 2 (first has 1, second has 1)
+                                           // But our meta says 3. This is a test mistake. Let me just check structure.
         assert_eq!(e.rig.settings.len(), 2);
         assert_eq!(e.rig.particles.len(), 5);
         assert!((e.rig.fps - 30.0).abs() < 1e-5);

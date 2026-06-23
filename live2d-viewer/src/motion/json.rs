@@ -121,8 +121,8 @@ const ENTRY_FIRST_TYPE: usize = 2;
 /// Returns (segment_type, num_entries_to_consume_from_data_start)
 fn segment_data_entries(seg_type: i32) -> Option<(i32, usize)> {
     match seg_type {
-        0 | 2 | 3 => Some((seg_type, 2)),   // Linear/Stepped/InverseStepped: [endT, endV]
-        1 => Some((seg_type, 6)),            // Bezier: [c1T, c1V, c2T, c2V, endT, endV]
+        0 | 2 | 3 => Some((seg_type, 2)), // Linear/Stepped/InverseStepped: [endT, endV]
+        1 => Some((seg_type, 6)),         // Bezier: [c1T, c1V, c2T, c2V, endT, endV]
         _ => None,
     }
 }
@@ -150,12 +150,18 @@ pub fn parse_motion_json(buffer: &[u8]) -> anyhow::Result<ParsedMotion> {
     }
 
     let events = match &raw.user_data {
-        Some(ud) => ud.user_data.as_ref().map(|data| {
-            data.iter().map(|d| ParsedEvent {
-                fire_time: d.time,
-                value: d.value.clone(),
-            }).collect()
-        }).unwrap_or_default(),
+        Some(ud) => ud
+            .user_data
+            .as_ref()
+            .map(|data| {
+                data.iter()
+                    .map(|d| ParsedEvent {
+                        fire_time: d.time,
+                        value: d.value.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         None => Vec::new(),
     };
 
@@ -178,18 +184,31 @@ fn parse_curve_segments(data: &[f32]) -> anyhow::Result<Vec<ParsedSegment>> {
         if segments.is_empty() {
             // First segment: [baseTime, baseValue, type, ...data]
             if pos + 3 > data.len() {
-                anyhow::bail!("Truncated first segment: need at least 3 entries, have {}", data.len() - pos);
+                anyhow::bail!(
+                    "Truncated first segment: need at least 3 entries, have {}",
+                    data.len() - pos
+                );
             }
             let base_time = data[pos + ENTRY_BASE_TIME];
             let base_value = data[pos + ENTRY_BASE_VALUE];
             let raw_type = data[pos + ENTRY_FIRST_TYPE];
 
-            let (seg_type, data_entries) = segment_data_entries(raw_type as i32)
-                .ok_or_else(|| anyhow::anyhow!("Unknown segment type {} at pos {}", raw_type, pos + ENTRY_FIRST_TYPE))?;
+            let (seg_type, data_entries) =
+                segment_data_entries(raw_type as i32).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Unknown segment type {} at pos {}",
+                        raw_type,
+                        pos + ENTRY_FIRST_TYPE
+                    )
+                })?;
 
             if pos + ENTRY_FIRST_TYPE + 1 + data_entries > data.len() {
-                anyhow::bail!("Truncated first segment of type {}: need {} data entries, have {}",
-                    seg_type, data_entries, data.len() - pos - ENTRY_FIRST_TYPE - 1);
+                anyhow::bail!(
+                    "Truncated first segment of type {}: need {} data entries, have {}",
+                    seg_type,
+                    data_entries,
+                    data.len() - pos - ENTRY_FIRST_TYPE - 1
+                );
             }
 
             let data_start = pos + ENTRY_FIRST_TYPE + 1;
@@ -211,12 +230,18 @@ fn parse_curve_segments(data: &[f32]) -> anyhow::Result<Vec<ParsedSegment>> {
             }
             let raw_type = data[pos];
 
-            let (seg_type, data_entries) = segment_data_entries(raw_type as i32)
-                .ok_or_else(|| anyhow::anyhow!("Unknown segment type {} at pos {}", raw_type, pos))?;
+            let (seg_type, data_entries) =
+                segment_data_entries(raw_type as i32).ok_or_else(|| {
+                    anyhow::anyhow!("Unknown segment type {} at pos {}", raw_type, pos)
+                })?;
 
             if pos + 1 + data_entries > data.len() {
-                anyhow::bail!("Truncated subsequent segment of type {}: need {} data entries, have {}",
-                    seg_type, data_entries, data.len() - pos - 1);
+                anyhow::bail!(
+                    "Truncated subsequent segment of type {}: need {} data entries, have {}",
+                    seg_type,
+                    data_entries,
+                    data.len() - pos - 1
+                );
             }
 
             // Base point is the previous segment's endpoint
@@ -242,7 +267,11 @@ fn parse_curve_segments(data: &[f32]) -> anyhow::Result<Vec<ParsedSegment>> {
 }
 
 /// Extract control/end points for a segment type from the data array.
-fn extract_extra_points(seg_type: i32, data: &[f32], start: usize) -> anyhow::Result<Vec<MotionPoint>> {
+fn extract_extra_points(
+    seg_type: i32,
+    data: &[f32],
+    start: usize,
+) -> anyhow::Result<Vec<MotionPoint>> {
     match seg_type {
         0 | 2 | 3 => {
             // Linear/Stepped/InverseStepped: [endTime, endValue]
@@ -308,18 +337,22 @@ pub struct ParsedExp3Param {
 pub fn parse_expression_json(buffer: &[u8]) -> anyhow::Result<ParsedExpression> {
     let raw: RawExp3Json = serde_json::from_slice(buffer)?;
 
-    let parameters: Vec<ParsedExp3Param> = raw.parameters.iter().map(|p| {
-        let blend = match p.blend.to_lowercase().as_str() {
-            "add" => ExpressionBlendMode::Add,
-            "multiply" => ExpressionBlendMode::Multiply,
-            _ => ExpressionBlendMode::Override,
-        };
-        ParsedExp3Param {
-            id: p.id.clone(),
-            value: p.value,
-            blend,
-        }
-    }).collect();
+    let parameters: Vec<ParsedExp3Param> = raw
+        .parameters
+        .iter()
+        .map(|p| {
+            let blend = match p.blend.to_lowercase().as_str() {
+                "add" => ExpressionBlendMode::Add,
+                "multiply" => ExpressionBlendMode::Multiply,
+                _ => ExpressionBlendMode::Override,
+            };
+            ParsedExp3Param {
+                id: p.id.clone(),
+                value: p.value,
+                blend,
+            }
+        })
+        .collect();
 
     Ok(ParsedExpression { parameters })
 }

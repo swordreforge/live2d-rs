@@ -1,8 +1,8 @@
+use live2d_core::{Moc, Model};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use live2d_core::{Moc, Model};
 
 use crate::camera::Camera;
 use crate::motion;
@@ -19,9 +19,7 @@ fn is_v2_model_json(name: &str) -> bool {
     // V2 model JSON: contains "model" (case-insensitive) in the name, ends with .json,
     // and is NOT a V3 .model3.json
     let lower = name.to_lowercase();
-    lower.contains("model")
-        && name.ends_with(".json")
-        && !name.ends_with(".model3.json")
+    lower.contains("model") && name.ends_with(".json") && !name.ends_with(".model3.json")
 }
 
 /// Find the V2 model JSON file in a directory (e.g. model.json, model0.json).
@@ -212,12 +210,18 @@ impl AppState {
     }
 
     pub fn add_model_dir(&mut self, path: PathBuf) {
-        let name = path.file_name()
+        let name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
         let format = detect_model_format(&path);
-        self.model_list.push(ModelEntry { name, dir: path, loaded: false, format });
+        self.model_list.push(ModelEntry {
+            name,
+            dir: path,
+            loaded: false,
+            format,
+        });
     }
 
     /// Start switching to model at `idx` asynchronously.
@@ -228,7 +232,8 @@ impl AppState {
             return Err("index out of range".into());
         }
         let entry = &self.model_list[idx];
-        let fmt = entry.format
+        let fmt = entry
+            .format
             .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
 
         self.is_v2 = matches!(fmt, ModelFormat::V2);
@@ -341,7 +346,11 @@ impl AppState {
 
         // Part IDs
         let parts = model.parts();
-        self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+        self.part_ids = parts
+            .ids()
+            .iter()
+            .map(|id| id.to_string_lossy().into_owned())
+            .collect();
 
         // Canvas info
         let canvas = model.canvas_info();
@@ -473,7 +482,8 @@ impl AppState {
         self.motion_queue.stop_all_motions();
 
         let entry = &self.model_list[idx];
-        let fmt = entry.format
+        let fmt = entry
+            .format
             .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
 
         self.is_v2 = matches!(fmt, ModelFormat::V2);
@@ -484,8 +494,8 @@ impl AppState {
             let model_json = find_v2_model_json(&entry.dir)
                 .ok_or_else(|| format!("no V2 model JSON found in {:?}", entry.dir))?;
 
-            let mut m = live2d_v2_core::Model::new()
-                .map_err(|e| format!("create V2 model: {e}"))?;
+            let mut m =
+                live2d_v2_core::Model::new().map_err(|e| format!("create V2 model: {e}"))?;
             m.load_json(&model_json.to_string_lossy())
                 .map_err(|e| format!("V2 load_json: {e}"))?;
 
@@ -501,7 +511,8 @@ impl AppState {
             self.param_lookup.reserve(nparams as usize);
             for i in 0..nparams {
                 if let Ok(id) = m.param_id(i) {
-                    self.param_lookup.insert(id.clone(), self.parameter_names.len());
+                    self.param_lookup
+                        .insert(id.clone(), self.parameter_names.len());
                     self.parameter_names.push(id);
                 }
             }
@@ -517,12 +528,11 @@ impl AppState {
             let loaded = crate::model_loader::LoadedModel::load(&entry.dir)
                 .map_err(|e| format!("load model: {e}"))?;
 
-            let moc = Moc::revive(&loaded.moc3_data)
-                .map_err(|e| format!("revive moc: {e}"))?;
+            let moc = Moc::revive(&loaded.moc3_data).map_err(|e| format!("revive moc: {e}"))?;
 
             let moc_ptr: *const Moc = &moc as *const Moc;
-            let model = unsafe { Model::initialize(&*moc_ptr) }
-                .map_err(|e| format!("init model: {e}"))?;
+            let model =
+                unsafe { Model::initialize(&*moc_ptr) }.map_err(|e| format!("init model: {e}"))?;
             let model: Model<'static> = unsafe { std::mem::transmute(model) };
 
             let params = model.parameters();
@@ -543,7 +553,11 @@ impl AppState {
 
             // Read part IDs for PartOpacity motion curve evaluation
             let parts = model.parts();
-            self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+            self.part_ids = parts
+                .ids()
+                .iter()
+                .map(|id| id.to_string_lossy().into_owned())
+                .collect();
 
             // Read canvas info
             let canvas = model.canvas_info();
@@ -690,7 +704,11 @@ impl AppState {
                 return;
             }
         };
-        log::info!("Loaded pose with {} groups (fade={:.2}s)", parsed.groups.len(), parsed.fade_in_time);
+        log::info!(
+            "Loaded pose with {} groups (fade={:.2}s)",
+            parsed.groups.len(),
+            parsed.fade_in_time
+        );
         self.pose_data = Some(parsed);
     }
 
@@ -745,7 +763,11 @@ impl AppState {
             None => return,
         };
         let mut parts = model.parts();
-        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+        let pids: Vec<String> = parts
+            .ids()
+            .iter()
+            .map(|id| id.to_string_lossy().into_owned())
+            .collect();
         let popac = parts.opacities_mut();
 
         for group in &pose.groups {
@@ -778,13 +800,19 @@ impl AppState {
             None => return,
         };
         let mut parts = model.parts();
-        let pids: Vec<String> = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+        let pids: Vec<String> = parts
+            .ids()
+            .iter()
+            .map(|id| id.to_string_lossy().into_owned())
+            .collect();
         let popac = parts.opacities_mut();
 
         // CopyPartOpacities: for any entry with links, copy main opacity to linked parts
         for group in &pose.groups {
             for entry in group {
-                if entry.links.is_empty() { continue; }
+                if entry.links.is_empty() {
+                    continue;
+                }
                 if let Some(main_idx) = pids.iter().position(|id| id == &entry.id) {
                     let opacity = popac[main_idx];
                     for link_id in &entry.links {
@@ -876,7 +904,8 @@ impl AppState {
         }
 
         // Apply Breath controller (delta-additive oscillation)
-        self.breath.update(delta_time, &mut self.parameter_values, &self.param_lookup);
+        self.breath
+            .update(delta_time, &mut self.parameter_values, &self.param_lookup);
 
         // Apply Look controller (subtract old offset → update → add new offset)
         for p in &self.look.params {
@@ -918,7 +947,13 @@ impl AppState {
     }
 
     /// Feed mouse NDC position into look controller for head/eye tracking.
-    pub fn update_mouse_for_look(&mut self, mouse_x: f64, mouse_y: f64, screen_w: f32, screen_h: f32) {
+    pub fn update_mouse_for_look(
+        &mut self,
+        mouse_x: f64,
+        mouse_y: f64,
+        screen_w: f32,
+        screen_h: f32,
+    ) {
         let ndc_x = 2.0 * mouse_x as f32 / screen_w - 1.0;
         let ndc_y = 1.0 - 2.0 * mouse_y as f32 / screen_h;
         self.look.set_target(ndc_x, ndc_y);
@@ -928,12 +963,21 @@ impl AppState {
     /// V2 uses built-in hitTest() with raw screen coordinates.
     #[allow(clippy::too_many_arguments)]
     pub fn handle_tap_with_cam(
-        &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
-        cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
+        &mut self,
+        x: f64,
+        y: f64,
+        screen_w: f32,
+        screen_h: f32,
+        cam_scale_x: f32,
+        cam_scale_y: f32,
+        cam_trans_x: f32,
+        cam_trans_y: f32,
     ) {
         if self.is_v2 {
             // V2: hit test all body parts using full MVP transform (accounts for zoom/pan)
-            let hit = self.v2_model.as_ref()
+            let hit = self
+                .v2_model
+                .as_ref()
                 .map(|v2| !v2.hit_part(x as f32, y as f32, false).is_empty())
                 .unwrap_or(false);
             if hit {
@@ -962,7 +1006,10 @@ impl AppState {
         let icounts = drawables.index_counts();
 
         for hit_area in &self.hit_areas {
-            let di = match drawable_ids.iter().position(|id| id.to_string_lossy() == hit_area.id) {
+            let di = match drawable_ids
+                .iter()
+                .position(|id| id.to_string_lossy() == hit_area.id)
+            {
                 Some(i) => i,
                 None => continue,
             };
@@ -997,7 +1044,16 @@ impl AppState {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32) -> bool {
+fn point_in_triangle(
+    px: f32,
+    py: f32,
+    ax: f32,
+    ay: f32,
+    bx: f32,
+    by: f32,
+    cx: f32,
+    cy: f32,
+) -> bool {
     let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
     let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
     let d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
@@ -1010,20 +1066,22 @@ fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f
 fn load_v3_background(dir: &Path, idx: usize) -> Result<V3RawData, String> {
     use crate::model_loader;
 
-    let model3_path = model_loader::find_model3_json(dir)
-        .map_err(|e| format!("find model3.json: {e}"))?;
+    let model3_path =
+        model_loader::find_model3_json(dir).map_err(|e| format!("find model3.json: {e}"))?;
     let base_dir = model3_path.parent().unwrap_or(dir).to_path_buf();
 
-    let json_str = std::fs::read_to_string(&model3_path)
-        .map_err(|e| format!("read model3.json: {e}"))?;
-    let json: model_loader::Model3Json = serde_json::from_str(&json_str)
-        .map_err(|e| format!("parse model3.json: {e}"))?;
+    let json_str =
+        std::fs::read_to_string(&model3_path).map_err(|e| format!("read model3.json: {e}"))?;
+    let json: model_loader::Model3Json =
+        serde_json::from_str(&json_str).map_err(|e| format!("parse model3.json: {e}"))?;
 
     let moc3_path = base_dir.join(&json.file_references.moc);
-    let moc3_bytes = std::fs::read(&moc3_path)
-        .map_err(|e| format!("read moc3: {e}"))?;
+    let moc3_bytes = std::fs::read(&moc3_path).map_err(|e| format!("read moc3: {e}"))?;
 
-    let texture_paths: Vec<PathBuf> = json.file_references.textures.iter()
+    let texture_paths: Vec<PathBuf> = json
+        .file_references
+        .textures
+        .iter()
         .map(|p| base_dir.join(p))
         .collect();
 
@@ -1057,10 +1115,16 @@ fn load_v3_background(dir: &Path, idx: usize) -> Result<V3RawData, String> {
         }
     }
 
-    let pose_bytes = json.file_references.pose.as_ref()
+    let pose_bytes = json
+        .file_references
+        .pose
+        .as_ref()
         .and_then(|p| std::fs::read(base_dir.join(p)).ok());
 
-    let physics_bytes = json.file_references.physics.as_ref()
+    let physics_bytes = json
+        .file_references
+        .physics
+        .as_ref()
         .and_then(|p| std::fs::read(base_dir.join(p)).ok());
 
     let hit_areas_bytes = serde_json::to_vec(&json.hit_areas).ok();

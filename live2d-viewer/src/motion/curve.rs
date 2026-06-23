@@ -176,11 +176,7 @@ pub fn easing_sine(value: f32) -> f32 {
 }
 
 /// High-level dispatch: evaluate a segment type with its control points at the given time.
-pub fn evaluate_segment(
-    seg_type: SegmentType,
-    points: &[MotionPoint],
-    time: f32,
-) -> f32 {
+pub fn evaluate_segment(seg_type: SegmentType, points: &[MotionPoint], time: f32) -> f32 {
     match seg_type {
         SegmentType::Linear => linear_evaluate(points, time),
         SegmentType::Bezier => bezier_evaluate_cardano(points, time),

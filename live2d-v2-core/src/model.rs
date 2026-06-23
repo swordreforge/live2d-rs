@@ -1,5 +1,5 @@
 use live2d_v2_core_sys as ffi;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{c_char, CStr, CString};
 
 /// Error type for V2 model operations.
 #[derive(Debug)]
@@ -115,7 +115,9 @@ impl Model {
         if ptr.is_null() {
             return Err(Error::NullPointer("param_id"));
         }
-        Ok(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+        Ok(unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned())
     }
     pub fn set_param_value(&mut self, id: &str, val: f32, weight: f32) {
         let cid = CString::new(id).unwrap();
@@ -136,7 +138,9 @@ impl Model {
         if ptr.is_null() {
             return Err(Error::NullPointer("part_id"));
         }
-        Ok(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+        Ok(unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned())
     }
     pub fn set_part_opacity(&mut self, index: i32, val: f32) {
         unsafe { ffi::v2_model_set_part_opacity(self.raw, index, val) }
@@ -234,8 +238,11 @@ impl Model {
         let slice = unsafe { std::slice::from_raw_parts(out_ids, out_count as usize) };
         slice
             .iter()
-            .map(|&p| unsafe { CStr::from_ptr(p as *const c_char) }
-                .to_string_lossy().into_owned())
+            .map(|&p| {
+                unsafe { CStr::from_ptr(p as *const c_char) }
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect()
     }
 

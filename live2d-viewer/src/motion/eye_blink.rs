@@ -69,7 +69,8 @@ impl EyeBlink {
                 1.0
             }
             BlinkState::Closing => {
-                let t = ((self.user_time_seconds - self.state_start_time) / self.closing_duration).min(1.0);
+                let t = ((self.user_time_seconds - self.state_start_time) / self.closing_duration)
+                    .min(1.0);
                 if t >= 1.0 {
                     self.state = BlinkState::Closed;
                     self.state_start_time = self.user_time_seconds;
@@ -77,7 +78,8 @@ impl EyeBlink {
                 1.0 - t
             }
             BlinkState::Closed => {
-                let t = ((self.user_time_seconds - self.state_start_time) / self.closed_duration).min(1.0);
+                let t = ((self.user_time_seconds - self.state_start_time) / self.closed_duration)
+                    .min(1.0);
                 if t >= 1.0 {
                     self.state = BlinkState::Opening;
                     self.state_start_time = self.user_time_seconds;
@@ -85,7 +87,8 @@ impl EyeBlink {
                 0.0
             }
             BlinkState::Opening => {
-                let t = ((self.user_time_seconds - self.state_start_time) / self.opening_duration).min(1.0);
+                let t = ((self.user_time_seconds - self.state_start_time) / self.opening_duration)
+                    .min(1.0);
                 if t >= 1.0 {
                     self.state = BlinkState::Interval;
                     self.next_blink_time = self.random_future();

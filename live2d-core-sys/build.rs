@@ -1,15 +1,20 @@
 use std::env;
 use std::path::PathBuf;
 
+fn sdk_root_dir() -> PathBuf {
+    if let Ok(val) = env::var("LIVE2D_SDK_ROOT") {
+        return PathBuf::from(val);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("CubismSdkForNative-5-r.5")
+}
+
 fn main() {
-    // SDK root — set LIVE2D_SDK_ROOT or use default
-    let sdk_root = match env::var("LIVE2D_SDK_ROOT") {
-        Ok(val) => PathBuf::from(val),
-        Err(_) => {
-            let home = env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            PathBuf::from(home).join("Downloads").join("CubismSdkForNative-5-r.5")
-        }
-    };
+    let sdk_root = sdk_root_dir();
 
     let static_link = cfg!(feature = "static-link");
 
@@ -34,7 +39,10 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=m");
     }
 
-    println!("cargo:rerun-if-changed={}", core_include.join("Live2DCubismCore.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        core_include.join("Live2DCubismCore.h").display()
+    );
 
     // Generate bindings
     let bindings = bindgen::Builder::default()

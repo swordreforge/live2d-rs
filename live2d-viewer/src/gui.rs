@@ -1,5 +1,5 @@
-use egui::{Context, Slider, Window};
 use crate::app::AppState;
+use egui::{Context, Slider, Window};
 
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     if app.minimized_to_float {
@@ -28,10 +28,7 @@ fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
     let screen = ctx.screen_rect();
 
     let btn_size = screen.size().x.min(screen.size().y) - 4.0;
-    let btn_rect = egui::Rect::from_center_size(
-        screen.center(),
-        egui::vec2(btn_size, btn_size),
-    );
+    let btn_rect = egui::Rect::from_center_size(screen.center(), egui::vec2(btn_size, btn_size));
     let icon_size = btn_size * 0.45;
 
     let painter = ctx.debug_painter();
@@ -60,142 +57,147 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
     // Collect model info first to avoid borrow conflict with switch_to
-    let model_entries: Vec<(String, bool)> = app.model_list.iter()
+    let model_entries: Vec<(String, bool)> = app
+        .model_list
+        .iter()
         .map(|e| (e.name.clone(), e.loaded))
         .collect();
 
-    Window::new("Model List").default_width(250.0).show(ctx, |ui| {
-        for (i, (name, loaded)) in model_entries.iter().enumerate() {
-            let selected = current_idx == Some(i);
-            let label = format!(
-                "{} {}",
-                if *loaded { "\u{25cf}" } else { "\u{25cb}" },
-                name,
-            );
-            if ui.selectable_label(selected, label).clicked() {
-                if let Err(e) = app.begin_switch(i) {
-                    app.error_message = Some(e);
-                }
-            }
-        }
-
-        ui.separator();
-        if ui.button("Add Model...").clicked() {
-            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                app.add_model_dir(path);
-            }
-        }
-
-        ui.separator();
-
-        // Show loading indicator during async model switch
-        if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
-            ui.label(egui::RichText::new("加载中...").color(egui::Color32::YELLOW));
-        }
-
-        ui.separator();
-        if ui.button("\u{1f43e} Pet Mode").clicked() {
-            app.pet_mode = true;
-            app.pet_mode_changed = true;
-        }
-
-        // Zoom controls — always visible regardless of model type
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("-").clicked() {
-                if app.is_v2 {
-                    app.v2_scale = (app.v2_scale * 0.85).max(0.1);
-                    if let Some(ref mut v2) = app.v2_model {
-                        v2.set_scale(app.v2_scale);
+    Window::new("Model List")
+        .default_width(250.0)
+        .show(ctx, |ui| {
+            for (i, (name, loaded)) in model_entries.iter().enumerate() {
+                let selected = current_idx == Some(i);
+                let label = format!("{} {}", if *loaded { "\u{25cf}" } else { "\u{25cb}" }, name,);
+                if ui.selectable_label(selected, label).clicked() {
+                    if let Err(e) = app.begin_switch(i) {
+                        app.error_message = Some(e);
                     }
-                } else {
-                    app.camera.zoom_out();
                 }
             }
-            if ui.button("Reset").clicked() {
-                if app.is_v2 {
-                    app.v2_scale = 1.0;
-                    if let Some(ref mut v2) = app.v2_model {
-                        v2.set_scale(1.0);
-                        v2.set_offset(0.0, 0.0);
-                    }
-                } else {
-                    app.camera.reset_pan();
-                }
-            }
-            if ui.button("+").clicked() {
-                if app.is_v2 {
-                    app.v2_scale = (app.v2_scale * 1.15).min(10.0);
-                    if let Some(ref mut v2) = app.v2_model {
-                        v2.set_scale(app.v2_scale);
-                    }
-                } else {
-                    app.camera.zoom_in();
-                }
-            }
-        });
-    });
 
-    if app.current_model.is_some() {
-        Window::new("Parameters").default_width(300.0).show(ctx, |ui| {
-            ui.label(format!("Parameters: {}", app.parameter_names.len()));
-
-            // Motion status
-            let motion_count = app.motion_queue.entries.len();
-            if motion_count > 0 {
-                ui.label(format!("Motions: {}", motion_count));
-                for (i, entry) in app.motion_queue.entries.iter().enumerate() {
-                    let loop_str = if entry.motion.is_loop { "循环" } else { "一次" };
-                    let fw = entry.cached_fade_weight;
-                    ui.label(format!(
-                        "  [{}] {} ({:.1}s, {}, fade={:.2})",
-                        i,
-                        entry.motion.data.duration,
-                        entry.motion.data.duration,
-                        loop_str,
-                        fw,
-                    ));
-                }
-                ui.separator();
-            }
-
-            // Expression status
-            if app.expression_manager.is_active {
-                ui.label("表情: 启用");
-                ui.separator();
-            }
-
-            // Action buttons
-            ui.horizontal(|ui| {
-                if ui.button("重放待机").clicked() {
-                    app.start_motion("Idle", Some(0));
-                }
-                if ui.button("全部停止").clicked() {
-                    app.motion_queue.stop_all_motions();
-                }
-            });
-
-            if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
-                if !tap_motions.is_empty() && ui.button("点击身体").clicked() {
-                    let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
-                    app.start_motion("TapBody", Some(idx));
+            ui.separator();
+            if ui.button("Add Model...").clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    app.add_model_dir(path);
                 }
             }
 
             ui.separator();
 
-            // Parameter sliders
-            for i in 0..app.parameter_names.len() {
-                let name = &app.parameter_names[i];
-                let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);
-                let max = app.parameter_maxs.get(i).copied().unwrap_or(1.0);
-                let mut val = app.parameter_values[i];
-                if ui.add(Slider::new(&mut val, min..=max).text(name)).changed() {
-                    app.parameter_values[i] = val;
-                    app.update_parameters();
-                }
+            // Show loading indicator during async model switch
+            if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
+                ui.label(egui::RichText::new("加载中...").color(egui::Color32::YELLOW));
             }
+
+            ui.separator();
+            if ui.button("\u{1f43e} Pet Mode").clicked() {
+                app.pet_mode = true;
+                app.pet_mode_changed = true;
+            }
+
+            // Zoom controls — always visible regardless of model type
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("-").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = (app.v2_scale * 0.85).max(0.1);
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(app.v2_scale);
+                        }
+                    } else {
+                        app.camera.zoom_out();
+                    }
+                }
+                if ui.button("Reset").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = 1.0;
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(1.0);
+                            v2.set_offset(0.0, 0.0);
+                        }
+                    } else {
+                        app.camera.reset_pan();
+                    }
+                }
+                if ui.button("+").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = (app.v2_scale * 1.15).min(10.0);
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(app.v2_scale);
+                        }
+                    } else {
+                        app.camera.zoom_in();
+                    }
+                }
+            });
         });
+
+    if app.current_model.is_some() {
+        Window::new("Parameters")
+            .default_width(300.0)
+            .show(ctx, |ui| {
+                ui.label(format!("Parameters: {}", app.parameter_names.len()));
+
+                // Motion status
+                let motion_count = app.motion_queue.entries.len();
+                if motion_count > 0 {
+                    ui.label(format!("Motions: {}", motion_count));
+                    for (i, entry) in app.motion_queue.entries.iter().enumerate() {
+                        let loop_str = if entry.motion.is_loop {
+                            "循环"
+                        } else {
+                            "一次"
+                        };
+                        let fw = entry.cached_fade_weight;
+                        ui.label(format!(
+                            "  [{}] {} ({:.1}s, {}, fade={:.2})",
+                            i, entry.motion.data.duration, entry.motion.data.duration, loop_str, fw,
+                        ));
+                    }
+                    ui.separator();
+                }
+
+                // Expression status
+                if app.expression_manager.is_active {
+                    ui.label("表情: 启用");
+                    ui.separator();
+                }
+
+                // Action buttons
+                ui.horizontal(|ui| {
+                    if ui.button("重放待机").clicked() {
+                        app.start_motion("Idle", Some(0));
+                    }
+                    if ui.button("全部停止").clicked() {
+                        app.motion_queue.stop_all_motions();
+                    }
+                });
+
+                if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
+                    if !tap_motions.is_empty() && ui.button("点击身体").clicked() {
+                        let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
+                        app.start_motion("TapBody", Some(idx));
+                    }
+                }
+
+                ui.separator();
+
+                // Parameter sliders
+                for i in 0..app.parameter_names.len() {
+                    let name = &app.parameter_names[i];
+                    let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);
+                    let max = app.parameter_maxs.get(i).copied().unwrap_or(1.0);
+                    let mut val = app.parameter_values[i];
+                    if ui
+                        .add(Slider::new(&mut val, min..=max).text(name))
+                        .changed()
+                    {
+                        app.parameter_values[i] = val;
+                        app.update_parameters();
+                    }
+                }
+            });
     }
 }
 
@@ -243,21 +245,32 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     small_btn(ui, "\u{25c0}").clicked().then(|| {
                         if let Some(idx) = current_idx {
-                            if idx > 0 { let _ = app.begin_switch(idx - 1); }
+                            if idx > 0 {
+                                let _ = app.begin_switch(idx - 1);
+                            }
                         }
                     });
 
-                    ui.label(egui::RichText::new(
-                        if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
-                            "加载中..."
-                        } else {
-                            current_idx.and_then(|i| app.model_list.get(i)).map(|e| e.name.as_str()).unwrap_or("--")
-                        }
-                    ).size(10.0).weak());
+                    ui.label(
+                        egui::RichText::new(
+                            if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
+                                "加载中..."
+                            } else {
+                                current_idx
+                                    .and_then(|i| app.model_list.get(i))
+                                    .map(|e| e.name.as_str())
+                                    .unwrap_or("--")
+                            },
+                        )
+                        .size(10.0)
+                        .weak(),
+                    );
 
                     small_btn(ui, "\u{25b6}").clicked().then(|| {
                         if let Some(idx) = current_idx {
-                            if idx + 1 < app.model_list.len() { let _ = app.begin_switch(idx + 1); }
+                            if idx + 1 < app.model_list.len() {
+                                let _ = app.begin_switch(idx + 1);
+                            }
                         }
                     });
 
@@ -297,7 +310,11 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
                     ui.add_space(3.0);
 
-                    if ui.add(egui::Button::new("\u{2193}").min_size(egui::vec2(30.0, 22.0))).on_hover_text("Minimize to tray").clicked() {
+                    if ui
+                        .add(egui::Button::new("\u{2193}").min_size(egui::vec2(30.0, 22.0)))
+                        .on_hover_text("Minimize to tray")
+                        .clicked()
+                    {
                         app.request_minimize = true;
                     }
 

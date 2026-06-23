@@ -1,5 +1,5 @@
-use live2d_core_sys as ffi;
 use crate::model::Model;
+use live2d_core_sys as ffi;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CanvasInfo {
@@ -16,6 +16,10 @@ impl CanvasInfo {
         unsafe {
             ffi::csmReadCanvasInfo(model.as_raw(), &mut size, &mut origin, &mut ppu);
         }
-        Self { size_in_pixels: size, origin_in_pixels: origin, pixels_per_unit: ppu }
+        Self {
+            size_in_pixels: size,
+            origin_in_pixels: origin,
+            pixels_per_unit: ppu,
+        }
     }
 }

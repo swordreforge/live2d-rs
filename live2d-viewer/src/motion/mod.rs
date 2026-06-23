@@ -10,10 +10,10 @@
 
 pub mod breath;
 pub mod curve;
-pub mod eye_blink;
 mod expression;
-pub mod look;
+pub mod eye_blink;
 pub mod json;
+pub mod look;
 #[allow(clippy::module_inception)]
 pub mod motion;
 pub mod physics;

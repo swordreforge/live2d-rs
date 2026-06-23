@@ -1,4 +1,9 @@
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code
+)]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -13,7 +18,10 @@ mod tests {
         let major = (version >> 24) & 0xFF;
         let minor = (version >> 16) & 0xFF;
         let patch = version & 0xFF;
-        eprintln!("Core version: {}.{}.{} (0x{version:08X})", major, minor, patch);
+        eprintln!(
+            "Core version: {}.{}.{} (0x{version:08X})",
+            major, minor, patch
+        );
         assert!(version > 0, "csmGetVersion() returned 0");
     }
 

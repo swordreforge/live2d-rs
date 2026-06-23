@@ -1,7 +1,7 @@
+use crate::error::{Error, Result};
+use live2d_core_sys as ffi;
 use std::alloc::{alloc, dealloc, Layout};
 use std::ptr::NonNull;
-use live2d_core_sys as ffi;
-use crate::error::{Error, Result};
 
 /// A revived Live2D Cubism Moc.
 ///
@@ -28,7 +28,9 @@ impl Moc {
         if data.is_null() {
             return Err(Error::InvalidInput("alloc returned null"));
         }
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len()); }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len());
+        }
 
         let consistent = unsafe { ffi::csmHasMocConsistency(data as *mut _, bytes.len() as u32) };
         if consistent == 0 {
@@ -42,7 +44,11 @@ impl Moc {
             return Err(Error::ReviveFailed);
         }
 
-        Ok(Self { data, size: bytes.len(), raw: unsafe { NonNull::new_unchecked(raw) } })
+        Ok(Self {
+            data,
+            size: bytes.len(),
+            raw: unsafe { NonNull::new_unchecked(raw) },
+        })
     }
 
     pub(crate) fn as_raw(&self) -> *const ffi::csmMoc {

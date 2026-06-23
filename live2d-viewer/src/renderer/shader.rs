@@ -1,5 +1,5 @@
-use glow::*;
 use anyhow::Result;
+use glow::*;
 
 pub const VERT_SRC: &str = r#"#version 330 core
 layout(location = 0) in vec2 aPos;
@@ -93,7 +93,9 @@ void main() {
 "#;
 
 pub unsafe fn compile_program(gl: &Context, vert: &str, frag: &str) -> Result<NativeProgram> {
-    let program = gl.create_program().map_err(|e| anyhow::anyhow!("create program: {:?}", e))?;
+    let program = gl
+        .create_program()
+        .map_err(|e| anyhow::anyhow!("create program: {:?}", e))?;
 
     let vs = compile_shader(gl, VERTEX_SHADER, vert)?;
     let fs = compile_shader(gl, FRAGMENT_SHADER, frag)?;
@@ -110,7 +112,9 @@ pub unsafe fn compile_program(gl: &Context, vert: &str, frag: &str) -> Result<Na
 }
 
 unsafe fn compile_shader(gl: &Context, kind: u32, src: &str) -> Result<NativeShader> {
-    let shader = gl.create_shader(kind).map_err(|e| anyhow::anyhow!("create shader: {:?}", e))?;
+    let shader = gl
+        .create_shader(kind)
+        .map_err(|e| anyhow::anyhow!("create shader: {:?}", e))?;
     gl.shader_source(shader, src);
     gl.compile_shader(shader);
     if !gl.get_shader_compile_status(shader) {

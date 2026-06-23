@@ -73,7 +73,10 @@ impl CubismMotion {
 
     /// Check if this motion has a model-opacity curve.
     pub fn has_model_opacity_curve(&self) -> bool {
-        self.data.curves.iter().any(|c| c.target == TARGET_NAME_MODEL && c.id == ID_NAME_OPACITY)
+        self.data
+            .curves
+            .iter()
+            .any(|c| c.target == TARGET_NAME_MODEL && c.id == ID_NAME_OPACITY)
     }
 
     /// Evaluate curves and apply parameter values and part opacities.
@@ -285,12 +288,7 @@ impl CubismMotion {
 }
 
 /// Evaluate a single curve at the given time.
-fn evaluate_curve(
-    curve: &ParsedCurve,
-    time: f32,
-    is_correction: bool,
-    end_time: f32,
-) -> f32 {
+fn evaluate_curve(curve: &ParsedCurve, time: f32, is_correction: bool, end_time: f32) -> f32 {
     let segments = &curve.segments;
     if segments.is_empty() {
         return 0.0;
@@ -400,7 +398,8 @@ mod tests {
         let motion = CubismMotion::new(parsed, 0.0, 0.0);
 
         let param_names = vec!["ParamA".to_string()];
-        let param_lookup: HashMap<String, usize> = [("ParamA".to_string(), 0)].into_iter().collect();
+        let param_lookup: HashMap<String, usize> =
+            [("ParamA".to_string(), 0)].into_iter().collect();
         let mut param_values = vec![0.0f32];
         let eye_blink: Vec<String> = vec![];
         let lip_sync: Vec<String> = vec![];
@@ -410,28 +409,67 @@ mod tests {
 
         // At time 0
         motion.do_update_parameters(
-            &param_names, &param_lookup, &mut param_values,
-            0.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
-            &empty_parts, &mut part_opacities,
+            &param_names,
+            &param_lookup,
+            &mut param_values,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            2.0,
+            &eye_blink,
+            &lip_sync,
+            &empty_parts,
+            &mut part_opacities,
         );
-        assert!((param_values[0] - 0.0).abs() < 1e-5, "t=0 got {}", param_values[0]);
+        assert!(
+            (param_values[0] - 0.0).abs() < 1e-5,
+            "t=0 got {}",
+            param_values[0]
+        );
 
         // At time 1 (midpoint)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names, &param_lookup, &mut param_values,
-            1.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
-            &empty_parts, &mut part_opacities,
+            &param_names,
+            &param_lookup,
+            &mut param_values,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            2.0,
+            &eye_blink,
+            &lip_sync,
+            &empty_parts,
+            &mut part_opacities,
         );
-        assert!((param_values[0] - 50.0).abs() < 1e-5, "t=1 got {}", param_values[0]);
+        assert!(
+            (param_values[0] - 50.0).abs() < 1e-5,
+            "t=1 got {}",
+            param_values[0]
+        );
 
         // At time 2 (end)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names, &param_lookup, &mut param_values,
-            2.0, 1.0, 0.0, 0.0, 2.0, &eye_blink, &lip_sync,
-            &empty_parts, &mut part_opacities,
+            &param_names,
+            &param_lookup,
+            &mut param_values,
+            2.0,
+            1.0,
+            0.0,
+            0.0,
+            2.0,
+            &eye_blink,
+            &lip_sync,
+            &empty_parts,
+            &mut part_opacities,
         );
-        assert!((param_values[0] - 100.0).abs() < 1e-5, "t=2 got {}", param_values[0]);
+        assert!(
+            (param_values[0] - 100.0).abs() < 1e-5,
+            "t=2 got {}",
+            param_values[0]
+        );
     }
 }

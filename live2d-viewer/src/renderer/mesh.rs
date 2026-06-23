@@ -1,6 +1,5 @@
 use glow::*;
 
-
 pub struct Mesh {
     vao: NativeVertexArray,
     vbo: NativeBuffer,
@@ -12,11 +11,26 @@ pub struct Mesh {
 
 impl Mesh {
     pub unsafe fn new(gl: &Context) -> Result<Self, String> {
-        let vao = gl.create_vertex_array().map_err(|e| format!("create vao: {:?}", e))?;
-        let vbo = gl.create_buffer().map_err(|e| format!("create vbo: {:?}", e))?;
-        let ubo = gl.create_buffer().map_err(|e| format!("create ubo: {:?}", e))?;
-        let ebo = gl.create_buffer().map_err(|e| format!("create ebo: {:?}", e))?;
-        Ok(Self { vao, vbo, ubo, ebo, vertex_count: 0, index_count: 0 })
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| format!("create vao: {:?}", e))?;
+        let vbo = gl
+            .create_buffer()
+            .map_err(|e| format!("create vbo: {:?}", e))?;
+        let ubo = gl
+            .create_buffer()
+            .map_err(|e| format!("create ubo: {:?}", e))?;
+        let ebo = gl
+            .create_buffer()
+            .map_err(|e| format!("create ebo: {:?}", e))?;
+        Ok(Self {
+            vao,
+            vbo,
+            ubo,
+            ebo,
+            vertex_count: 0,
+            index_count: 0,
+        })
     }
 
     /// Upload positions, UVs, and indices to GPU.

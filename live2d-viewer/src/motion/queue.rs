@@ -4,8 +4,8 @@
 //! Live2D Cubism Framework. Manages a queue of concurrently active motions
 //! and evaluates them each frame.
 
-use std::collections::HashMap;
 use super::motion::CubismMotion;
+use std::collections::HashMap;
 
 /// A motion queue entry tracks per-instance state for a playing motion.
 #[derive(Debug, Clone)]
@@ -163,7 +163,11 @@ impl MotionQueueManager {
                 entry.fade_in_start_time_seconds = user_time;
                 if entry.end_time_seconds < 0.0 {
                     let duration = entry.motion.duration();
-                    entry.end_time_seconds = if duration <= 0.0 { -1.0 } else { user_time + duration };
+                    entry.end_time_seconds = if duration <= 0.0 {
+                        -1.0
+                    } else {
+                        user_time + duration
+                    };
                 }
             }
 

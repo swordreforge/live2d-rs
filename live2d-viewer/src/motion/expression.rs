@@ -31,12 +31,7 @@ impl ExpressionMotion {
     /// * `param_names` — all parameter IDs from the model
     /// * `param_values` — mutable parameter value buffer (modified in place)
     /// * `fade_weight` — combined fade weight (easing sine)
-    pub fn apply(
-        &self,
-        param_names: &[String],
-        param_values: &mut [f32],
-        fade_weight: f32,
-    ) {
+    pub fn apply(&self, param_names: &[String], param_values: &mut [f32], fade_weight: f32) {
         for param in &self.data.parameters {
             // Find the parameter index by name
             let idx = match param_names.iter().position(|n| n == &param.id) {
@@ -48,15 +43,9 @@ impl ExpressionMotion {
             let target = param.value;
 
             let blended = match param.blend {
-                ExpressionBlendMode::Override => {
-                    current + (target - current) * fade_weight
-                }
-                ExpressionBlendMode::Add => {
-                    current + target * fade_weight
-                }
-                ExpressionBlendMode::Multiply => {
-                    current * (1.0 + (target - 1.0) * fade_weight)
-                }
+                ExpressionBlendMode::Override => current + (target - current) * fade_weight,
+                ExpressionBlendMode::Add => current + target * fade_weight,
+                ExpressionBlendMode::Multiply => current * (1.0 + (target - 1.0) * fade_weight),
             };
 
             param_values[idx] = blended;
@@ -101,12 +90,7 @@ impl ExpressionManager {
     }
 
     /// Apply the expression with current time.
-    pub fn apply(
-        &mut self,
-        param_names: &[String],
-        param_values: &mut [f32],
-        user_time: f32,
-    ) {
+    pub fn apply(&mut self, param_names: &[String], param_values: &mut [f32], user_time: f32) {
         if !self.is_active {
             return;
         }

@@ -1,9 +1,9 @@
+use crate::error::{Error, Result};
+use crate::moc::Moc;
+use live2d_core_sys as ffi;
 use std::alloc::{alloc, dealloc, Layout};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use live2d_core_sys as ffi;
-use crate::error::{Error, Result};
-use crate::moc::Moc;
 
 pub struct Model<'moc> {
     storage: *mut u8,
@@ -77,7 +77,9 @@ impl<'moc> Model<'moc> {
     pub fn render_orders(&self) -> &[i32] {
         let n = self.drawables().len() + self.offscreens().len();
         let ptr = unsafe { ffi::csmGetRenderOrders(self.as_raw()) };
-        if ptr.is_null() { return &[]; }
+        if ptr.is_null() {
+            return &[];
+        }
         unsafe { std::slice::from_raw_parts(ptr, n) }
     }
 
@@ -88,7 +90,8 @@ impl<'moc> Model<'moc> {
 
 impl Drop for Model<'_> {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.storage_size, ffi::csmAlignofModel as usize).unwrap();
+        let layout =
+            Layout::from_size_align(self.storage_size, ffi::csmAlignofModel as usize).unwrap();
         unsafe { dealloc(self.storage, layout) };
     }
 }

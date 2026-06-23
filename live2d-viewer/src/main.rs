@@ -7,22 +7,21 @@ mod renderer;
 mod texture;
 mod tray;
 
-use std::sync::Arc;
-use std::num::NonZeroU32;
-use std::path::PathBuf;
-use std::time::Instant;
-use winit::platform::x11::WindowBuilderExtX11;
-use winit::window::WindowBuilder;
-use winit::event::{Event, WindowEvent, ElementState};
-use winit::window::WindowLevel;
-use raw_window_handle::{HasRawWindowHandle, HasRawDisplayHandle};
-use glutin::prelude::*;
-use glutin::display::{Display, DisplayApiPreference};
+use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
-use glutin::surface::{SurfaceAttributesBuilder, GlSurface, WindowSurface, SwapInterval};
-use glow::HasContext;
-
+use glutin::display::{Display, DisplayApiPreference};
+use glutin::prelude::*;
+use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
+use winit::event::{ElementState, Event, WindowEvent};
+use winit::platform::x11::WindowBuilderExtX11;
+use winit::window::WindowBuilder;
+use winit::window::WindowLevel;
 
 fn main() -> anyhow::Result<()> {
     // Auto-switch to X11 on Wayland: winit + GTK both need X11 backend
@@ -53,8 +52,8 @@ fn main() -> anyhow::Result<()> {
         log::warn!("GTK init failed — tray icon disabled");
     }
 
-
-    let event_loop = winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
+    let event_loop =
+        winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let (_tray, tray_rx) = if gtk_ok {
         tray::create_tray()
@@ -69,11 +68,13 @@ fn main() -> anyhow::Result<()> {
         (dummy_tray, tray::dummy_receiver())
     };
 
-    let window = Arc::new(WindowBuilder::new()
-        .with_title("Live2D Viewer")
-        .with_name("live2d-viewer", "live2d-viewer")
-        .with_transparent(true)
-        .build(&event_loop)?);
+    let window = Arc::new(
+        WindowBuilder::new()
+            .with_title("Live2D Viewer")
+            .with_name("live2d-viewer", "live2d-viewer")
+            .with_transparent(true)
+            .build(&event_loop)?,
+    );
 
     // Overlay mode: small window always-on-top at bottom-right corner
     if overlay_mode {
@@ -88,31 +89,28 @@ fn main() -> anyhow::Result<()> {
             let w = 300.0f64;
             let h = 400.0f64;
             let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
-            window.set_outer_position(winit::dpi::LogicalPosition::new(log_w - w - 10.0, log_h - h - 10.0));
+            window.set_outer_position(winit::dpi::LogicalPosition::new(
+                log_w - w - 10.0,
+                log_h - h - 10.0,
+            ));
         }
     }
 
     let display_handle = window.raw_display_handle();
     let window_handle = window.raw_window_handle();
 
-    let gl_display = unsafe {
-        Display::new(display_handle, DisplayApiPreference::Egl)?
-    };
+    let gl_display = unsafe { Display::new(display_handle, DisplayApiPreference::Egl)? };
 
-    let template = ConfigTemplateBuilder::new()
-        .with_alpha_size(8)
-        .build();
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
     let gl_config = unsafe {
-        gl_display.find_configs(template)?
+        gl_display
+            .find_configs(template)?
             .next()
             .ok_or_else(|| anyhow::anyhow!("no suitable GL config"))?
     };
 
-    let context_attrs = ContextAttributesBuilder::new()
-        .build(Some(window_handle));
-    let not_current = unsafe {
-        gl_display.create_context(&gl_config, &context_attrs)?
-    };
+    let context_attrs = ContextAttributesBuilder::new().build(Some(window_handle));
+    let not_current = unsafe { gl_display.create_context(&gl_config, &context_attrs)? };
 
     let (init_w, init_h) = {
         let size = window.inner_size();
@@ -121,11 +119,9 @@ fn main() -> anyhow::Result<()> {
             NonZeroU32::new(size.height).unwrap_or(NonZeroU32::new(1).unwrap()),
         )
     };
-    let surf_attrs = SurfaceAttributesBuilder::<WindowSurface>::new()
-        .build(window_handle, init_w, init_h);
-    let surface = unsafe {
-        gl_display.create_window_surface(&gl_config, &surf_attrs)?
-    };
+    let surf_attrs =
+        SurfaceAttributesBuilder::<WindowSurface>::new().build(window_handle, init_w, init_h);
+    let surface = unsafe { gl_display.create_window_surface(&gl_config, &surf_attrs)? };
 
     let gl_context = not_current.make_current(&surface)?;
     let _ = surface.set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
@@ -148,8 +144,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut app = app::AppState::new();
     let mut renderer = unsafe {
-        renderer::Live2dRenderer::new(&gl)
-            .map_err(|e| anyhow::anyhow!("renderer: {e}"))?
+        renderer::Live2dRenderer::new(&gl).map_err(|e| anyhow::anyhow!("renderer: {e}"))?
     };
 
     // Floating button overlay (raw GL, bypasses egui_glow coordinate bug)
@@ -159,9 +154,13 @@ fn main() -> anyhow::Result<()> {
     let egui_ctx = egui::Context::default();
 
     // Load CJK font to fix □□□ (tofu) for Chinese/Japanese text
-    if let Ok(cjk_data) = std::fs::read("/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Medium.otf") {
+    if let Ok(cjk_data) =
+        std::fs::read("/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Medium.otf")
+    {
         let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert("CJK".into(), egui::FontData::from_owned(cjk_data));
+        fonts
+            .font_data
+            .insert("CJK".into(), egui::FontData::from_owned(cjk_data));
         // Append CJK as fallback (after Latin+Emoji) so CJK chars get rendered
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             if let Some(list) = fonts.families.get_mut(&family) {
@@ -186,8 +185,16 @@ fn main() -> anyhow::Result<()> {
     let model_loaded = if let Some(arg) = model_path_arg {
         let model_dir = PathBuf::from(&arg);
         if model_dir.exists() {
-            let name = model_dir.file_name().and_then(|n| n.to_str()).unwrap_or("model");
-            app.model_list.push(app::ModelEntry { name: name.into(), dir: model_dir, loaded: false, format: None });
+            let name = model_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("model");
+            app.model_list.push(app::ModelEntry {
+                name: name.into(),
+                dir: model_dir,
+                loaded: false,
+                format: None,
+            });
             true
         } else {
             eprintln!("model directory not found: {arg}");
@@ -198,12 +205,10 @@ fn main() -> anyhow::Result<()> {
     };
 
     if !model_loaded {
-        let samples_resources = PathBuf::from(
-            std::env::var("LIVE2D_SDK_ROOT").unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                format!("{home}/Downloads/CubismSdkForNative-5-r.5")
-            })
-        ).join("Samples").join("Resources");
+        // 运行时模型扫描：仅当 LIVE2D_SDK_ROOT 设了才扫描 Samples
+        let samples_resources = std::env::var("LIVE2D_SDK_ROOT")
+            .map(|root| PathBuf::from(root).join("Samples").join("Resources"))
+            .unwrap_or_else(|_| PathBuf::new());
 
         if samples_resources.exists() {
             if let Ok(entries) = std::fs::read_dir(&samples_resources) {
@@ -221,12 +226,10 @@ fn main() -> anyhow::Result<()> {
         let _ = app.switch_to(0);
         for path in &app.texture_paths {
             match std::fs::read(path) {
-                Ok(img_data) => {
-                    match unsafe { texture::load_texture(&gl, &img_data) } {
-                        Ok(tex) => renderer.textures.push(tex),
-                        Err(e) => eprintln!("texture load {:?}: {e}", path),
-                    }
-                }
+                Ok(img_data) => match unsafe { texture::load_texture(&gl, &img_data) } {
+                    Ok(tex) => renderer.textures.push(tex),
+                    Err(e) => eprintln!("texture load {:?}: {e}", path),
+                },
                 Err(e) => eprintln!("texture read {:?}: {e}", path),
             }
         }
@@ -236,7 +239,6 @@ fn main() -> anyhow::Result<()> {
     let mut last_frame_time = Instant::now();
 
     event_loop.run(move |event, target| {
-
         match event {
             Event::WindowEvent { event, .. } => {
                 match event {
@@ -252,14 +254,17 @@ fn main() -> anyhow::Result<()> {
                         // --- Helper: request window sized to model display, clamped to monitor ---
                         fn request_model_window(window: &winit::window::Window, cw: f32, ch: f32) {
                             let sf = window.scale_factor();
-                            let max_lh = window.current_monitor()
+                            let max_lh = window
+                                .current_monitor()
                                 .map(|m| m.size().height as f64 / sf - 40.0)
                                 .unwrap_or(800.0)
                                 .max(200.0);
                             let target_h = max_lh * 0.9;
                             let model_display_w = target_h as f32 * cw / ch;
                             let target_w = (model_display_w * 1.1 + 50.0) as f64; // 10% padding + toolbar
-                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(target_w, target_h));
+                            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(
+                                target_w, target_h,
+                            ));
                         }
 
                         // --- Apply pending pet mode window changes ---
@@ -269,10 +274,17 @@ fn main() -> anyhow::Result<()> {
                                 window.set_window_level(WindowLevel::AlwaysOnTop);
                                 if let Some(ref model) = app.current_model {
                                     let canvas = model.canvas_info();
-                                    request_model_window(&window, canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+                                    request_model_window(
+                                        &window,
+                                        canvas.size_in_pixels.X,
+                                        canvas.size_in_pixels.Y,
+                                    );
                                 }
-                                log::info!("[pet] enter: canvas=({:.0},{:.0})",
-                                    app.canvas_pixel_size.0, app.canvas_pixel_size.1);
+                                log::info!(
+                                    "[pet] enter: canvas=({:.0},{:.0})",
+                                    app.canvas_pixel_size.0,
+                                    app.canvas_pixel_size.1
+                                );
                                 app.camera_needs_fit = true;
                                 app.pet_mode_delay = 2;
                             } else {
@@ -290,7 +302,11 @@ fn main() -> anyhow::Result<()> {
                             if app.pet_mode {
                                 if let Some(ref model) = app.current_model {
                                     let canvas = model.canvas_info();
-                                    request_model_window(&window, canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+                                    request_model_window(
+                                        &window,
+                                        canvas.size_in_pixels.X,
+                                        canvas.size_in_pixels.Y,
+                                    );
                                 }
                             }
                         }
@@ -385,8 +401,10 @@ fn main() -> anyhow::Result<()> {
                                         gl.front_face(glow::CCW);
                                         gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
                                         gl.blend_func_separate(
-                                            glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
-                                            glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                                            glow::ONE,
+                                            glow::ONE_MINUS_SRC_ALPHA,
+                                            glow::ONE,
+                                            glow::ONE_MINUS_SRC_ALPHA,
                                         );
                                     }
                                 }
@@ -426,7 +444,9 @@ fn main() -> anyhow::Result<()> {
                                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                                 gl.viewport(0, 0, size.width as i32, size.height as i32);
                                 float_overlay.draw_play_button(
-                                    &gl, size.width as f32, size.height as f32,
+                                    &gl,
+                                    size.width as f32,
+                                    size.height as f32,
                                 );
                             }
                         } else {
@@ -442,24 +462,30 @@ fn main() -> anyhow::Result<()> {
                         // Minimize (X11 → hide; Wayland → small float window)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            let on_x11 = matches!(window.raw_window_handle(), raw_window_handle::RawWindowHandle::Xlib(_)
-                                | raw_window_handle::RawWindowHandle::Xcb(_));
+                            let on_x11 = matches!(
+                                window.raw_window_handle(),
+                                raw_window_handle::RawWindowHandle::Xlib(_)
+                                    | raw_window_handle::RawWindowHandle::Xcb(_)
+                            );
                             if on_x11 {
                                 window.set_visible(false);
                             } else {
                                 app.minimized_to_float = true;
                                 let sf = window.scale_factor();
-                                app.saved_window_pet_size = (
-                                    app.window_size.0 as f64 / sf,
-                                    app.window_size.1 as f64 / sf,
-                                );
+                                app.saved_window_pet_size =
+                                    (app.window_size.0 as f64 / sf, app.window_size.1 as f64 / sf);
                                 app.camera_needs_fit = false;
-                                window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(50.0, 50.0)));
-                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(50.0, 50.0));
+                                window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(
+                                    50.0, 50.0,
+                                )));
+                                let _ = window
+                                    .request_inner_size(winit::dpi::LogicalSize::new(50.0, 50.0));
                                 // Force EGL surface resize immediately (Wayland workaround)
                                 let phys_w = (50.0_f64 * sf) as u32;
                                 let phys_h = (50.0_f64 * sf) as u32;
-                                if let (Some(rw), Some(rh)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
+                                if let (Some(rw), Some(rh)) =
+                                    (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h))
+                                {
                                     surface.resize(&gl_context, rw, rh);
                                 }
                             }
@@ -472,11 +498,14 @@ fn main() -> anyhow::Result<()> {
                                 let rw = w.clamp(200.0, 4000.0);
                                 let rh = h.clamp(200.0, 4000.0);
                                 window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
-                                let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
+                                let _ =
+                                    window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
                                 let sf = window.scale_factor();
                                 let phys_w = (rw * sf) as u32;
                                 let phys_h = (rh * sf) as u32;
-                                if let (Some(pw), Some(ph)) = (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h)) {
+                                if let (Some(pw), Some(ph)) =
+                                    (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h))
+                                {
                                     surface.resize(&gl_context, pw, ph);
                                 }
                                 app.camera_needs_fit = true;
@@ -494,7 +523,12 @@ fn main() -> anyhow::Result<()> {
                             app.last_mouse_x = mx;
                             app.last_mouse_y = my;
                             let size = window.inner_size();
-                            app.update_mouse_for_look(mx, my, size.width as f32, size.height as f32);
+                            app.update_mouse_for_look(
+                                mx,
+                                my,
+                                size.width as f32,
+                                size.height as f32,
+                            );
                             // V2 head tracking: feed mouse to drag manager (screen → scene internally)
                             if app.is_v2 {
                                 if let Some(ref mut v2) = app.v2_model {
@@ -511,9 +545,9 @@ fn main() -> anyhow::Result<()> {
                                     if app.pet_mode {
                                         if app.minimized_to_float {
                                             app.request_restore = true;
-                                    } else {
-                                        window.set_visible(false);
-                                    }
+                                        } else {
+                                            window.set_visible(false);
+                                        }
                                     } else {
                                         target.exit();
                                     }
@@ -521,10 +555,14 @@ fn main() -> anyhow::Result<()> {
                                 WindowEvent::Resized(size) => {
                                     if app.minimized_to_float {
                                         let float_logical = 50.0;
-                                        let max_phys = (float_logical * window.scale_factor()).ceil() as u32;
+                                        let max_phys =
+                                            (float_logical * window.scale_factor()).ceil() as u32;
                                         if size.width > max_phys || size.height > max_phys {
                                             let _ = window.request_inner_size(
-                                                winit::dpi::LogicalSize::new(float_logical, float_logical),
+                                                winit::dpi::LogicalSize::new(
+                                                    float_logical,
+                                                    float_logical,
+                                                ),
                                             );
                                             if let (Some(rw), Some(rh)) = (
                                                 NonZeroU32::new(max_phys.max(1)),
@@ -535,13 +573,14 @@ fn main() -> anyhow::Result<()> {
                                             return;
                                         }
                                     }
-                                    if let (Some(w), Some(h)) = (
-                                        NonZeroU32::new(size.width),
-                                        NonZeroU32::new(size.height),
-                                    ) {
+                                    if let (Some(w), Some(h)) =
+                                        (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
+                                    {
                                         surface.resize(&gl_context, w, h);
                                     }
-                                    unsafe { gl.viewport(0, 0, size.width as i32, size.height as i32); }
+                                    unsafe {
+                                        gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                    }
                                     // V2: update matrix manager projection on resize
                                     if app.is_v2 {
                                         if let Some(ref mut v2) = app.v2_model {
@@ -558,13 +597,19 @@ fn main() -> anyhow::Result<()> {
                                 WindowEvent::KeyboardInput { event: ref ke, .. } => {
                                     if ke.state == ElementState::Pressed {
                                         use winit::keyboard::KeyCode;
-                                        if let winit::keyboard::PhysicalKey::Code(code) = ke.physical_key {
+                                        if let winit::keyboard::PhysicalKey::Code(code) =
+                                            ke.physical_key
+                                        {
                                             if code == KeyCode::ArrowLeft {
                                                 let idx = app.current_idx.unwrap_or(0);
-                                                if idx > 0 { let _ = app.begin_switch(idx - 1); }
+                                                if idx > 0 {
+                                                    let _ = app.begin_switch(idx - 1);
+                                                }
                                             } else if code == KeyCode::ArrowRight {
                                                 let idx = app.current_idx.unwrap_or(0);
-                                                if idx + 1 < app.model_list.len() { let _ = app.begin_switch(idx + 1); }
+                                                if idx + 1 < app.model_list.len() {
+                                                    let _ = app.begin_switch(idx + 1);
+                                                }
                                             }
                                         }
                                     }
@@ -573,11 +618,14 @@ fn main() -> anyhow::Result<()> {
                                     if !app.pet_mode {
                                         let d = match delta {
                                             winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                                            winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                                            winit::event::MouseScrollDelta::PixelDelta(p) => {
+                                                p.y as f32
+                                            }
                                         };
                                         if app.is_v2 {
                                             // V2 zoom via MatrixManager.setScale (tracked in app.v2_scale)
-                                            app.v2_scale = (app.v2_scale + d * 0.15).clamp(0.1, 10.0);
+                                            app.v2_scale =
+                                                (app.v2_scale + d * 0.15).clamp(0.1, 10.0);
                                             if let Some(ref mut v2) = app.v2_model {
                                                 v2.set_scale(app.v2_scale);
                                             }
@@ -606,9 +654,14 @@ fn main() -> anyhow::Result<()> {
                                         let cam_trans_x = app.camera.translate_x;
                                         let cam_trans_y = app.camera.translate_y;
                                         app.handle_tap_with_cam(
-                                            mx, my,
-                                            size.width as f32, size.height as f32,
-                                            cam_scale_x, cam_scale_y, cam_trans_x, cam_trans_y,
+                                            mx,
+                                            my,
+                                            size.width as f32,
+                                            size.height as f32,
+                                            cam_scale_x,
+                                            cam_scale_y,
+                                            cam_trans_x,
+                                            cam_trans_y,
                                         );
                                     }
                                 }
@@ -618,16 +671,14 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            Event::UserEvent(event) => {
-                match event {
-                    tray::AppEvent::ShowWindow => {
-                        app.request_restore = true;
-                    }
-                    tray::AppEvent::Quit => {
-                        target.exit();
-                    }
+            Event::UserEvent(event) => match event {
+                tray::AppEvent::ShowWindow => {
+                    app.request_restore = true;
                 }
-            }
+                tray::AppEvent::Quit => {
+                    target.exit();
+                }
+            },
             Event::LoopExiting => {
                 painter.destroy();
             }

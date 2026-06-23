@@ -7,7 +7,12 @@ pub struct Camera {
 
 impl Camera {
     pub fn new() -> Self {
-        Self { scale_x: 1.0, scale_y: 1.0, translate_x: 0.0, translate_y: 0.0 }
+        Self {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            translate_x: 0.0,
+            translate_y: 0.0,
+        }
     }
 
     /// Set up camera to match Cubism Framework transform.
@@ -19,7 +24,14 @@ impl Camera {
     ///   - portrait  (w <= h): Scale(1.0, w/h) — corrects height
     ///
     /// Our vertex shader: gl_Position = vec4(a_position.xy * uScale + uTranslate, 0, 1)
-    pub fn fit_to_canvas(&mut self, _canvas_w: f32, canvas_h: f32, ppu: f32, screen_w: f32, screen_h: f32) {
+    pub fn fit_to_canvas(
+        &mut self,
+        _canvas_w: f32,
+        canvas_h: f32,
+        ppu: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) {
         let logical_h = canvas_h / ppu;
         let model_scale = 2.0 / logical_h;
 

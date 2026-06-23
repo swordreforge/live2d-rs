@@ -1,7 +1,7 @@
 //! System tray icon for background operation
 
-use tray_icon::menu::{Menu, MenuItem, MenuEvent};
-use tray_icon::{TrayIcon, TrayIconBuilder, Icon};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 /// Custom events sent from tray to main event loop
 #[derive(Debug, Clone)]
@@ -17,10 +17,7 @@ pub fn create_tray() -> (TrayIcon, MenuEventReceiver) {
     let quit_item = MenuItem::with_id("quit", "Quit", true, None);
     menu.append_items(&[&show_item, &quit_item]).ok();
 
-    let icon = Icon::from_rgba(
-        vec![0x33, 0x99, 0xff, 0xff],
-        1, 1,
-    ).expect("create icon");
+    let icon = Icon::from_rgba(vec![0x33, 0x99, 0xff, 0xff], 1, 1).expect("create icon");
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("Live2D Pet")
