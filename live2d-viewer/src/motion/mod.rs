@@ -14,6 +14,7 @@ pub mod eye_blink;
 mod expression;
 pub mod look;
 pub mod json;
+#[allow(clippy::module_inception)]
 pub mod motion;
 pub mod physics;
 pub mod queue;

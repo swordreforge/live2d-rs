@@ -209,10 +209,8 @@ fn main() -> anyhow::Result<()> {
             if let Ok(entries) = std::fs::read_dir(&samples_resources) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_dir() {
-                        if app::detect_model_format(&path).is_some() {
-                            app.add_model_dir(path);
-                        }
+                    if path.is_dir() && app::detect_model_format(&path).is_some() {
+                        app.add_model_dir(path);
                     }
                 }
             }
@@ -444,13 +442,10 @@ fn main() -> anyhow::Result<()> {
                         // Minimize (X11 → hide; Wayland → small float window)
                         if app.request_minimize {
                             app.request_minimize = false;
-                            let on_x11 = match window.raw_window_handle() {
-                                raw_window_handle::RawWindowHandle::Xlib(_)
-                                | raw_window_handle::RawWindowHandle::Xcb(_) => true,
-                                _ => false,
-                            };
+                            let on_x11 = matches!(window.raw_window_handle(), raw_window_handle::RawWindowHandle::Xlib(_)
+                                | raw_window_handle::RawWindowHandle::Xcb(_));
                             if on_x11 {
-                                let _ = window.set_visible(false);
+                                window.set_visible(false);
                             } else {
                                 app.minimized_to_float = true;
                                 let sf = window.scale_factor();
@@ -459,7 +454,7 @@ fn main() -> anyhow::Result<()> {
                                     app.window_size.1 as f64 / sf,
                                 );
                                 app.camera_needs_fit = false;
-                                let _ = window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(50.0, 50.0)));
+                                window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(50.0, 50.0)));
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(50.0, 50.0));
                                 // Force EGL surface resize immediately (Wayland workaround)
                                 let phys_w = (50.0_f64 * sf) as u32;
@@ -474,9 +469,9 @@ fn main() -> anyhow::Result<()> {
                             if app.minimized_to_float {
                                 app.minimized_to_float = false;
                                 let (w, h) = app.saved_window_pet_size;
-                                let rw = (w.max(200.0)).min(4000.0);
-                                let rh = (h.max(200.0)).min(4000.0);
-                                let _ = window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
+                                let rw = w.clamp(200.0, 4000.0);
+                                let rh = h.clamp(200.0, 4000.0);
+                                window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
                                 let _ = window.request_inner_size(winit::dpi::LogicalSize::new(rw, rh));
                                 let sf = window.scale_factor();
                                 let phys_w = (rw * sf) as u32;
@@ -486,7 +481,7 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 app.camera_needs_fit = true;
                             } else {
-                                let _ = window.set_visible(true);
+                                window.set_visible(true);
                             }
                         }
 
@@ -516,9 +511,9 @@ fn main() -> anyhow::Result<()> {
                                     if app.pet_mode {
                                         if app.minimized_to_float {
                                             app.request_restore = true;
-                                        } else {
-                                            let _ = window.set_visible(false);
-                                        }
+                                    } else {
+                                        window.set_visible(false);
+                                    }
                                     } else {
                                         target.exit();
                                     }
@@ -582,7 +577,7 @@ fn main() -> anyhow::Result<()> {
                                         };
                                         if app.is_v2 {
                                             // V2 zoom via MatrixManager.setScale (tracked in app.v2_scale)
-                                            app.v2_scale = (app.v2_scale + d * 0.15).max(0.1).min(10.0);
+                                            app.v2_scale = (app.v2_scale + d * 0.15).clamp(0.1, 10.0);
                                             if let Some(ref mut v2) = app.v2_model {
                                                 v2.set_scale(app.v2_scale);
                                             }

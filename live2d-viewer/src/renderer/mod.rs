@@ -642,7 +642,7 @@ impl FloatOverlay {
         gl.draw_arrays(TRIANGLES, 0, 3);
 
         gl.disable_vertex_attrib_array(pos_loc);
-        if let Some(_) = self.vao {
+        if self.vao.is_some() {
             gl.bind_vertex_array(None);
         }
         gl.bind_buffer(ARRAY_BUFFER, None);

@@ -177,7 +177,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
             // Check offscreen count
             let offscreens = model.offscreens();
             println!("=== Natori offscreen count: {} ===", offscreens.len());
-            if offscreens.len() > 0 {
+            if !offscreens.is_empty() {
                 let blend_modes = offscreens.blend_modes();
                 let opacities = offscreens.opacities();
                 let owner_indices = offscreens.owner_indices();
@@ -194,7 +194,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
                     if mask_counts[i] > 0 {
                         let masks_ptr = offscreens.masks();
                         let mask_slice = unsafe { std::slice::from_raw_parts(masks_ptr[i], mask_counts[i] as usize) };
-                        println!("         mask indices: {:?}", mask_slice.iter().map(|&m| m).collect::<Vec<_>>());
+                        println!("         mask indices: {:?}", mask_slice.to_vec());
                     }
                 }
             }
@@ -241,11 +241,10 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         {
             let params = model.parameters();
             let default_vals = params.default_values().to_vec();
-            drop(params);
             let mut params = model.parameters();
             let mut vals = params.values_mut();
-            for i in 0..default_vals.len() {
-                vals.set(i, default_vals[i]);
+            for (i, &val) in default_vals.iter().enumerate() {
+                vals.set(i, val);
             }
         }
         model.update();
@@ -273,7 +272,6 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         let cflags = drawables.constant_flags();
         let mask_counts = drawables.mask_counts();
         let vcounts = drawables.vertex_counts();
-
         let mut sorted: Vec<_> = (0..n).collect();
         sorted.sort_by_key(|&i| orders[i]);
 
@@ -298,11 +296,10 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         {
             let params = model.parameters();
             let default_vals = params.default_values().to_vec();
-            drop(params);
             let mut params = model.parameters();
             let mut vals = params.values_mut();
-            for i in 0..default_vals.len() {
-                vals.set(i, default_vals[i]);
+            for (i, &val) in default_vals.iter().enumerate() {
+                vals.set(i, val);
             }
         }
         model.update();
@@ -329,7 +326,7 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         let dflags = drawables.dynamic_flags();
         let cflags = drawables.constant_flags();
         let mask_counts = drawables.mask_counts();
-        let vcounts = drawables.vertex_counts();
+        let _vcounts = drawables.vertex_counts();
         let tex_indices = drawables.texture_indices();
         let mul_colors = drawables.multiply_colors();
         let scr_colors = drawables.screen_colors();
@@ -375,11 +372,10 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         {
             let params = model.parameters();
             let default_vals = params.default_values().to_vec();
-            drop(params);
             let mut params = model.parameters();
             let mut vals = params.values_mut();
-            for i in 0..default_vals.len() {
-                vals.set(i, default_vals[i]);
+            for (i, &val) in default_vals.iter().enumerate() {
+                vals.set(i, val);
             }
         }
 
@@ -493,9 +489,9 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
             let pos_slice = unsafe { std::slice::from_raw_parts(vert_positions[i], vc) };
             let mut min_x = f32::MAX; let mut min_y = f32::MAX;
             let mut max_x = f32::MIN; let mut max_y = f32::MIN;
-            for j in 0..vc {
-                let x = pos_slice[j].X;
-                let y = pos_slice[j].Y;
+            for pos in pos_slice {
+                let x = pos.X;
+                let y = pos.Y;
                 if x < min_x { min_x = x; }
                 if y < min_y { min_y = y; }
                 if x > max_x { max_x = x; }
@@ -510,15 +506,16 @@ pub fn parse_pose_json(data: &[u8]) -> anyhow::Result<PoseData> {
         // Dump ALL drawables with their bounding boxes sorted by y-center
         // This helps identify what covers the face area
         println!("\n=== All drawable bounding boxes (model coords, sorted by Y center) ===");
+        #[allow(clippy::type_complexity)]
         let mut bboxes: Vec<(usize, f32, f32, f32, f32, f32, f32, f32)> = Vec::new();
         for &i in render_order.iter() {
             let vc = vcounts[i] as usize;
             let pos_slice = unsafe { std::slice::from_raw_parts(vert_positions[i], vc) };
             let mut min_x = f32::MAX; let mut min_y = f32::MAX;
             let mut max_x = f32::MIN; let mut max_y = f32::MIN;
-            for j in 0..vc {
-                let x = pos_slice[j].X;
-                let y = pos_slice[j].Y;
+            for pos in pos_slice {
+                let x = pos.X;
+                let y = pos.Y;
                 if x < min_x { min_x = x; }
                 if y < min_y { min_y = y; }
                 if x > max_x { max_x = x; }

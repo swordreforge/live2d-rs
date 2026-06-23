@@ -592,6 +592,7 @@ fn valid_vertex(output: &PhysicsOutput, particle_count: i32) -> bool {
 }
 
 /// Load inputs for stabilization (also caches source_index).
+#[allow(clippy::too_many_arguments)]
 fn load_inputs_stabilization(
     inputs: &mut [PhysicsInput],
     names: &[String], mins: &[f32], maxs: &[f32], defs: &[f32],
@@ -627,6 +628,7 @@ fn load_inputs_stabilization(
 }
 
 /// Load inputs for evaluate (same logic, separate to avoid mixing stabilisation concerns).
+#[allow(clippy::too_many_arguments)]
 fn load_inputs_evaluate(
     inputs: &mut [PhysicsInput],
     names: &[String], mins: &[f32], maxs: &[f32], defs: &[f32],
@@ -660,6 +662,7 @@ fn get_default_value(min: f32, max: f32) -> f32 { min.min(max) + get_range_value
 fn sign(x: f32) -> i32 { if x > 0.0 { 1 } else if x < 0.0 { -1 } else { 0 } }
 
 /// Exact mirror of C++ NormalizeParameterValue.
+#[allow(clippy::too_many_arguments)]
 fn normalize_parameter_value(
     value: f32,
     param_min: f32, param_max: f32, _param_default: f32,
@@ -693,7 +696,7 @@ fn normalize_parameter_value(
         _ => mid_norm,
     };
 
-    if is_inverted { result } else { result * -1.0 }
+    if is_inverted { result } else { -result }
 }
 
 /// Exact mirror of C++ UpdateParticles.

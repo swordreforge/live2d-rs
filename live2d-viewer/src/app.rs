@@ -61,6 +61,7 @@ pub struct V3RawData {
     pub moc3_bytes: Vec<u8>,
     pub base_dir: PathBuf,
     pub texture_paths: Vec<PathBuf>,
+    #[allow(clippy::type_complexity)]
     pub motion_files: Vec<(String, Vec<(Vec<u8>, Option<f32>, Option<f32>)>)>,
     pub expression_files: Vec<(String, Vec<u8>)>,
     pub pose_bytes: Option<Vec<u8>>,
@@ -925,6 +926,7 @@ impl AppState {
 
     /// Handle tap interaction with camera values passed directly (avoids borrow conflict).
     /// V2 uses built-in hitTest() with raw screen coordinates.
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_tap_with_cam(
         &mut self, x: f64, y: f64, screen_w: f32, screen_h: f32,
         cam_scale_x: f32, cam_scale_y: f32, cam_trans_x: f32, cam_trans_y: f32,
@@ -994,6 +996,7 @@ impl AppState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32) -> bool {
     let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
     let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);

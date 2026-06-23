@@ -57,11 +57,6 @@ impl Model {
         Ok(Self { raw })
     }
 
-    /// Return the raw pointer (for FFI calls in this crate).
-    pub(crate) fn as_raw(&self) -> *mut ffi::V2Model {
-        self.raw
-    }
-
     // ──────── Loading ────────
 
     /// Load a model from a `.model.json` file.

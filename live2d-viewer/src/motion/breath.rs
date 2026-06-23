@@ -29,6 +29,12 @@ pub struct Breath {
     pub params: Vec<BreathParam>,
 }
 
+impl Default for Breath {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Breath {
     /// Create with default parameters matching CubismFramework's LAppModel setup.
     pub fn new() -> Self {

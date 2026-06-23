@@ -30,6 +30,12 @@ enum BlinkState {
     Opening,
 }
 
+impl Default for EyeBlink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EyeBlink {
     pub fn new() -> Self {
         Self {
