@@ -42,7 +42,7 @@ impl Camera {
     }
 
     pub fn zoom(&mut self, delta: f32, cx: f32, cy: f32) {
-        let factor = if delta > 0.0 { 1.1 } else { 0.9 };
+        let factor = if delta > 0.0 { 1.15 } else { 0.87 };
         let wx = (cx * 2.0 - 1.0) / self.scale_x - self.translate_x / self.scale_x;
         let wy = (1.0 - cy * 2.0) / self.scale_y - self.translate_y / self.scale_y;
         self.scale_x *= factor;

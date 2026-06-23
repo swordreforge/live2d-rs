@@ -15,9 +15,9 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
     // Error window always shows regardless of mode
     if let Some(err) = app.error_message.clone() {
-        Window::new("Error").show(ctx, |ui| {
+        Window::new("错误").show(ctx, |ui| {
             ui.colored_label(egui::Color32::RED, &err);
-            if ui.button("Dismiss").clicked() {
+            if ui.button("关闭").clicked() {
                 app.error_message = None;
             }
         });
@@ -138,6 +138,43 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     app.start_motion("TapBody", Some(idx));
                 }
             }
+
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label("Zoom:");
+                if ui.button("-").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = (app.v2_scale * 0.85).max(0.1);
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(app.v2_scale);
+                        }
+                    } else {
+                        app.camera.zoom_out();
+                    }
+                }
+                if ui.button("Reset").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = 1.0;
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(1.0);
+                            v2.set_offset(0.0, 0.0);
+                        }
+                    } else {
+                        app.camera.reset_pan();
+                    }
+                }
+                if ui.button("+").clicked() {
+                    if app.is_v2 {
+                        app.v2_scale = (app.v2_scale * 1.15).min(10.0);
+                        if let Some(ref mut v2) = app.v2_model {
+                            v2.set_scale(app.v2_scale);
+                        }
+                    } else {
+                        app.camera.zoom_in();
+                    }
+                }
+            });
 
             ui.separator();
 

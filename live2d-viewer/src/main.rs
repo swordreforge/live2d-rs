@@ -157,6 +157,19 @@ fn main() -> anyhow::Result<()> {
 
     // egui setup
     let egui_ctx = egui::Context::default();
+
+    // Load CJK font to fix □□□ (tofu) for Chinese/Japanese text
+    if let Ok(cjk_data) = std::fs::read("/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Medium.otf") {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert("CJK".into(), egui::FontData::from_owned(cjk_data));
+        // Append CJK as fallback (after Latin+Emoji) so CJK chars get rendered
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.push("CJK".into());
+            }
+        }
+        egui_ctx.set_fonts(fonts);
+    }
     let mut painter = egui_glow::Painter::new(gl.clone(), "", None)
         .map_err(|e| anyhow::anyhow!("painter: {:?}", e))?;
     let mut egui_state = egui_winit::State::new(
@@ -560,7 +573,7 @@ fn main() -> anyhow::Result<()> {
                                         };
                                         if app.is_v2 {
                                             // V2 zoom via MatrixManager.setScale (tracked in app.v2_scale)
-                                            app.v2_scale = (app.v2_scale + d * 0.1).max(0.1).min(10.0);
+                                            app.v2_scale = (app.v2_scale + d * 0.15).max(0.1).min(10.0);
                                             if let Some(ref mut v2) = app.v2_model {
                                                 v2.set_scale(app.v2_scale);
                                             }
