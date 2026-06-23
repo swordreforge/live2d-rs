@@ -243,6 +243,9 @@ fn main() -> anyhow::Result<()> {
             Event::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::RedrawRequested => {
+                        // --- Complete any pending async model switch ---
+                        app.complete_pending_switch();
+
                         // --- Frame timing ---
                         let now = Instant::now();
                         let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1); // cap at 100ms
@@ -557,10 +560,10 @@ fn main() -> anyhow::Result<()> {
                                         if let winit::keyboard::PhysicalKey::Code(code) = ke.physical_key {
                                             if code == KeyCode::ArrowLeft {
                                                 let idx = app.current_idx.unwrap_or(0);
-                                                if idx > 0 { let _ = app.switch_to(idx - 1); }
+                                                if idx > 0 { let _ = app.begin_switch(idx - 1); }
                                             } else if code == KeyCode::ArrowRight {
                                                 let idx = app.current_idx.unwrap_or(0);
-                                                if idx + 1 < app.model_list.len() { let _ = app.switch_to(idx + 1); }
+                                                if idx + 1 < app.model_list.len() { let _ = app.begin_switch(idx + 1); }
                                             }
                                         }
                                     }

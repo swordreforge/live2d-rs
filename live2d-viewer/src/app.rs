@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use live2d_core::{Moc, Model};
 
 use crate::camera::Camera;
@@ -30,6 +32,26 @@ pub struct ModelEntry {
     pub name: String,
     pub dir: PathBuf,
     pub loaded: bool,
+}
+
+/// Raw V3 model data loaded from background thread (all I/O done off main thread).
+pub struct V3RawData {
+    pub idx: usize,
+    pub moc3_bytes: Vec<u8>,
+    pub base_dir: PathBuf,
+    pub texture_paths: Vec<PathBuf>,
+    pub motion_files: Vec<(String, Vec<(Vec<u8>, Option<f32>, Option<f32>)>)>,
+    pub expression_files: Vec<(String, Vec<u8>)>,
+    pub pose_bytes: Option<Vec<u8>>,
+    pub physics_bytes: Option<Vec<u8>>,
+    pub hit_areas_bytes: Option<Vec<u8>>,
+    pub groups_bytes: Option<Vec<u8>>,
+}
+
+/// Pending async model switch state.
+pub enum PendingLoad {
+    None,
+    V3Loading(mpsc::Receiver<Result<V3RawData, String>>),
 }
 
 pub struct AppState {
@@ -106,6 +128,8 @@ pub struct AppState {
     pub physics: Option<motion::physics::PhysicsEngine>,
     /// V2 zoom scale factor (tracked here because MatrixManager has no getter)
     pub v2_scale: f32,
+    /// Pending async model switch (V3 loads files on background thread)
+    pub pending_load: PendingLoad,
 }
 
 impl AppState {
@@ -158,6 +182,7 @@ impl AppState {
             canvas_pixel_size: (0.0, 0.0),
             physics: None,
             v2_scale: 1.0,
+            pending_load: PendingLoad::None,
         }
     }
 
@@ -167,6 +192,236 @@ impl AppState {
             .unwrap_or("unknown")
             .to_string();
         self.model_list.push(ModelEntry { name, dir: path, loaded: false });
+    }
+
+    /// Start switching to model at `idx` asynchronously.
+    /// V3: spawns background thread for I/O, returns immediately.
+    /// V2: falls back to synchronous switch (C++ does GL work internally).
+    pub fn begin_switch(&mut self, idx: usize) -> Result<(), String> {
+        if idx >= self.model_list.len() {
+            return Err("index out of range".into());
+        }
+        let entry = &self.model_list[idx];
+        let fmt = detect_model_format(&entry.dir)
+            .ok_or_else(|| format!("no model file found in {:?}", entry.dir))?;
+
+        self.is_v2 = matches!(fmt, ModelFormat::V2);
+
+        if self.is_v2 {
+            return self.switch_to(idx);
+        }
+
+        // V3: clear current model state immediately, spawn background thread
+        let dir = entry.dir.clone();
+        let _ = entry;
+        self.clear_model_state();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            tx.send(load_v3_background(&dir, idx)).ok();
+        });
+        self.pending_load = PendingLoad::V3Loading(rx);
+        log::info!("Started background load for idx={idx}");
+        Ok(())
+    }
+
+    /// Poll the pending switch channel. If data arrived, process it.
+    /// Returns true if a switch was completed (or errored).
+    pub fn complete_pending_switch(&mut self) -> bool {
+        let rx = match &mut self.pending_load {
+            PendingLoad::V3Loading(rx) => rx,
+            _ => return false,
+        };
+        let data = match rx.try_recv() {
+            Ok(data) => data,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                log::warn!("Background load thread disconnected");
+                self.pending_load = PendingLoad::None;
+                return false;
+            }
+        };
+        self.pending_load = PendingLoad::None;
+        match data {
+            Ok(raw) => {
+                let idx = raw.idx;
+                log::info!("Background load complete for idx={idx}, processing on main thread");
+                self.complete_v3_switch(idx, raw);
+            }
+            Err(e) => {
+                self.error_message = Some(e);
+            }
+        }
+        true
+    }
+
+    /// Clear all V3 model state (called before new load).
+    fn clear_model_state(&mut self) {
+        self.current_model = None;
+        self.current_moc = None;
+        self.v2_model = None;
+        self.parameter_values.clear();
+        self.parameter_names.clear();
+        self.parameter_mins.clear();
+        self.parameter_maxs.clear();
+        self.parameter_defaults.clear();
+        self.loaded_motions.clear();
+        self.loaded_expressions.clear();
+        self.eye_blink_param_ids.clear();
+        self.lip_sync_param_ids.clear();
+        self.hit_areas.clear();
+        self.pose_data = None;
+        self.physics = None;
+        self.part_ids.clear();
+        self.motion_queue.stop_all_motions();
+    }
+
+    /// Process V3 raw data on main thread (Moc::revive, Model::initialize, parse JSONs).
+    fn complete_v3_switch(&mut self, idx: usize, raw: V3RawData) {
+        use crate::model_loader;
+
+        // Moc::revive + Model::initialize (GL texture uploads happen here)
+        let moc = match Moc::revive(&raw.moc3_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                self.error_message = Some(format!("revive moc: {e}"));
+                return;
+            }
+        };
+        let moc_ptr: *const Moc = &moc as *const Moc;
+        let model = match unsafe { Model::initialize(&*moc_ptr) } {
+            Ok(m) => m,
+            Err(e) => {
+                self.error_message = Some(format!("init model: {e}"));
+                return;
+            }
+        };
+        let model: Model<'static> = unsafe { std::mem::transmute(model) };
+
+        // Parameters
+        let params = model.parameters();
+        for id in params.ids() {
+            self.parameter_names.push(id.to_string_lossy().into_owned());
+        }
+        self.parameter_values = params.default_values().to_vec();
+        self.parameter_mins = params.minimum_values().to_vec();
+        self.parameter_maxs = params.maximum_values().to_vec();
+        self.parameter_defaults = params.default_values().to_vec();
+
+        self.param_lookup.clear();
+        self.param_lookup.reserve(self.parameter_names.len());
+        for (i, name) in self.parameter_names.iter().enumerate() {
+            self.param_lookup.insert(name.clone(), i);
+        }
+
+        // Part IDs
+        let parts = model.parts();
+        self.part_ids = parts.ids().iter().map(|id| id.to_string_lossy().into_owned()).collect();
+
+        // Canvas info
+        let canvas = model.canvas_info();
+        self.canvas_pixel_size = (canvas.size_in_pixels.X, canvas.size_in_pixels.Y);
+
+        self.current_moc = Some(moc);
+        self.current_model = Some(model);
+        self.current_idx = Some(idx);
+        self.texture_paths = raw.texture_paths;
+        self.base_dir = Some(raw.base_dir);
+        self.model_list[idx].loaded = true;
+        self.is_v2 = false;
+
+        // Groups (eye blink, lip sync)
+        if let Some(ref gbytes) = raw.groups_bytes {
+            if let Ok(groups) = serde_json::from_slice::<Vec<model_loader::Group>>(gbytes) {
+                for group in &groups {
+                    match group.name.as_str() {
+                        "EyeBlink" => self.eye_blink_param_ids = group.ids.clone(),
+                        "LipSync" => self.lip_sync_param_ids = group.ids.clone(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Hit areas
+        if let Some(ref hbytes) = raw.hit_areas_bytes {
+            if let Ok(areas) = serde_json::from_slice::<Vec<model_loader::HitArea>>(hbytes) {
+                self.hit_areas = areas;
+            }
+        }
+
+        // Parse motions from pre-loaded raw bytes
+        for (category, entries) in &raw.motion_files {
+            let mut motions = Vec::new();
+            for (bytes, fade_in, fade_out) in entries {
+                match motion::json::parse_motion_json(bytes) {
+                    Ok(parsed) => {
+                        let fi = fade_in.unwrap_or(-1.0);
+                        let fo = fade_out.unwrap_or(-1.0);
+                        motions.push(motion::CubismMotion::new(parsed, fi, fo));
+                    }
+                    Err(e) => log::warn!("Parse motion {category}: {e}"),
+                }
+            }
+            self.loaded_motions.insert(category.clone(), motions);
+        }
+
+        // Parse expressions
+        for (name, bytes) in &raw.expression_files {
+            match motion::json::parse_expression_json(bytes) {
+                Ok(parsed) => {
+                    self.loaded_expressions
+                        .insert(name.clone(), motion::ExpressionMotion::new(parsed));
+                }
+                Err(e) => log::warn!("Parse expression {name}: {e}"),
+            }
+        }
+
+        // Pose
+        if let Some(ref bytes) = raw.pose_bytes {
+            match model_loader::parse_pose_json(bytes) {
+                Ok(p) => {
+                    log::info!("Loaded pose with {} groups", p.groups.len());
+                    self.pose_data = Some(p);
+                }
+                Err(e) => log::warn!("Parse pose: {e}"),
+            }
+        }
+
+        // Apply pose reset (needs current_model)
+        if self.pose_data.is_some() {
+            self.apply_pose_reset();
+        }
+
+        // Physics
+        if let Some(ref bytes) = raw.physics_bytes {
+            match motion::physics::PhysicsEngine::from_json(bytes) {
+                Ok(mut engine) => {
+                    log::info!("Loaded physics ({} sub-rigs)", engine.sub_rig_count());
+                    {
+                        let mut params = motion::physics::PhysicsParams {
+                            values: &mut self.parameter_values,
+                            minimums: &self.parameter_mins,
+                            maximums: &self.parameter_maxs,
+                            defaults: &self.parameter_defaults,
+                            names: &self.parameter_names,
+                        };
+                        engine.stabilization(&mut params);
+                    }
+                    self.physics = Some(engine);
+                }
+                Err(e) => log::warn!("Parse physics: {e}"),
+            }
+        }
+
+        // Start idle motion
+        if self.auto_play_idle {
+            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
+                if let Some(first) = idle_motions.first() {
+                    self.motion_queue.start_motion(first.clone());
+                    log::info!("Started idle motion");
+                }
+            }
+        }
     }
 
     pub fn switch_to(&mut self, idx: usize) -> Result<(), String> {
@@ -721,4 +976,78 @@ fn point_in_triangle(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32, cx: f
     let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
     let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
     !(has_neg && has_pos)
+}
+
+/// Background thread: read all V3 model files from disk.
+fn load_v3_background(dir: &Path, idx: usize) -> Result<V3RawData, String> {
+    use crate::model_loader;
+
+    let model3_path = model_loader::find_model3_json(dir)
+        .map_err(|e| format!("find model3.json: {e}"))?;
+    let base_dir = model3_path.parent().unwrap_or(dir).to_path_buf();
+
+    let json_str = std::fs::read_to_string(&model3_path)
+        .map_err(|e| format!("read model3.json: {e}"))?;
+    let json: model_loader::Model3Json = serde_json::from_str(&json_str)
+        .map_err(|e| format!("parse model3.json: {e}"))?;
+
+    let moc3_path = base_dir.join(&json.file_references.moc);
+    let moc3_bytes = std::fs::read(&moc3_path)
+        .map_err(|e| format!("read moc3: {e}"))?;
+
+    let texture_paths: Vec<PathBuf> = json.file_references.textures.iter()
+        .map(|p| base_dir.join(p))
+        .collect();
+
+    let mut motion_files = Vec::new();
+    if let Some(ref motions) = json.file_references.motions {
+        for (category, refs) in motions {
+            let mut entries = Vec::new();
+            for mref in refs {
+                let path = base_dir.join(&mref.file);
+                match std::fs::read(&path) {
+                    Ok(bytes) => entries.push((
+                        bytes,
+                        mref.fade_in_time.map(|f| f as f32),
+                        mref.fade_out_time.map(|f| f as f32),
+                    )),
+                    Err(e) => log::warn!("read motion {}: {e}", mref.file),
+                }
+            }
+            motion_files.push((category.clone(), entries));
+        }
+    }
+
+    let mut expression_files = Vec::new();
+    if let Some(ref exprs) = json.file_references.expressions {
+        for eref in exprs {
+            let path = base_dir.join(&eref.file);
+            match std::fs::read(&path) {
+                Ok(bytes) => expression_files.push((eref.name.clone(), bytes)),
+                Err(e) => log::warn!("read expression {}: {e}", eref.file),
+            }
+        }
+    }
+
+    let pose_bytes = json.file_references.pose.as_ref()
+        .and_then(|p| std::fs::read(base_dir.join(p)).ok());
+
+    let physics_bytes = json.file_references.physics.as_ref()
+        .and_then(|p| std::fs::read(base_dir.join(p)).ok());
+
+    let hit_areas_bytes = serde_json::to_vec(&json.hit_areas).ok();
+    let groups_bytes = serde_json::to_vec(&json.groups).ok();
+
+    Ok(V3RawData {
+        idx,
+        moc3_bytes,
+        base_dir,
+        texture_paths,
+        motion_files,
+        expression_files,
+        pose_bytes,
+        physics_bytes,
+        hit_areas_bytes,
+        groups_bytes,
+    })
 }

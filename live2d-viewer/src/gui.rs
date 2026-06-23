@@ -73,7 +73,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 name,
             );
             if ui.selectable_label(selected, label).clicked() {
-                if let Err(e) = app.switch_to(i) {
+                if let Err(e) = app.begin_switch(i) {
                     app.error_message = Some(e);
                 }
             }
@@ -84,6 +84,13 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 app.add_model_dir(path);
             }
+        }
+
+        ui.separator();
+
+        // Show loading indicator during async model switch
+        if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
+            ui.label(egui::RichText::new("加载中...").color(egui::Color32::YELLOW));
         }
 
         ui.separator();
@@ -245,17 +252,21 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     small_btn(ui, "\u{25c0}").clicked().then(|| {
                         if let Some(idx) = current_idx {
-                            if idx > 0 { let _ = app.switch_to(idx - 1); }
+                            if idx > 0 { let _ = app.begin_switch(idx - 1); }
                         }
                     });
 
                     ui.label(egui::RichText::new(
-                        current_idx.and_then(|i| app.model_list.get(i)).map(|e| e.name.as_str()).unwrap_or("--")
+                        if matches!(app.pending_load, crate::app::PendingLoad::V3Loading(..)) {
+                            "加载中..."
+                        } else {
+                            current_idx.and_then(|i| app.model_list.get(i)).map(|e| e.name.as_str()).unwrap_or("--")
+                        }
                     ).size(10.0).weak());
 
                     small_btn(ui, "\u{25b6}").clicked().then(|| {
                         if let Some(idx) = current_idx {
-                            if idx + 1 < app.model_list.len() { let _ = app.switch_to(idx + 1); }
+                            if idx + 1 < app.model_list.len() { let _ = app.begin_switch(idx + 1); }
                         }
                     });
 

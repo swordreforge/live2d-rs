@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -44,7 +44,7 @@ pub struct MotionRef {
     pub sound: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 pub struct Group {
@@ -53,7 +53,7 @@ pub struct Group {
     pub ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 pub struct HitArea {
@@ -103,7 +103,7 @@ impl LoadedModel {
     }
 }
 
-fn find_model3_json(dir: &Path) -> anyhow::Result<PathBuf> {
+pub fn find_model3_json(dir: &Path) -> anyhow::Result<PathBuf> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
