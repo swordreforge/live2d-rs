@@ -202,15 +202,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
     let current_idx = app.current_idx;
 
-    // Debug: log positioning info
     let screen_rect = ctx.screen_rect();
-    log::info!(
-        "[pet] screen_rect=({:.0},{:.0},{:.0},{:.0}) canvas=({:.0},{:.0}) window=({:.0},{:.0}) delay={}",
-        screen_rect.min.x, screen_rect.min.y, screen_rect.max.x, screen_rect.max.y,
-        app.canvas_pixel_size.0, app.canvas_pixel_size.1,
-        app.window_size.0, app.window_size.1,
-        app.pet_mode_delay,
-    );
 
     // Delay toolbar appearance to let window resize settle
     if app.pet_mode_delay > 0 {

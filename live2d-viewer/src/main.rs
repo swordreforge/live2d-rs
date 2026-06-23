@@ -371,7 +371,11 @@ fn main() -> anyhow::Result<()> {
                                         // Bind VAO so V2's glVertexAttribPointer works (V2 uses GL 2.1 style without VAO)
                                         gl.bind_vertex_array(Some(v2_vao));
                                     }
-                                    v2.resize(size.width as i32, size.height as i32);
+                                    let (vw, vh) = (size.width as i32, size.height as i32);
+                                    if (vw, vh) != app.last_v2_size {
+                                        v2.resize(vw, vh);
+                                        app.last_v2_size = (vw, vh);
+                                    }
                                     v2.update();
                                     v2.draw();
                                     unsafe {
@@ -543,10 +547,12 @@ fn main() -> anyhow::Result<()> {
                                         surface.resize(&gl_context, w, h);
                                     }
                                     unsafe { gl.viewport(0, 0, size.width as i32, size.height as i32); }
-                                    // V2: update matrix manager projection
+                                    // V2: update matrix manager projection on resize
                                     if app.is_v2 {
                                         if let Some(ref mut v2) = app.v2_model {
-                                            v2.resize(size.width as i32, size.height as i32);
+                                            let (vw, vh) = (size.width as i32, size.height as i32);
+                                            v2.resize(vw, vh);
+                                            app.last_v2_size = (vw, vh);
                                         }
                                     }
                                     // Recalculate camera when window size changes (skip when floating)

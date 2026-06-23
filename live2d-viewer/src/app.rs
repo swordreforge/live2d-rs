@@ -149,6 +149,8 @@ pub struct AppState {
     pub physics: Option<motion::physics::PhysicsEngine>,
     /// V2 zoom scale factor (tracked here because MatrixManager has no getter)
     pub v2_scale: f32,
+    /// Last V2 resize dimensions — skip v2.resize() in render loop if unchanged
+    pub last_v2_size: (i32, i32),
     /// Pending async model switch (V3 loads files on background thread)
     pub pending_load: PendingLoad,
 }
@@ -203,6 +205,7 @@ impl AppState {
             canvas_pixel_size: (0.0, 0.0),
             physics: None,
             v2_scale: 1.0,
+            last_v2_size: (0, 0),
             pending_load: PendingLoad::None,
         }
     }
@@ -492,8 +495,12 @@ impl AppState {
 
             // Fill basic parameter names for GUI display
             let nparams = m.param_count();
+            self.parameter_names.clear();
+            self.param_lookup.clear();
+            self.param_lookup.reserve(nparams as usize);
             for i in 0..nparams {
                 if let Ok(id) = m.param_id(i) {
+                    self.param_lookup.insert(id.clone(), self.parameter_names.len());
                     self.parameter_names.push(id);
                 }
             }
@@ -860,7 +867,7 @@ impl AppState {
             let blink = self.eye_blink.update(delta_time);
             if (blink - 1.0).abs() > 1e-6 {
                 for id in &self.eye_blink_param_ids {
-                    if let Some(idx) = self.parameter_names.iter().position(|n| n == id) {
+                    if let Some(&idx) = self.param_lookup.get(id) {
                         self.parameter_values[idx] = blink;
                     }
                 }
@@ -868,11 +875,11 @@ impl AppState {
         }
 
         // Apply Breath controller (delta-additive oscillation)
-        self.breath.update(delta_time, &mut self.parameter_values, &self.parameter_names);
+        self.breath.update(delta_time, &mut self.parameter_values, &self.param_lookup);
 
         // Apply Look controller (subtract old offset → update → add new offset)
         for p in &self.look.params {
-            if let Some(idx) = self.parameter_names.iter().position(|n| n == &p.id) {
+            if let Some(&idx) = self.param_lookup.get(&p.id) {
                 if idx < self.parameter_values.len() {
                     self.parameter_values[idx] -= p.current_offset;
                 }
@@ -880,7 +887,7 @@ impl AppState {
         }
         self.look.compute_raw(delta_time);
         for p in &self.look.params {
-            if let Some(idx) = self.parameter_names.iter().position(|n| n == &p.id) {
+            if let Some(&idx) = self.param_lookup.get(&p.id) {
                 if idx < self.parameter_values.len() {
                     self.parameter_values[idx] += p.current_offset;
                 }

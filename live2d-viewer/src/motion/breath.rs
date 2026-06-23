@@ -1,6 +1,8 @@
 //! Breath controller — matches CubismFramework's CubismBreath.
 //! Adds subtle sinusoidal oscillation to angle/breath parameters.
 
+use std::collections::HashMap;
+
 /// A single breath parameter definition.
 #[derive(Debug, Clone)]
 pub struct BreathParam {
@@ -44,7 +46,7 @@ impl Breath {
 
     /// Advance time and compute breath deltas.
     /// Returns Vec of (parameter_name, delta_value) — apply these as additive changes.
-    pub fn update(&mut self, delta_time: f32, param_values: &mut [f32], param_names: &[String]) {
+    pub fn update(&mut self, delta_time: f32, param_values: &mut [f32], param_lookup: &HashMap<String, usize>) {
         self.time += delta_time;
         let t = self.time * 2.0 * std::f32::consts::PI;
 
@@ -57,7 +59,7 @@ impl Breath {
                 continue;
             }
 
-            if let Some(idx) = param_names.iter().position(|n| n == &param.id) {
+            if let Some(&idx) = param_lookup.get(&param.id) {
                 if idx < param_values.len() {
                     param_values[idx] = (param_values[idx] + delta).clamp(-100.0, 100.0);
                 }
