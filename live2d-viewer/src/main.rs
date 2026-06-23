@@ -6,6 +6,8 @@ pub mod motion;
 mod renderer;
 mod texture;
 mod tray;
+mod data_dir;
+mod db;
 
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
@@ -33,6 +35,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     env_logger::init();
+
+    // Initialize user data directory and database
+    let _data_dir = data_dir::ensure_data_dir()?;
+    let db = db::AppDb::open(&data_dir::db_path())?;
 
     // Parse CLI args: --overlay flag optional, then model path
     let mut args: Vec<String> = std::env::args().collect();
@@ -142,7 +148,7 @@ fn main() -> anyhow::Result<()> {
     // Create a VAO for V2 rendering (V2 uses core-profile-incompatible no-VAO GL 2.1 pattern)
     let v2_vao = unsafe { gl.create_vertex_array().expect("create V2 VAO") };
 
-    let mut app = app::AppState::new();
+    let mut app = app::AppState::new(Some(db));
     let mut renderer = unsafe {
         renderer::Live2dRenderer::new(&gl).map_err(|e| anyhow::anyhow!("renderer: {e}"))?
     };
@@ -189,12 +195,23 @@ fn main() -> anyhow::Result<()> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("model");
+            let name_owned = name.to_string();
+            let cli_format = app::detect_model_format(&model_dir);
             app.model_list.push(app::ModelEntry {
                 name: name.into(),
                 dir: model_dir,
                 loaded: false,
-                format: None,
+                format: cli_format,
             });
+            // Record CLI model in DB
+            if let Some(ref db) = app.db {
+                let model_version = match cli_format {
+                    Some(app::ModelFormat::V3) => "V3",
+                    Some(app::ModelFormat::V2) => "V2",
+                    None => "Unknown",
+                };
+                let _ = db.add_or_update_model(&arg, &name_owned, model_version, None);
+            }
             true
         } else {
             eprintln!("model directory not found: {arg}");
@@ -218,6 +235,22 @@ fn main() -> anyhow::Result<()> {
                         app.add_model_dir(path);
                     }
                 }
+            }
+        }
+    }
+
+    // Restore model history from DB (merge into model_list, prefer existing entries)
+    if let Ok(records) = app.db.as_ref().map(|db| db.model_history()).unwrap_or(Ok(Vec::new())) {
+        for rec in records {
+            let p = std::path::PathBuf::from(&rec.file_path);
+            if p.exists() && !app.model_list.iter().any(|e| e.dir == p) {
+                let fmt = app::detect_model_format(&p);
+                app.model_list.push(app::ModelEntry {
+                    name: rec.name.clone(),
+                    dir: p,
+                    loaded: false,
+                    format: fmt,
+                });
             }
         }
     }
@@ -629,8 +662,10 @@ fn main() -> anyhow::Result<()> {
                                             if let Some(ref mut v2) = app.v2_model {
                                                 v2.set_scale(app.v2_scale);
                                             }
+                                            app.save_zoom();
                                         } else {
                                             app.camera.zoom(d, 0.5, 0.5);
+                                            app.save_zoom();
                                         }
                                     }
                                 }
@@ -680,6 +715,14 @@ fn main() -> anyhow::Result<()> {
                 }
             },
             Event::LoopExiting => {
+                // Save last active model path
+                if let Some(idx) = app.current_idx {
+                    if let Some(entry) = app.model_list.get(idx) {
+                        if let Some(ref db) = app.db {
+                            let _ = db.set_setting("last_active_model_path", &entry.dir.to_string_lossy());
+                        }
+                    }
+                }
                 painter.destroy();
             }
             Event::AboutToWait => {

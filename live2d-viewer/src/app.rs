@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::camera::Camera;
+use crate::db;
 use crate::motion;
 
 /// Determine whether a model directory contains a V2 or V3 model.
@@ -152,10 +153,12 @@ pub struct AppState {
     pub last_v2_size: (i32, i32),
     /// Pending async model switch (V3 loads files on background thread)
     pub pending_load: PendingLoad,
+    /// Optional database for model history and settings persistence
+    pub db: Option<db::AppDb>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(db: Option<db::AppDb>) -> Self {
         Self {
             model_list: Vec::new(),
             current_idx: None,
@@ -206,6 +209,7 @@ impl AppState {
             v2_scale: 1.0,
             last_v2_size: (0, 0),
             pending_load: PendingLoad::None,
+            db,
         }
     }
 
@@ -216,12 +220,43 @@ impl AppState {
             .unwrap_or("unknown")
             .to_string();
         let format = detect_model_format(&path);
+        let dir_string = path.to_string_lossy().to_string();
+        let name_for_db = name.clone();
         self.model_list.push(ModelEntry {
             name,
             dir: path,
             loaded: false,
             format,
         });
+        // Record in database
+        if let Some(ref db) = self.db {
+            let model_version = match format {
+                Some(ModelFormat::V3) => "V3",
+                Some(ModelFormat::V2) => "V2",
+                None => "Unknown",
+            };
+            let _ = db.add_or_update_model(&dir_string, &name_for_db, model_version, None);
+        }
+    }
+
+    /// Save current zoom/scale for the active model to the database.
+    pub fn save_zoom(&mut self) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        let zoom = if self.is_v2 {
+            Some(self.v2_scale)
+        } else {
+            Some((self.camera.scale_x + self.camera.scale_y) / 2.0)
+        };
+        if let Some(ref db) = self.db {
+            let _ = db.set_zoom(&path, zoom);
+        }
     }
 
     /// Start switching to model at `idx` asynchronously.
@@ -359,6 +394,21 @@ impl AppState {
         self.current_moc = Some(moc);
         self.current_model = Some(model);
         self.current_idx = Some(idx);
+
+        // Restore saved zoom for this model
+        if let Some(ref db) = self.db {
+            let path = &self.model_list[idx].dir;
+            if let Ok(Some(rec)) = db.get_model(&path.to_string_lossy()) {
+                if let Some(z) = rec.zoom_scale {
+                    self.camera.scale_x = z;
+                    self.camera.scale_y = z;
+                    self.camera.translate_x = 0.0;
+                    self.camera.translate_y = 0.0;
+                    log::info!("Restored zoom={:.2} for {}", z, rec.name);
+                }
+            }
+        }
+
         self.texture_paths = raw.texture_paths;
         self.base_dir = Some(raw.base_dir);
         self.model_list[idx].loaded = true;
@@ -523,6 +573,20 @@ impl AppState {
             self.current_idx = Some(idx);
             self.model_list[idx].loaded = true;
             log::info!("Loaded V2 model: {} (params={})", name, nparams);
+
+            // Restore saved zoom for V2 model
+            if let Some(ref db) = self.db {
+                let p = self.model_list[idx].dir.to_string_lossy().to_string();
+                if let Ok(Some(rec)) = db.get_model(&p) {
+                    if let Some(z) = rec.zoom_scale {
+                        self.v2_scale = z;
+                        if let Some(ref mut v2) = self.v2_model {
+                            v2.set_scale(z);
+                        }
+                        log::info!("Restored V2 zoom={:.2} for {}", z, rec.name);
+                    }
+                }
+            }
         } else {
             // ── V3 model path (existing code) ──
             let loaded = crate::model_loader::LoadedModel::load(&entry.dir)

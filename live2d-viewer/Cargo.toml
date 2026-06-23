@@ -28,5 +28,7 @@ log = "0.4"
 env_logger = "0.11"
 raw-window-handle = "0.5"
 rfd = "0.14"
+rusqlite = { version = "0.31", features = ["bundled"] }
+dirs = "5"
 tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
 gtk = "0.18"
