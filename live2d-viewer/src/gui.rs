@@ -108,6 +108,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     } else {
                         app.camera.zoom_out();
                     }
+                    app.save_zoom();
                 }
                 if ui.button("Reset").clicked() {
                     if app.is_v2 {
@@ -119,6 +120,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     } else {
                         app.camera.reset_pan();
                     }
+                    app.save_zoom();
                 }
                 if ui.button("+").clicked() {
                     if app.is_v2 {
@@ -129,6 +131,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     } else {
                         app.camera.zoom_in();
                     }
+                    app.save_zoom();
                 }
             });
         });
@@ -286,6 +289,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                         } else {
                             app.camera.reset_pan();
                         }
+                        app.save_zoom();
                     });
                     small_btn(ui, "+").clicked().then(|| {
                         if app.is_v2 {
@@ -296,6 +300,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                         } else {
                             app.camera.zoom_in();
                         }
+                        app.save_zoom();
                     });
                     small_btn(ui, "-").clicked().then(|| {
                         if app.is_v2 {
@@ -306,6 +311,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                         } else {
                             app.camera.zoom_out();
                         }
+                        app.save_zoom();
                     });
 
                     ui.add_space(3.0);
