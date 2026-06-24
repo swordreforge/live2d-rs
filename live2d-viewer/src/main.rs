@@ -425,8 +425,10 @@ fn main() -> anyhow::Result<()> {
                             app.camera_needs_fit = false;
                         }
 
-                        // --- Advance motion system (V3 only, skip when floating) ---
-                        if !app.is_v2 && !app.minimized_to_float {
+                        // --- Advance motion system (V3 only) ---
+                        // Runs even when minimized to float — needed for look-at
+                        // tracking on the AlwaysOnTop overlay (parameter sync below).
+                        if !app.is_v2 {
                             app.advance_motion(delta);
                             app.update_parameters();
                             app.update_pose(delta);
