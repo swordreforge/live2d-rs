@@ -121,6 +121,8 @@ pub struct AppState {
     pub part_ids: Vec<String>,
     /// Desktop pet mode: transparent, frameless, minimal UI
     pub pet_mode: bool,
+    /// Window click-through mode (input passthrough), toggled from tray menu.
+    pub click_through: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
     pub pet_mode_changed: bool,
     /// True when camera needs recalculation (after pet mode window resize)
@@ -193,6 +195,7 @@ impl AppState {
             pose_fade_remaining: 0.0,
             part_ids: Vec::new(),
             pet_mode: false,
+            click_through: false,
             pet_mode_changed: false,
             camera_needs_fit: false,
             pet_mode_delay: 0,

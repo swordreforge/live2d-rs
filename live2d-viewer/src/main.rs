@@ -698,6 +698,18 @@ fn main() -> anyhow::Result<()> {
                 tray::AppEvent::ShowWindow => {
                     app.request_restore = true;
                 }
+                tray::AppEvent::ToggleClickThrough => {
+                    app.click_through = !app.click_through;
+                    let _ = window.set_cursor_hittest(!app.click_through);
+                    log::info!(
+                        "[click-through] {}",
+                        if app.click_through {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    );
+                }
                 tray::AppEvent::Quit => {
                     target.exit();
                 }
@@ -721,6 +733,7 @@ fn main() -> anyhow::Result<()> {
                 for id in tray_rx.poll() {
                     let event = match id.as_str() {
                         "show" => tray::AppEvent::ShowWindow,
+                        "clickthrough" => tray::AppEvent::ToggleClickThrough,
                         "quit" => tray::AppEvent::Quit,
                         _ => continue,
                     };

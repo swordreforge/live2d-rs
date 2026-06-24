@@ -24,6 +24,7 @@ fn embedded_icon_rgba() -> (Vec<u8>, u32, u32) {
 pub enum AppEvent {
     ShowWindow,
     Quit,
+    ToggleClickThrough,
 }
 
 /// Wraps an [`mpsc::Receiver`] and exposes a non-blocking [`poll`](Self::poll).
@@ -92,6 +93,14 @@ mod tray_imp {
                 }
                 .into(),
                 StandardItem {
+                    label: "Toggle Click-Through".into(),
+                    activate: Box::new(|this: &mut Live2dTray| {
+                        let _ = this.tx.send("clickthrough".into());
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
                     label: "Quit".into(),
                     activate: Box::new(|this: &mut Live2dTray| {
                         let _ = this.tx.send("quit".into());
@@ -128,8 +137,11 @@ mod tray_imp {
     pub fn create_tray() -> (tray_icon::TrayIcon, MenuEventReceiver) {
         let menu = Menu::new();
         let show_item = MenuItem::with_id("show", "Show Window", true, None);
+        let clickthrough_item =
+            MenuItem::with_id("clickthrough", "Toggle Click-Through", true, None);
         let quit_item = MenuItem::with_id("quit", "Quit", true, None);
-        menu.append_items(&[&show_item, &quit_item]).ok();
+        menu.append_items(&[&show_item, &clickthrough_item, &quit_item])
+            .ok();
 
         let (rgba, w, h) = embedded_icon_rgba();
         let icon = Icon::from_rgba(rgba, w, h).expect("create tray icon");
