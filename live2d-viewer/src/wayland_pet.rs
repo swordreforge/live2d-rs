@@ -747,6 +747,16 @@ fn run_event_loop(
                 v2_vao,
                 last_size,
             } => {
+                // V2 head tracking (drag manager converts screen → scene internally)
+                v2_model.drag(state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
+
+                // V2 tap: handle locally (no parameter sync needed)
+                if let Some((cx, cy)) = state.ptr.pending_click.take() {
+                    if v2_model.hit_test("TapBody", cx as f32, cy as f32) {
+                        v2_model.start_random_motion("TapBody", 3);
+                    }
+                }
+
                 let (vw, vh) = (size.0 as i32, size.1 as i32);
                 if (vw, vh) != *last_size {
                     v2_model.resize(vw, vh);
