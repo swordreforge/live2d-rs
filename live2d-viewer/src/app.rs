@@ -75,7 +75,7 @@ pub enum PendingLoad {
     V3Loading(mpsc::Receiver<Result<V3RawData, String>>),
 }
 
-/// 检测是否运行在 GNOME 上（GNOME 不支持 layer-shell）。
+/// Detect whether running on GNOME (GNOME does not support wlr-layer-shell).
 pub fn is_gnome() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP")
         .map(|d| d.to_lowercase().contains("gnome"))
@@ -164,6 +164,19 @@ pub struct AppState {
     pub pending_load: PendingLoad,
     /// Optional database for model history and settings persistence
     pub db: Option<db::AppDb>,
+    // ── Wayland pet mode thread (only on Linux) ──
+    #[cfg(target_os = "linux")]
+    pub pet_wayland_cmd_tx: Option<mpsc::Sender<crate::wayland_pet::PetCommand>>,
+    #[cfg(target_os = "linux")]
+    pub pet_wayland_event_rx: Option<mpsc::Receiver<crate::wayland_pet::PetEvent>>,
+    #[cfg(target_os = "linux")]
+    pub pet_wayland_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(not(target_os = "linux"))]
+    pub pet_wayland_cmd_tx: Option<()>,
+    #[cfg(not(target_os = "linux"))]
+    pub pet_wayland_event_rx: Option<()>,
+    #[cfg(not(target_os = "linux"))]
+    pub pet_wayland_thread: Option<()>,
 }
 
 impl AppState {
@@ -220,7 +233,31 @@ impl AppState {
             last_v2_size: (0, 0),
             pending_load: PendingLoad::None,
             db,
+            #[cfg(target_os = "linux")]
+            pet_wayland_cmd_tx: None,
+            #[cfg(target_os = "linux")]
+            pet_wayland_event_rx: None,
+            #[cfg(target_os = "linux")]
+            pet_wayland_thread: None,
+            #[cfg(not(target_os = "linux"))]
+            pet_wayland_cmd_tx: None,
+            #[cfg(not(target_os = "linux"))]
+            pet_wayland_event_rx: None,
+            #[cfg(not(target_os = "linux"))]
+            pet_wayland_thread: None,
         }
+    }
+
+    pub fn current_model_dir(&self) -> Option<PathBuf> {
+        self.current_idx
+            .and_then(|i| self.model_list.get(i))
+            .map(|e| e.dir.clone())
+    }
+
+    pub fn current_model_format(&self) -> Option<ModelFormat> {
+        self.current_idx
+            .and_then(|i| self.model_list.get(i))
+            .and_then(|e| e.format)
     }
 
     pub fn add_model_dir(&mut self, path: PathBuf) {

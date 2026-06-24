@@ -1,6 +1,29 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
+use smithay_client_toolkit::reexports::client::protocol::{wl_compositor, wl_registry, wl_surface};
+use smithay_client_toolkit::reexports::client::{
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+};
+use smithay_client_toolkit::reexports::protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1,
+    zwlr_layer_surface_v1,
+};
+
+use std::ffi::c_void;
+use std::num::NonZeroU32;
+
+use glutin::config::ConfigTemplateBuilder;
+use glutin::context::ContextAttributesBuilder;
+use glutin::display::{Display, DisplayApiPreference};
+use glutin::prelude::*;
+use glutin::surface::{SurfaceAttributesBuilder, WindowSurface};
+use glow::HasContext;
+use raw_window_handle::{
+    RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
+};
+
 /// Main thread → Pet thread commands
 pub enum PetCommand {
     Enter {
@@ -17,34 +40,490 @@ pub enum PetEvent {
     Exited,
 }
 
+/// The model variant loaded in the pet thread.
+#[allow(clippy::large_enum_variant)]
+enum PetModel {
+    V3 {
+        _moc: live2d_core::Moc,
+        model: live2d_core::Model<'static>,
+        renderer: crate::renderer::Live2dRenderer,
+        camera: crate::camera::Camera,
+    },
+    V2 {
+        v2_model: live2d_v2_core::Model,
+        v2_vao: glow::NativeVertexArray,
+        last_size: (i32, i32),
+    },
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+struct PetState {
+    configured_size: Option<(u32, u32)>,
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch implementations for raw Wayland protocol types
+// ---------------------------------------------------------------------------
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for PetState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: wl_registry::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_compositor::WlCompositor, ()> for PetState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_compositor::WlCompositor,
+        _event: wl_compositor::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        unreachable!("wl_compositor has no events")
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for PetState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_surface::WlSurface,
+        _event: wl_surface::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for PetState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _event: zwlr_layer_shell_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        unreachable!("zwlr_layer_shell_v1 has no events")
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for PetState {
+    fn event(
+        state: &mut Self,
+        _proxy: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial: _,
+                width,
+                height,
+            } => {
+                if width > 0 && height > 0 {
+                    state.configured_size = Some((width, height));
+                }
+            }
+            zwlr_layer_surface_v1::Event::Closed => {
+                log::info!("[pet/wayland] layer surface closed by compositor");
+            }
+            _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Surface setup
+// ---------------------------------------------------------------------------
+
+fn setup_pet_surface(
+    model_dir: &PathBuf,
+    model_format: crate::app::ModelFormat,
+    cmd_rx: &mpsc::Receiver<PetCommand>,
+    event_tx: &mpsc::Sender<PetEvent>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::connect_to_env()?;
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+    let (globals, _) = registry_queue_init::<PetState>(&conn)?;
+
+    let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
+    let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 =
+        globals.bind(&qh, 1..=4, ())?;
+
+    let surface = compositor.create_surface(&qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        None,
+        zwlr_layer_shell_v1::Layer::Top,
+        "live2d-pet".to_string(),
+        &qh,
+        (),
+    );
+    layer_surface.set_size(400, 500);
+    layer_surface.set_anchor(
+        zwlr_layer_surface_v1::Anchor::Bottom | zwlr_layer_surface_v1::Anchor::Right,
+    );
+    layer_surface.set_keyboard_interactivity(
+        zwlr_layer_surface_v1::KeyboardInteractivity::None,
+    );
+    surface.commit();
+
+    let mut state = PetState {
+        configured_size: None,
+    };
+
+    event_queue.roundtrip(&mut state)?;
+
+    if let Some((w, h)) = state.configured_size {
+        let _ = event_tx.send(PetEvent::Configured { width: w, height: h });
+    }
+
+    // === GL context creation ===
+    let display_ptr = conn.backend().display_ptr() as *mut c_void;
+    let mut raw_display_handle = WaylandDisplayHandle::empty();
+    raw_display_handle.display = display_ptr;
+    let raw_display = RawDisplayHandle::Wayland(raw_display_handle);
+
+    let gl_display = unsafe { Display::new(raw_display, DisplayApiPreference::Egl)? };
+
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
+    let gl_config = unsafe { gl_display.find_configs(template)? }
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no suitable GL config"))?;
+
+    let surface_ptr = surface.id().as_ptr() as *mut c_void;
+    let mut raw_window_handle = WaylandWindowHandle::empty();
+    raw_window_handle.surface = surface_ptr;
+    let raw_window = RawWindowHandle::Wayland(raw_window_handle);
+
+    let context_attrs = ContextAttributesBuilder::new().build(Some(raw_window));
+    let not_current = unsafe { gl_display.create_context(&gl_config, &context_attrs)? };
+
+    let (init_w, init_h) = state.configured_size.unwrap_or((400, 500));
+    let phys_w = NonZeroU32::new(init_w.max(1))
+        .ok_or_else(|| std::io::Error::other("zero width"))?;
+    let phys_h = NonZeroU32::new(init_h.max(1))
+        .ok_or_else(|| std::io::Error::other("zero height"))?;
+    let surf_attrs =
+        SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window, phys_w, phys_h);
+    let egl_surface = unsafe { gl_display.create_window_surface(&gl_config, &surf_attrs)? };
+
+    let gl_context = not_current.make_current(&egl_surface)?;
+
+    let gl = unsafe {
+        glow::Context::from_loader_function(|s| {
+            let c_str = std::ffi::CString::new(s).expect("gl proc name");
+            gl_display.get_proc_address(&c_str) as *const _
+        })
+    };
+
+    // Test clear + swap
+    unsafe {
+        gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+    }
+    egl_surface.swap_buffers(&gl_context)?;
+
+    // Initialize V2 glad loader (harmless if no V2 features used)
+    if live2d_v2_core::gl_init() == 0 {
+        log::warn!("[pet/wayland] V2 glInit returned 0 — V2 rendering may not work");
+    }
+
+    // Create a VAO for V2 rendering (V2 uses core-profile-incompatible no-VAO GL 2.1 pattern)
+    let v2_vao = unsafe { gl.create_vertex_array().expect("create V2 VAO") };
+
+    // === Model loading (branch by format) ===
+    let init_size = state.configured_size.unwrap_or((400, 500));
+
+    let pet_model = match model_format {
+        crate::app::ModelFormat::V3 => {
+            let model_path = model_dir.join("model3.json");
+            let model3_json = crate::model_loader::Model3Json::from_file(&model_path)
+                .map_err(|e| anyhow::anyhow!("parse model3.json: {e}"))?;
+
+            let moc_path = model_dir.join(&model3_json.file_references.moc);
+            let moc_data = std::fs::read(&moc_path)
+                .map_err(|e| anyhow::anyhow!("read moc3: {e}"))?;
+
+            let moc = live2d_core::Moc::revive(&moc_data)
+                .map_err(|e| anyhow::anyhow!("Moc::revive: {e}"))?;
+            let moc_ptr: *const live2d_core::Moc = &moc as *const live2d_core::Moc;
+            let mut model: live2d_core::Model<'static> = unsafe {
+                std::mem::transmute(
+                    live2d_core::Model::initialize(&*moc_ptr)
+                        .map_err(|e| anyhow::anyhow!("Model::initialize: {e}"))?,
+                )
+            };
+
+            // Load textures
+            let mut textures = Vec::new();
+            for tex_path in &model3_json.file_references.textures {
+                let full_path = model_dir.join(tex_path);
+                if let Ok(data) = std::fs::read(&full_path) {
+                    if let Ok(tex) = unsafe { crate::texture::load_texture(&gl, &data) } {
+                        textures.push(tex);
+                    }
+                }
+            }
+
+            // Initialize renderer
+            let mut renderer = unsafe {
+                crate::renderer::Live2dRenderer::new(&gl)
+                    .map_err(|e| anyhow::anyhow!("renderer: {e}"))?
+            };
+            renderer.textures = textures;
+            model.update();
+
+            // Camera sized to the pet window
+            let mut camera = crate::camera::Camera::new();
+            let canvas_info = model.canvas_info();
+            camera.fit_to_canvas(
+                canvas_info.size_in_pixels.X,
+                canvas_info.size_in_pixels.Y,
+                canvas_info.pixels_per_unit,
+                init_size.0 as f32,
+                init_size.1 as f32,
+            );
+
+            log::info!(
+                "[pet/wayland] V3 model loaded, canvas=({:.0},{:.0}), configured size: {:?}",
+                canvas_info.size_in_pixels.X,
+                canvas_info.size_in_pixels.Y,
+                state.configured_size
+            );
+
+            PetModel::V3 {
+                _moc: moc,
+                model,
+                renderer,
+                camera,
+            }
+        }
+        crate::app::ModelFormat::V2 => {
+            // Try common V2 model JSON filenames
+            let model_json_path = {
+                let mj = model_dir.join("model.json");
+                if mj.exists() {
+                    mj
+                } else {
+                    let m0 = model_dir.join("model0.json");
+                    if m0.exists() {
+                        m0
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "no V2 model JSON (model.json/model0.json) found in {:?}",
+                            model_dir
+                        )
+                        .into());
+                    }
+                }
+            };
+
+            let mut v2 = live2d_v2_core::Model::new()
+                .map_err(|e| anyhow::anyhow!("create V2 model: {e}"))?;
+            v2.load_json(&model_json_path.to_string_lossy())
+                .map_err(|e| anyhow::anyhow!("V2 load_json: {e}"))?;
+            v2.resize(init_size.0 as i32, init_size.1 as i32);
+
+            let cw = v2.canvas_width();
+            let ch = v2.canvas_height();
+
+            log::info!(
+                "[pet/wayland] V2 model loaded, canvas=({:.0},{:.0}), configured size: {:?}",
+                cw,
+                ch,
+                state.configured_size
+            );
+
+            PetModel::V2 {
+                v2_model: v2,
+                v2_vao,
+                last_size: (init_size.0 as i32, init_size.1 as i32),
+            }
+        }
+    };
+
+    // Enter event loop
+    run_event_loop(
+        &mut state,
+        &mut event_queue,
+        gl,
+        egl_surface,
+        gl_context,
+        pet_model,
+        cmd_rx,
+        event_tx,
+    )?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Real event loop (Task 5)
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn run_event_loop(
+    state: &mut PetState,
+    event_queue: &mut EventQueue<PetState>,
+    gl: glow::Context,
+    egl_surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
+    gl_context: glutin::context::PossiblyCurrentContext,
+    mut pet_model: PetModel,
+    cmd_rx: &mpsc::Receiver<PetCommand>,
+    event_tx: &mpsc::Sender<PetEvent>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame_duration = std::time::Duration::from_secs_f64(1.0 / 60.0);
+    log::info!("[pet/wayland] event loop started (60 fps)");
+
+    'frame: loop {
+        let frame_start = std::time::Instant::now();
+
+        // 1. Dispatch pending Wayland events (configure, closed, etc.)
+        event_queue.dispatch_pending(state)?;
+
+        // 2. Check for commands from main thread (non-blocking)
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                PetCommand::Exit => {
+                    log::info!("[pet/wayland] received exit command");
+                    let _ = event_tx.send(PetEvent::Exited);
+                    break 'frame;
+                }
+                PetCommand::Enter { .. } => {
+                    // Already in pet mode, ignore
+                }
+            }
+        }
+
+        // 3. Render frame
+        let size = state.configured_size.unwrap_or((400, 500));
+        unsafe {
+            gl.viewport(0, 0, size.0 as i32, size.1 as i32);
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+        }
+
+        match &mut pet_model {
+            PetModel::V3 {
+                model,
+                renderer,
+                camera,
+                ..
+            } => {
+                unsafe {
+                    renderer.render(&gl, model, camera);
+                }
+            }
+            PetModel::V2 {
+                v2_model,
+                v2_vao,
+                last_size,
+            } => {
+                let (vw, vh) = (size.0 as i32, size.1 as i32);
+                if (vw, vh) != *last_size {
+                    v2_model.resize(vw, vh);
+                    *last_size = (vw, vh);
+                }
+                unsafe {
+                    gl.bind_vertex_array(Some(*v2_vao));
+                }
+                v2_model.update();
+                v2_model.draw();
+                unsafe {
+                    // Reset GL state V2 left dirty
+                    gl.bind_vertex_array(None);
+                    while gl.get_error() != glow::NO_ERROR {}
+                    gl.use_program(None);
+                    gl.active_texture(glow::TEXTURE0);
+                    gl.front_face(glow::CCW);
+                    gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+                    gl.blend_func_separate(
+                        glow::ONE,
+                        glow::ONE_MINUS_SRC_ALPHA,
+                        glow::ONE,
+                        glow::ONE_MINUS_SRC_ALPHA,
+                    );
+                }
+            }
+        }
+
+        // 4. Swap buffers
+        egl_surface.swap_buffers(&gl_context)?;
+
+        // 5. Frame rate control
+        let elapsed = frame_start.elapsed();
+        if elapsed < frame_duration {
+            std::thread::sleep(frame_duration - elapsed);
+        }
+    }
+
+    // Drop GL resources in safe order: model resources first, then context
+    match pet_model {
+        PetModel::V3 {
+            _moc,
+            model,
+            renderer,
+            camera,
+        } => {
+            drop((renderer, model, _moc, camera));
+        }
+        PetModel::V2 {
+            v2_model, v2_vao, ..
+        } => {
+            drop((v2_model, v2_vao));
+        }
+    }
+    drop((gl, egl_surface, gl_context));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
 /// Spawn a separate thread that creates an sctk layer-shell surface + GL context.
 ///
 /// Returns a `JoinHandle` for the pet thread.
 /// The caller sends commands via `cmd_tx` to control the thread lifecycle.
 pub fn spawn_pet_surface(
     cmd_rx: mpsc::Receiver<PetCommand>,
-    _event_tx: mpsc::Sender<PetEvent>,
+    event_tx: mpsc::Sender<PetEvent>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         log::info!("[pet/wayland] thread started");
         // Wait for Enter command
-        loop {
-            match cmd_rx.recv() {
-                Ok(PetCommand::Enter {
-                    model_dir,
-                    model_format: _,
-                }) => {
-                    log::info!("[pet/wayland] enter: {:?}", model_dir);
-                    // Tasks 3–5 will expand here
-                    break;
-                }
-                Ok(PetCommand::Exit) | Err(_) => {
-                    log::info!("[pet/wayland] exited before enter");
-                    return;
+        match cmd_rx.recv() {
+            Ok(PetCommand::Enter {
+                model_dir,
+                model_format,
+            }) => {
+                log::info!("[pet/wayland] enter: {:?}", model_dir);
+                if let Err(e) = setup_pet_surface(&model_dir, model_format, &cmd_rx, &event_tx) {
+                    log::error!("[pet/wayland] setup error: {:?}", e);
+                    let _ = event_tx.send(PetEvent::Error(format!("{:#}", e)));
                 }
             }
+            Ok(PetCommand::Exit) | Err(_) => {
+                log::info!("[pet/wayland] exited before enter");
+                return;
+            }
         }
-        // Event + render loop (Tasks 3–5)
         log::info!("[pet/wayland] thread ended");
     })
 }

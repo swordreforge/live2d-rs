@@ -27,6 +27,9 @@ use winit::platform::x11::WindowBuilderExtX11;
 use winit::window::WindowBuilder;
 use winit::window::WindowLevel;
 
+#[cfg(target_os = "linux")]
+use std::sync::mpsc;
+
 fn main() -> anyhow::Result<()> {
     // Prefer X11 backend on Wayland — winit's X11 backend supports
     // window control features (name, transparency) used below.
@@ -293,26 +296,84 @@ fn main() -> anyhow::Result<()> {
                         // --- Apply pending pet mode window changes ---
                         if app.pet_mode_changed {
                             if app.pet_mode {
-                                window.set_decorations(false);
-                                window.set_window_level(WindowLevel::AlwaysOnTop);
-                                if let Some(ref model) = app.current_model {
-                                    let canvas = model.canvas_info();
-                                    request_model_window(
-                                        &window,
-                                        canvas.size_in_pixels.X,
-                                        canvas.size_in_pixels.Y,
-                                    );
+                                // ── Wayland native path: spawn sctk layer-shell thread ──
+                                #[cfg(target_os = "linux")]
+                                if on_wayland && !app::is_gnome() {
+                                    let (cmd_tx, cmd_rx) = mpsc::channel();
+                                    let (event_tx, event_rx) = mpsc::channel();
+                                    let handle =
+                                        crate::wayland_pet::spawn_pet_surface(cmd_rx, event_tx);
+
+                                    // Send Enter command
+                                    if let (Some(dir), Some(format)) =
+                                        (app.current_model_dir(), app.current_model_format())
+                                    {
+                                        let _ = cmd_tx.send(
+                                            crate::wayland_pet::PetCommand::Enter {
+                                                model_dir: dir,
+                                                model_format: format,
+                                            },
+                                        );
+                                    }
+
+                                    app.pet_wayland_cmd_tx = Some(cmd_tx);
+                                    app.pet_wayland_event_rx = Some(event_rx);
+                                    app.pet_wayland_thread = Some(handle);
+
+                                    // Hide main window
+                                    window.set_visible(false);
                                 }
-                                log::info!(
-                                    "[pet] enter: canvas=({:.0},{:.0})",
-                                    app.canvas_pixel_size.0,
-                                    app.canvas_pixel_size.1
-                                );
-                                app.camera_needs_fit = true;
-                                app.pet_mode_delay = 2;
+
+                                // ── X11 / GNOME path (fallback) ──
+                                if !cfg!(target_os = "linux") || !on_wayland || app::is_gnome() {
+                                    window.set_decorations(false);
+                                    window.set_window_level(WindowLevel::AlwaysOnTop);
+                                    if let Some(ref model) = app.current_model {
+                                        let canvas = model.canvas_info();
+                                        request_model_window(
+                                            &window,
+                                            canvas.size_in_pixels.X,
+                                            canvas.size_in_pixels.Y,
+                                        );
+                                    }
+                                    log::info!(
+                                        "[pet] enter: canvas=({:.0},{:.0})",
+                                        app.canvas_pixel_size.0,
+                                        app.canvas_pixel_size.1
+                                    );
+                                    app.camera_needs_fit = true;
+                                    app.pet_mode_delay = 2;
+                                }
                             } else {
-                                window.set_decorations(true);
-                                window.set_window_level(WindowLevel::Normal);
+                                // ── Exit pet mode ──
+                                #[cfg(target_os = "linux")]
+                                if app.pet_wayland_cmd_tx.is_some() {
+                                    // Tell pet thread to exit
+                                    if let Some(tx) = app.pet_wayland_cmd_tx.take() {
+                                        let _ =
+                                            tx.send(crate::wayland_pet::PetCommand::Exit);
+                                    }
+                                    // Join thread
+                                    if let Some(handle) = app.pet_wayland_thread.take() {
+                                        let _ = handle.join();
+                                    }
+                                    app.pet_wayland_event_rx = None;
+
+                                    // Show main window
+                                    window.set_visible(true);
+                                    window.set_decorations(true);
+                                    window.set_window_level(WindowLevel::Normal);
+                                } else {
+                                    window.set_decorations(true);
+                                    window.set_window_level(WindowLevel::Normal);
+                                }
+
+                                #[cfg(not(target_os = "linux"))]
+                                {
+                                    window.set_decorations(true);
+                                    window.set_window_level(WindowLevel::Normal);
+                                }
+
                                 log::info!("[pet] exit");
                             }
                             app.pet_mode_changed = false;
@@ -741,6 +802,29 @@ fn main() -> anyhow::Result<()> {
                     };
                     let _ = proxy.send_event(event);
                 }
+
+                // Check for pet thread events
+                #[cfg(target_os = "linux")]
+                if let Some(ref rx) = app.pet_wayland_event_rx {
+                    while let Ok(event) = rx.try_recv() {
+                        match event {
+                            crate::wayland_pet::PetEvent::Configured { width, height } => {
+                                log::info!(
+                                    "[pet/wayland] surface configured: {width}x{height}"
+                                );
+                            }
+                            crate::wayland_pet::PetEvent::Error(e) => {
+                                log::error!("[pet/wayland] error: {e}");
+                                // Fallback: show main window
+                                window.set_visible(true);
+                            }
+                            crate::wayland_pet::PetEvent::Exited => {
+                                log::info!("[pet/wayland] thread exited");
+                            }
+                        }
+                    }
+                }
+
                 window.request_redraw();
             }
             _ => {}
