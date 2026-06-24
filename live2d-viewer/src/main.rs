@@ -596,7 +596,24 @@ fn main() -> anyhow::Result<()> {
                             );
                         }
 
-                        // Minimize (X11 → hide; Wayland → small float window)
+                        // Intercept WM minimize: detect via is_minimized() and convert
+                        // to a hide (set_visible(false)) so we can later restore via
+                        // ShowWindow.  On Wayland, unminimize is unsupported by winit,
+                        // but we CAN destroy the xdg_toplevel (set_visible false) and
+                        // recreate it (set_visible true) to regain control.
+                        // Skip detection for 10 frames after a restore to allow the
+                        // compositor to settle (is_minimized may report stale true).
+                        if app.restore_cooldown > 0 {
+                            app.restore_cooldown -= 1;
+                        } else if !app.minimized_to_float && !app.request_restore {
+                            if window.is_minimized().unwrap_or(false) {
+                                app.minimized_to_float = true;
+                                app.camera_needs_fit = false;
+                                window.set_visible(false);
+                            }
+                        }
+
+                        // Minimize (↓ button)
                         if app.request_minimize {
                             app.request_minimize = false;
                             let on_x11 = matches!(
@@ -631,6 +648,7 @@ fn main() -> anyhow::Result<()> {
                             app.request_restore = false;
                             if app.minimized_to_float {
                                 app.minimized_to_float = false;
+                                app.restore_cooldown = 10;
                                 let (w, h) = app.saved_window_pet_size;
                                 let rw = w.clamp(200.0, 4000.0);
                                 let rh = h.clamp(200.0, 4000.0);
@@ -812,8 +830,20 @@ fn main() -> anyhow::Result<()> {
             }
             Event::UserEvent(event) => match event {
                 tray::AppEvent::ShowWindow => {
+                    // Wayland 上无法恢复最小化窗口。改为重启进程：
+                    // 关闭当前实例，启动一个新实例。新进程创建全新的
+                    // xdg_toplevel + Wayland connection，保证窗口显示。
+                    #[cfg(target_os = "linux")]
+                    if on_wayland {
+                        if let Ok(exe) = std::env::current_exe() {
+                            let args: Vec<String> = std::env::args().skip(1).collect();
+                            let _ = std::process::Command::new(&exe)
+                                .args(&args)
+                                .spawn();
+                        }
+                        std::process::exit(0);
+                    }
                     app.request_restore = true;
-                    window.set_visible(true);
                 }
                 tray::AppEvent::ToggleClickThrough => {
                     app.click_through = !app.click_through;

@@ -148,6 +148,8 @@ pub struct AppState {
     pub pet_mode_delay: u32,
     /// True when pet mode needs window resize (after model switch)
     pub pet_resize_pending: bool,
+    /// Frames to skip is_minimized() detection after a restore
+    pub restore_cooldown: u32,
     /// Request minimize to floating circle
     pub request_minimize: bool,
     /// Request restore from floating circle
@@ -234,6 +236,7 @@ impl AppState {
             camera_needs_fit: false,
             pet_mode_delay: 0,
             pet_resize_pending: false,
+            restore_cooldown: 0,
             request_minimize: false,
             request_restore: false,
             minimized_to_float: false,
