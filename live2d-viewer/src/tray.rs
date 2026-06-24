@@ -6,6 +6,19 @@
 
 use std::sync::mpsc;
 
+/// Load the embedded app icon (from `res/icon.png`) as raw RGBA8 pixels.
+///
+/// Shared by both the Linux (`ksni`) and non-Linux (`tray-icon`) backends.
+/// The PNG is compiled into the binary via [`include_bytes!`].
+fn embedded_icon_rgba() -> (Vec<u8>, u32, u32) {
+    let png = include_bytes!("../res/icon.png");
+    let img = image::load_from_memory(png)
+        .expect("embedded tray icon (res/icon.png)")
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    (img.into_raw(), w, h)
+}
+
 /// Custom events sent from the tray to the winit event loop.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -47,10 +60,16 @@ mod tray_imp {
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+            let (rgba, w, h) = embedded_icon_rgba();
+            // ksni expects ARGB byte order
+            let data: Vec<u8> = rgba
+                .chunks_exact(4)
+                .flat_map(|p| [p[3], p[0], p[1], p[2]])
+                .collect();
             vec![ksni::Icon {
-                width: 1,
-                height: 1,
-                data: vec![0xff, 0x33, 0x99, 0xff], // ARGB opaque blue
+                width: w as i32,
+                height: h as i32,
+                data,
             }]
         }
 
@@ -112,8 +131,8 @@ mod tray_imp {
         let quit_item = MenuItem::with_id("quit", "Quit", true, None);
         menu.append_items(&[&show_item, &quit_item]).ok();
 
-        let icon =
-            Icon::from_rgba(vec![0x33, 0x99, 0xff, 0xff], 1, 1).expect("create tray icon");
+        let (rgba, w, h) = embedded_icon_rgba();
+        let icon = Icon::from_rgba(rgba, w, h).expect("create tray icon");
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Live2D Pet")

@@ -8,9 +8,9 @@ use rusqlite::Connection;
 pub struct ModelRecord {
     pub file_path: String,
     pub name: String,
-    pub model_version: String,  // "V2" or "V3"
+    pub model_version: String, // "V2" or "V3"
     pub zoom_scale: Option<f32>,
-    pub last_opened: String,    // ISO datetime string from SQLite
+    pub last_opened: String, // ISO datetime string from SQLite
 }
 
 /// Local SQLite database for the viewer.

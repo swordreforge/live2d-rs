@@ -1,13 +1,13 @@
 mod app;
 mod camera;
+mod data_dir;
+mod db;
 mod gui;
 mod model_loader;
 pub mod motion;
 mod renderer;
 mod texture;
 mod tray;
-mod data_dir;
-mod db;
 
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
@@ -223,7 +223,12 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Restore model history from DB (merge into model_list, prefer existing entries)
-    if let Ok(records) = app.db.as_ref().map(|db| db.model_history()).unwrap_or(Ok(Vec::new())) {
+    if let Ok(records) = app
+        .db
+        .as_ref()
+        .map(|db| db.model_history())
+        .unwrap_or(Ok(Vec::new()))
+    {
         for rec in records {
             let p = std::path::PathBuf::from(&rec.file_path);
             if p.exists() && !app.model_list.iter().any(|e| e.dir == p) {
@@ -702,7 +707,10 @@ fn main() -> anyhow::Result<()> {
                 if let Some(idx) = app.current_idx {
                     if let Some(entry) = app.model_list.get(idx) {
                         if let Some(ref db) = app.db {
-                            let _ = db.set_setting("last_active_model_path", &entry.dir.to_string_lossy());
+                            let _ = db.set_setting(
+                                "last_active_model_path",
+                                &entry.dir.to_string_lossy(),
+                            );
                         }
                     }
                 }
