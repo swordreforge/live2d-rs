@@ -75,6 +75,13 @@ pub enum PendingLoad {
     V3Loading(mpsc::Receiver<Result<V3RawData, String>>),
 }
 
+/// 检测是否运行在 GNOME 上（GNOME 不支持 layer-shell）。
+pub fn is_gnome() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|d| d.to_lowercase().contains("gnome"))
+        .unwrap_or(false)
+}
+
 pub struct AppState {
     pub model_list: Vec<ModelEntry>,
     pub current_idx: Option<usize>,
