@@ -3,7 +3,9 @@ use std::sync::mpsc;
 
 use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
 use smithay_client_toolkit::reexports::client::protocol::wl_compositor;
+use smithay_client_toolkit::reexports::client::protocol::wl_pointer;
 use smithay_client_toolkit::reexports::client::protocol::wl_region;
+use smithay_client_toolkit::reexports::client::protocol::wl_seat;
 use smithay_client_toolkit::reexports::client::protocol::{wl_registry, wl_surface};
 use smithay_client_toolkit::reexports::client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
@@ -36,12 +38,26 @@ pub enum PetCommand {
     },
     /// Toggle click-through state at runtime
     SetClickThrough(bool),
+    /// Overwrite model parameter values (synced from main thread each frame)
+    SetParameters {
+        values: Vec<f32>,
+        part_opacities: Vec<f32>,
+    },
+    /// Sync camera from main thread
+    SetCamera {
+        scale_x: f32,
+        scale_y: f32,
+        translate_x: f32,
+        translate_y: f32,
+    },
     Exit,
 }
 
 /// Pet thread → Main thread events
 pub enum PetEvent {
     Configured { width: u32, height: u32 },
+    /// User clicked on a model hit area
+    Hit { hit_area_id: String },
     Error(String),
     Exited,
 }
@@ -54,12 +70,45 @@ enum PetModel {
         model: live2d_core::Model<'static>,
         renderer: crate::renderer::Live2dRenderer,
         camera: crate::camera::Camera,
+        hit_ids: Vec<(String, Vec<crate::model_loader::HitArea>)>,
     },
     V2 {
         v2_model: live2d_v2_core::Model,
         v2_vao: glow::NativeVertexArray,
         last_size: (i32, i32),
     },
+}
+
+// ---------------------------------------------------------------------------
+// Pointer / drag state
+// ---------------------------------------------------------------------------
+
+struct PointerState {
+    pointer_x: f64,
+    pointer_y: f64,
+    dragging: bool,
+    drag_start_x: f64,
+    drag_start_y: f64,
+    had_motion: bool,
+    margin_right: i32,
+    margin_bottom: i32,
+    pending_click: Option<(f64, f64)>,
+}
+
+impl PointerState {
+    fn new() -> Self {
+        Self {
+            pointer_x: 0.0,
+            pointer_y: 0.0,
+            dragging: false,
+            drag_start_x: 0.0,
+            drag_start_y: 0.0,
+            had_motion: false,
+            margin_right: 20,
+            margin_bottom: 20,
+            pending_click: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +120,10 @@ struct PetState {
     configured_size: Option<(u32, u32)>,
     compositor: wl_compositor::WlCompositor,
     surface: wl_surface::WlSurface,
+    layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    seat: Option<wl_seat::WlSeat>,
+    pointer: Option<wl_pointer::WlPointer>,
+    ptr: PointerState,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,13 +191,14 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for PetState {
     ) {
         match event {
             zwlr_layer_surface_v1::Event::Configure {
-                serial: _,
+                serial,
                 width,
                 height,
             } => {
                 if width > 0 && height > 0 {
                     state.configured_size = Some((width, height));
                 }
+                state.layer_surface.ack_configure(serial);
             }
             zwlr_layer_surface_v1::Event::Closed => {
                 log::info!("[pet/wayland] layer surface closed by compositor");
@@ -163,6 +217,112 @@ impl Dispatch<wl_region::WlRegion, ()> for PetState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for PetState {
+    fn event(
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_seat::Event::Capabilities { capabilities } => {
+                let cap = match capabilities {
+                    smithay_client_toolkit::reexports::client::WEnum::Value(c) => c,
+                    _ => return,
+                };
+                if cap.contains(wl_seat::Capability::Pointer) {
+                    let pointer = seat.get_pointer(&qh, ());
+                    state.pointer = Some(pointer);
+                    log::info!("[pet/wayland] got wl_pointer");
+                }
+            }
+            wl_seat::Event::Name { name } => {
+                log::debug!("[pet/wayland] seat name: {name}");
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
+    fn event(
+        state: &mut Self,
+        _pointer: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+                state.ptr.pointer_x = surface_x;
+                state.ptr.pointer_y = surface_y;
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.ptr.dragging = false;
+            }
+            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                if state.ptr.dragging {
+                    let offset_x = surface_x - state.ptr.drag_start_x;
+                    let offset_y = surface_y - state.ptr.drag_start_y;
+
+                    if offset_x.abs() + offset_y.abs() > 3.0 {
+                        state.ptr.had_motion = true;
+                    }
+                    let new_mr =
+                        (state.ptr.margin_right as f64 - offset_x).round() as i32;
+                    let new_mb =
+                        (state.ptr.margin_bottom as f64 - offset_y).round() as i32;
+                    state.ptr.margin_right = new_mr.max(0);
+                    state.ptr.margin_bottom = new_mb.max(0);
+                    state.layer_surface.set_margin(
+                        0,
+                        state.ptr.margin_right,
+                        state.ptr.margin_bottom,
+                        0,
+                    );
+                    state.surface.commit();
+                } else {
+                    state.ptr.pointer_x = surface_x;
+                    state.ptr.pointer_y = surface_y;
+                }
+            }
+            wl_pointer::Event::Button { button, state: btn_state, .. } => {
+                const BTN_LEFT: u32 = 0x110;
+                if button == BTN_LEFT {
+                    let btn = match btn_state {
+                        smithay_client_toolkit::reexports::client::WEnum::Value(b) => b,
+                        _ => return,
+                    };
+                    match btn {
+                        wl_pointer::ButtonState::Pressed => {
+                            state.ptr.dragging = true;
+                            state.ptr.drag_start_x = state.ptr.pointer_x;
+                            state.ptr.drag_start_y = state.ptr.pointer_y;
+                            state.ptr.had_motion = false;
+                        }
+                        wl_pointer::ButtonState::Released => {
+                            let was_click =
+                                state.ptr.dragging && !state.ptr.had_motion;
+                            state.ptr.dragging = false;
+                            if was_click {
+                                state.ptr.pending_click =
+                                    Some((state.ptr.pointer_x, state.ptr.pointer_y));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            wl_pointer::Event::Frame => {}
+            wl_pointer::Event::Axis { .. } => {}
+            _ => {}
+        }
     }
 }
 
@@ -185,12 +345,13 @@ fn setup_pet_surface(
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
     let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 =
         globals.bind(&qh, 1..=4, ())?;
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ())?;
 
     let surface = compositor.create_surface(&qh, ());
     let layer_surface = layer_shell.get_layer_surface(
         &surface,
         None,
-        zwlr_layer_shell_v1::Layer::Top,
+        zwlr_layer_shell_v1::Layer::Overlay,
         "live2d-pet".to_string(),
         &qh,
         (),
@@ -202,6 +363,7 @@ fn setup_pet_surface(
     layer_surface.set_keyboard_interactivity(
         zwlr_layer_surface_v1::KeyboardInteractivity::None,
     );
+    layer_surface.set_margin(0, 20, 20, 0);
 
     // Apply initial click-through state (empty input region → passthrough)
     if click_through {
@@ -216,6 +378,10 @@ fn setup_pet_surface(
         configured_size: None,
         compositor,
         surface,
+        layer_surface,
+        seat: Some(seat),
+        pointer: None,
+        ptr: PointerState::new(),
     };
 
     event_queue.roundtrip(&mut state)?;
@@ -338,11 +504,25 @@ fn setup_pet_surface(
                 state.configured_size
             );
 
+            // Load hit areas from model3.json
+            let hit_ids_loaded = if let Some(ref areas) = model3_json.hit_areas {
+                vec![("TapBody".into(), areas.clone())]
+            } else {
+                Vec::new()
+            };
+            if !hit_ids_loaded.is_empty() {
+                log::info!(
+                    "[pet/wayland] loaded {} hit areas",
+                    hit_ids_loaded[0].1.len()
+                );
+            }
+
             PetModel::V3 {
                 _moc: moc,
                 model,
                 renderer,
                 camera,
+                hit_ids: hit_ids_loaded,
             }
         }
         crate::app::ModelFormat::V2 => {
@@ -406,6 +586,86 @@ fn setup_pet_surface(
 }
 
 // ---------------------------------------------------------------------------
+// Hit test (point-in-triangle, barycentric)
+// ---------------------------------------------------------------------------
+
+fn point_in_triangle(
+    px: f32,
+    py: f32,
+    ax: f32,
+    ay: f32,
+    bx: f32,
+    by: f32,
+    cx: f32,
+    cy: f32,
+) -> bool {
+    let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+    let d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+    !(has_neg && has_pos)
+}
+
+fn handle_pointer_click(
+    x: f64,
+    y: f64,
+    w: f32,
+    h: f32,
+    model: &live2d_core::Model,
+    camera: &crate::camera::Camera,
+    hit_ids: &[(String, Vec<crate::model_loader::HitArea>)],
+    event_tx: &mpsc::Sender<PetEvent>,
+) {
+    let ndc_x = 2.0 * x as f32 / w - 1.0;
+    let ndc_y = 1.0 - 2.0 * y as f32 / h;
+    let model_x = (ndc_x - camera.translate_x) / camera.scale_x;
+    let model_y = (ndc_y - camera.translate_y) / camera.scale_y;
+
+    let drawables = model.drawables();
+    let drawable_ids = drawables.ids();
+    let vpos = drawables.vertex_positions();
+    let vcounts = drawables.vertex_counts();
+    let idxs = drawables.indices();
+    let icounts = drawables.index_counts();
+
+    for (_, areas) in hit_ids {
+        for hit_area in areas {
+            let di = match drawable_ids
+                .iter()
+                .position(|id| id.to_string_lossy() == hit_area.id)
+            {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let verts =
+                unsafe { std::slice::from_raw_parts(vpos[di], vcounts[di] as usize) };
+            let idx =
+                unsafe { std::slice::from_raw_parts(idxs[di], icounts[di] as usize) };
+
+            for tri in idx.chunks(3) {
+                if tri.len() < 3 {
+                    continue;
+                }
+                let a = &verts[tri[0] as usize];
+                let b = &verts[tri[1] as usize];
+                let c = &verts[tri[2] as usize];
+
+                if point_in_triangle(
+                    model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y,
+                ) {
+                    let _ = event_tx.send(PetEvent::Hit {
+                        hit_area_id: hit_area.id.clone(),
+                    });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Real event loop (Task 5)
 // ---------------------------------------------------------------------------
 
@@ -454,6 +714,38 @@ fn run_event_loop(
                         if enabled { "on" } else { "off" }
                     );
                 }
+                PetCommand::SetParameters { values, part_opacities } => {
+                    if let PetModel::V3 { ref mut model, .. } = &mut pet_model {
+                        let mut params = model.parameters();
+                        let mut param_slice = params.values_mut();
+                        let dst = param_slice.as_mut_slice();
+                        let copy_len = dst.len().min(values.len());
+                        dst[..copy_len].copy_from_slice(&values[..copy_len]);
+
+                        if !part_opacities.is_empty() {
+                            let mut parts = model.parts();
+                            let opacities = parts.opacities_mut();
+                            let copy_len = opacities.len().min(part_opacities.len());
+                            opacities[..copy_len].copy_from_slice(&part_opacities[..copy_len]);
+                        }
+                    }
+                }
+                PetCommand::SetCamera {
+                    scale_x,
+                    scale_y,
+                    translate_x,
+                    translate_y,
+                } => {
+                    if let PetModel::V3 {
+                        ref mut camera, ..
+                    } = pet_model
+                    {
+                        camera.scale_x = scale_x;
+                        camera.scale_y = scale_y;
+                        camera.translate_x = translate_x;
+                        camera.translate_y = translate_y;
+                    }
+                }
             }
         }
 
@@ -470,8 +762,25 @@ fn run_event_loop(
                 model,
                 renderer,
                 camera,
+                hit_ids,
                 ..
             } => {
+                model.update();
+
+                // Consume pending click and do hit test
+                if let Some((cx, cy)) = state.ptr.pending_click.take() {
+                    handle_pointer_click(
+                        cx,
+                        cy,
+                        size.0 as f32,
+                        size.1 as f32,
+                        model,
+                        camera,
+                        hit_ids,
+                        event_tx,
+                    );
+                }
+
                 unsafe {
                     renderer.render(&gl, model, camera);
                 }
@@ -526,6 +835,7 @@ fn run_event_loop(
             model,
             renderer,
             camera,
+            ..
         } => {
             drop((renderer, model, _moc, camera));
         }
@@ -579,6 +889,9 @@ pub fn spawn_pet_surface(
             Ok(PetCommand::Exit) | Err(_) => {
                 log::info!("[pet/wayland] exited before enter");
                 return;
+            }
+            Ok(_) => {
+                log::warn!("[pet/wayland] ignored command before enter");
             }
         }
         log::info!("[pet/wayland] thread ended");

@@ -432,6 +432,32 @@ fn main() -> anyhow::Result<()> {
                             app.update_pose(delta);
                         }
 
+                        // Sync parameters + camera to AlwaysOnTop overlay thread
+                        #[cfg(target_os = "linux")]
+                        if let Some(ref tx) = app.pet_wayland_cmd_tx {
+                            let values = app.parameter_values.clone();
+                            let part_opacities = app
+                                .current_model
+                                .as_ref()
+                                .map(|m| m.parts().opacities().to_vec())
+                                .unwrap_or_default();
+                            let _ = tx.send(
+                                crate::wayland_pet::PetCommand::SetParameters {
+                                    values,
+                                    part_opacities,
+                                },
+                            );
+                            let cam = &app.camera;
+                            let _ = tx.send(
+                                crate::wayland_pet::PetCommand::SetCamera {
+                                    scale_x: cam.scale_x,
+                                    scale_y: cam.scale_y,
+                                    translate_x: cam.translate_x,
+                                    translate_y: cam.translate_y,
+                                },
+                            );
+                        }
+
                         let size = window.inner_size();
                         app.window_size = (size.width as f32, size.height as f32);
                         let clear_color = if app.minimized_to_float {
@@ -840,19 +866,27 @@ fn main() -> anyhow::Result<()> {
                     let _ = proxy.send_event(event);
                 }
 
-                // Check for pet thread events
+                // Check for pet thread events (collect first to avoid borrow conflict)
                 #[cfg(target_os = "linux")]
-                if let Some(ref rx) = app.pet_wayland_event_rx {
-                    while let Ok(event) = rx.try_recv() {
+                {
+                    let mut pet_events = Vec::new();
+                    if let Some(ref rx) = app.pet_wayland_event_rx {
+                        while let Ok(event) = rx.try_recv() {
+                            pet_events.push(event);
+                        }
+                    }
+                    for event in pet_events {
                         match event {
                             crate::wayland_pet::PetEvent::Configured { width, height } => {
                                 log::info!(
                                     "[pet/wayland] surface configured: {width}x{height}"
                                 );
                             }
+                            crate::wayland_pet::PetEvent::Hit { .. } => {
+                                app.start_motion("TapBody", None);
+                            }
                             crate::wayland_pet::PetEvent::Error(e) => {
                                 log::error!("[pet/wayland] error: {e}");
-                                // Fallback: show main window
                                 window.set_visible(true);
                             }
                             crate::wayland_pet::PetEvent::Exited => {
