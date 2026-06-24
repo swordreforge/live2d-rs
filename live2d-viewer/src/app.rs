@@ -174,6 +174,10 @@ pub struct AppState {
     pub pending_load: PendingLoad,
     /// Optional database for model history and settings persistence
     pub db: Option<db::AppDb>,
+    /// Index of model currently being renamed (None = not renaming)
+    pub renaming_idx: Option<usize>,
+    /// Buffer for in-place rename text edit
+    pub renaming_buffer: String,
     // ── Wayland pet mode thread (only on Linux) ──
     #[cfg(target_os = "linux")]
     pub pet_wayland_cmd_tx: Option<mpsc::Sender<crate::wayland_pet::PetCommand>>,
@@ -243,6 +247,8 @@ impl AppState {
             last_v2_size: (0, 0),
             pending_load: PendingLoad::None,
             db,
+            renaming_idx: None,
+            renaming_buffer: String::new(),
             #[cfg(target_os = "linux")]
             pet_wayland_cmd_tx: None,
             #[cfg(target_os = "linux")]

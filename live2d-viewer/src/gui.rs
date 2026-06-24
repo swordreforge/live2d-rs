@@ -63,19 +63,90 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
     let model_names: Vec<String> = app.model_list.iter().map(|e| e.name.clone()).collect();
 
     Window::new("Model List")
-        .default_width(250.0)
+        .default_width(280.0)
         .show(ctx, |ui| {
+            let mut deleted_idx = None;
+            let mut switched_idx = None;
+
             for (i, name) in model_names.iter().enumerate() {
                 let selected = current_idx == Some(i);
-                let label = format!(
-                    "{} {}",
-                    if selected { "\u{25cf}" } else { "\u{25cb}" },
-                    name,
-                );
-                if ui.selectable_label(selected, label).clicked() {
-                    if let Err(e) = app.begin_switch(i) {
-                        app.error_message = Some(e);
+                let is_renaming = app.renaming_idx == Some(i);
+
+                ui.horizontal(|ui| {
+                    ui.set_min_height(22.0);
+
+                    if is_renaming {
+                        let resp = ui.add_sized(
+                            egui::vec2(140.0, 20.0),
+                            egui::TextEdit::singleline(&mut app.renaming_buffer)
+                                .desired_width(140.0),
+                        );
+                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let new_name = app.renaming_buffer.trim().to_string();
+                            if !new_name.is_empty() && new_name != *name {
+                                if let Some(ref db) = app.db {
+                                    if let Some(entry) = app.model_list.get(i) {
+                                        let path = entry.dir.to_string_lossy().to_string();
+                                        let _ = db.rename_model(&path, &new_name);
+                                    }
+                                }
+                                app.model_list[i].name = new_name;
+                            }
+                            app.renaming_idx = None;
+                        }
+                    } else {
+                        let label = format!(
+                            "{} {}",
+                            if selected { "\u{25cf}" } else { "\u{25cb}" },
+                            name,
+                        );
+                        let resp = ui.selectable_label(selected, &label);
+                        if resp.clicked() {
+                            switched_idx = Some(i);
+                        }
+                        if resp.double_clicked() {
+                            app.renaming_idx = Some(i);
+                            app.renaming_buffer = name.clone();
+                        }
                     }
+
+                    let btn = egui::Button::new("\u{270f}").min_size(egui::vec2(18.0, 18.0));
+                    if !is_renaming && ui.add(btn).clicked() {
+                        app.renaming_idx = Some(i);
+                        app.renaming_buffer = name.clone();
+                    }
+
+                    let del = egui::Button::new("\u{2716}").min_size(egui::vec2(18.0, 18.0));
+                    if ui.add(del).clicked() {
+                        deleted_idx = Some(i);
+                    }
+                });
+            }
+
+            // Deferred: process outside the loop to avoid borrow conflict with model_list
+            if let Some(i) = deleted_idx {
+                if let Some(ref db) = app.db {
+                    if let Some(entry) = app.model_list.get(i) {
+                        let path = entry.dir.to_string_lossy().to_string();
+                        let _ = db.remove_model(&path);
+                    }
+                }
+                app.model_list.remove(i);
+                if app.current_idx == Some(i) {
+                    app.current_idx = if app.model_list.is_empty() {
+                        None
+                    } else {
+                        Some(i.min(app.model_list.len() - 1))
+                    };
+                } else if let Some(ci) = app.current_idx {
+                    if ci > i {
+                        app.current_idx = Some(ci - 1);
+                    }
+                }
+            }
+            if let Some(i) = switched_idx {
+                if let Err(e) = app.begin_switch(i) {
+                    app.error_message = Some(e);
                 }
             }
 

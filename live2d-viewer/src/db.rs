@@ -155,11 +155,19 @@ impl AppDb {
 
     /// Remove a model from the history (e.g. when its directory no longer
     /// exists on disk).
-    #[allow(dead_code)]
     pub fn remove_model(&self, file_path: &str) -> Result<()> {
         self.conn.execute(
             "DELETE FROM model_history WHERE file_path = ?1",
             rusqlite::params![file_path],
+        )?;
+        Ok(())
+    }
+
+    /// Rename a model in the history (user-friendly display name).
+    pub fn rename_model(&self, file_path: &str, new_name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE model_history SET name = ?1 WHERE file_path = ?2",
+            rusqlite::params![new_name, file_path],
         )?;
         Ok(())
     }
