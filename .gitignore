@@ -26,3 +26,4 @@ live2d-py/
 *.lib
 *.exp
 *.pdb
+.omo/run-continuation/
