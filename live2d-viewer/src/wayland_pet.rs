@@ -90,8 +90,15 @@ struct PointerState {
     drag_start_x: f64,
     drag_start_y: f64,
     had_motion: bool,
+    /// Current margin (persistent across frames, updated each frame end)
     margin_right: i32,
     margin_bottom: i32,
+    /// Margin snapshot taken at the START of each frame, before dispatch.
+    /// All Motion events within this frame compute new_mr relative to this,
+    /// avoiding both intra-frame double-subtraction and inter-frame drift
+    /// (surface_x resets after each frame's commits take effect).
+    frame_margin_right: i32,
+    frame_margin_bottom: i32,
     pending_click: Option<(f64, f64)>,
 }
 
@@ -106,6 +113,8 @@ impl PointerState {
             had_motion: false,
             margin_right: 20,
             margin_bottom: 20,
+            frame_margin_right: 20,
+            frame_margin_bottom: 20,
             pending_click: None,
         }
     }
@@ -274,10 +283,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                     if offset_x.abs() + offset_y.abs() > 3.0 {
                         state.ptr.had_motion = true;
                     }
+                    // Compute from frame-start margin snapshot.
+                    // frame_margin_right is updated at the start of each frame BEFORE
+                    // dispatch, so all Motion events in this batch share the same base.
+                    // This avoids:
+                    //   - intra-frame: multiple Motion events corrupting margin updates
+                    //   - inter-frame: surface_x reset after commit → offset_x under-reports
+                    //     total drag movement (surface_x is surface-local, not absolute)
                     let new_mr =
-                        (state.ptr.margin_right as f64 - offset_x).round() as i32;
+                        (state.ptr.frame_margin_right as f64 - offset_x).round() as i32;
                     let new_mb =
-                        (state.ptr.margin_bottom as f64 - offset_y).round() as i32;
+                        (state.ptr.frame_margin_bottom as f64 - offset_y).round() as i32;
                     state.ptr.margin_right = new_mr.max(0);
                     state.ptr.margin_bottom = new_mb.max(0);
                     state.layer_surface.set_margin(
@@ -686,6 +702,13 @@ fn run_event_loop(
 
     'frame: loop {
         let frame_start = std::time::Instant::now();
+
+        // Snapshot current margin for this frame.  All Motion events dispatched
+        // below compute offset from frame_margin_right, which stays constant
+        // throughout the dispatch batch.  After this frame's commits are flushed,
+        // margin_right is used as the next frame's starting point.
+        state.ptr.frame_margin_right = state.ptr.margin_right;
+        state.ptr.frame_margin_bottom = state.ptr.margin_bottom;
 
         // 1. Dispatch pending Wayland events (configure, closed, etc.)
         event_queue.dispatch_pending(state)?;
