@@ -873,12 +873,23 @@ fn main() -> anyhow::Result<()> {
                                     "[pet/wayland] surface configured: {width}x{height}"
                                 );
                             }
-                            crate::wayland_pet::PetEvent::Hit { .. } => {
-                                app.start_motion("TapBody", None);
+                            crate::wayland_pet::PetEvent::Tap {
+                                x, y, w, h,
+                                cam_scale_x, cam_scale_y,
+                                cam_translate_x, cam_translate_y,
+                            } => {
+                                app.handle_tap_with_cam(
+                                    x, y, w, h,
+                                    cam_scale_x, cam_scale_y,
+                                    cam_translate_x, cam_translate_y,
+                                );
                             }
                             crate::wayland_pet::PetEvent::Error(e) => {
                                 log::error!("[pet/wayland] error: {e}");
                                 window.set_visible(true);
+                            }
+                            crate::wayland_pet::PetEvent::CursorMoved { x, y, w, h } => {
+                                app.update_mouse_for_look(x, y, w, h);
                             }
                             crate::wayland_pet::PetEvent::Exited => {
                                 log::info!("[pet/wayland] thread exited");

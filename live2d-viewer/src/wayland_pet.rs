@@ -49,8 +49,25 @@ pub enum PetCommand {
 /// Pet thread → Main thread events
 pub enum PetEvent {
     Configured { width: u32, height: u32 },
-    /// User clicked on a model hit area
-    Hit { hit_area_id: String },
+    /// Raw tap (click without drag) with coordinates + viewport + camera.
+    /// Main thread does the full hit test (V2/V3 dispatch, drawable hit, motion).
+    Tap {
+        x: f64,
+        y: f64,
+        w: f32,
+        h: f32,
+        cam_scale_x: f32,
+        cam_scale_y: f32,
+        cam_translate_x: f32,
+        cam_translate_y: f32,
+    },
+    /// Cursor moved on the overlay surface (main thread uses for look-at tracking).
+    CursorMoved {
+        x: f64,
+        y: f64,
+        w: f32,
+        h: f32,
+    },
     Error(String),
     Exited,
 }
@@ -63,7 +80,6 @@ enum PetModel {
         model: live2d_core::Model<'static>,
         renderer: crate::renderer::Live2dRenderer,
         camera: crate::camera::Camera,
-        hit_ids: Vec<(String, Vec<crate::model_loader::HitArea>)>,
     },
     V2 {
         v2_model: live2d_v2_core::Model,
@@ -93,6 +109,9 @@ struct PointerState {
     frame_margin_right: i32,
     frame_margin_bottom: i32,
     pending_click: Option<(f64, f64)>,
+    /// Last cursor position sent to main thread (for throttling look-at updates)
+    last_cursor_x: f64,
+    last_cursor_y: f64,
 }
 
 impl PointerState {
@@ -109,6 +128,8 @@ impl PointerState {
             frame_margin_right: 20,
             frame_margin_bottom: 20,
             pending_click: None,
+            last_cursor_x: f64::NEG_INFINITY,
+            last_cursor_y: f64::NEG_INFINITY,
         }
     }
 }
@@ -126,6 +147,7 @@ struct PetState {
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
     ptr: PointerState,
+    event_tx: mpsc::Sender<PetEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +321,23 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                 } else {
                     state.ptr.pointer_x = surface_x;
                     state.ptr.pointer_y = surface_y;
+                    // Forward cursor to main thread for look-at tracking (throttled).
+                    // The main thread updates its look target, advances the look
+                    // system, and the modified params flow back via SetParameters.
+                    let dist = (surface_x - state.ptr.last_cursor_x).abs()
+                        + (surface_y - state.ptr.last_cursor_y).abs();
+                    if dist > 2.0 {
+                        state.ptr.last_cursor_x = surface_x;
+                        state.ptr.last_cursor_y = surface_y;
+                        if let Some(size) = state.configured_size {
+                            let _ = state.event_tx.send(PetEvent::CursorMoved {
+                                x: surface_x,
+                                y: surface_y,
+                                w: size.0 as f32,
+                                h: size.1 as f32,
+                            });
+                        }
+                    }
                 }
             }
             wl_pointer::Event::Button { button, state: btn_state, .. } => {
@@ -391,6 +430,7 @@ fn setup_pet_surface(
         seat: Some(seat),
         pointer: None,
         ptr: PointerState::new(),
+        event_tx: event_tx.clone(),
     };
 
     event_queue.roundtrip(&mut state)?;
@@ -525,25 +565,11 @@ fn setup_pet_surface(
                 state.configured_size
             );
 
-            // Load hit areas from model3.json
-            let hit_ids_loaded = if let Some(ref areas) = model3_json.hit_areas {
-                vec![("TapBody".into(), areas.clone())]
-            } else {
-                Vec::new()
-            };
-            if !hit_ids_loaded.is_empty() {
-                log::info!(
-                    "[pet/wayland] loaded {} hit areas",
-                    hit_ids_loaded[0].1.len()
-                );
-            }
-
             PetModel::V3 {
                 _moc: moc,
                 model,
                 renderer,
                 camera,
-                hit_ids: hit_ids_loaded,
             }
         }
         crate::app::ModelFormat::V2 => {
@@ -604,86 +630,6 @@ fn setup_pet_surface(
     )?;
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Hit test (point-in-triangle, barycentric)
-// ---------------------------------------------------------------------------
-
-fn point_in_triangle(
-    px: f32,
-    py: f32,
-    ax: f32,
-    ay: f32,
-    bx: f32,
-    by: f32,
-    cx: f32,
-    cy: f32,
-) -> bool {
-    let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
-    let d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
-    let d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
-    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
-    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
-    !(has_neg && has_pos)
-}
-
-fn handle_pointer_click(
-    x: f64,
-    y: f64,
-    w: f32,
-    h: f32,
-    model: &live2d_core::Model,
-    camera: &crate::camera::Camera,
-    hit_ids: &[(String, Vec<crate::model_loader::HitArea>)],
-    event_tx: &mpsc::Sender<PetEvent>,
-) {
-    let ndc_x = 2.0 * x as f32 / w - 1.0;
-    let ndc_y = 1.0 - 2.0 * y as f32 / h;
-    let model_x = (ndc_x - camera.translate_x) / camera.scale_x;
-    let model_y = (ndc_y - camera.translate_y) / camera.scale_y;
-
-    let drawables = model.drawables();
-    let drawable_ids = drawables.ids();
-    let vpos = drawables.vertex_positions();
-    let vcounts = drawables.vertex_counts();
-    let idxs = drawables.indices();
-    let icounts = drawables.index_counts();
-
-    for (_, areas) in hit_ids {
-        for hit_area in areas {
-            let di = match drawable_ids
-                .iter()
-                .position(|id| id.to_string_lossy() == hit_area.id)
-            {
-                Some(i) => i,
-                None => continue,
-            };
-
-            let verts =
-                unsafe { std::slice::from_raw_parts(vpos[di], vcounts[di] as usize) };
-            let idx =
-                unsafe { std::slice::from_raw_parts(idxs[di], icounts[di] as usize) };
-
-            for tri in idx.chunks(3) {
-                if tri.len() < 3 {
-                    continue;
-                }
-                let a = &verts[tri[0] as usize];
-                let b = &verts[tri[1] as usize];
-                let c = &verts[tri[2] as usize];
-
-                if point_in_triangle(
-                    model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y,
-                ) {
-                    let _ = event_tx.send(PetEvent::Hit {
-                        hit_area_id: hit_area.id.clone(),
-                    });
-                    return;
-                }
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -774,23 +720,22 @@ fn run_event_loop(
                 model,
                 renderer,
                 camera,
-                hit_ids,
                 ..
             } => {
                 model.update();
 
-                // Consume pending click and do hit test
+                // Forward tap to main thread (it has model, motion, V2/V2 dispatch)
                 if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                    handle_pointer_click(
-                        cx,
-                        cy,
-                        size.0 as f32,
-                        size.1 as f32,
-                        model,
-                        camera,
-                        hit_ids,
-                        event_tx,
-                    );
+                    let _ = event_tx.send(PetEvent::Tap {
+                        x: cx,
+                        y: cy,
+                        w: size.0 as f32,
+                        h: size.1 as f32,
+                        cam_scale_x: camera.scale_x,
+                        cam_scale_y: camera.scale_y,
+                        cam_translate_x: camera.translate_x,
+                        cam_translate_y: camera.translate_y,
+                    });
                 }
 
                 unsafe {
