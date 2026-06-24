@@ -26,12 +26,12 @@ use winit::window::WindowBuilder;
 use winit::window::WindowLevel;
 
 fn main() -> anyhow::Result<()> {
-    // Auto-switch to X11 on Wayland: winit + GTK both need X11 backend
+    // Prefer X11 backend on Wayland — winit's X11 backend supports
+    // window control features (name, transparency) used below.
     let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
     if on_wayland && std::env::var("WINIT_UNIX_BACKEND").is_err() {
         std::env::set_var("WINIT_UNIX_BACKEND", "x11");
-        std::env::set_var("GDK_BACKEND", "x11");
-        log::info!("Wayland detected: using X11 backends for winit+GTK (tray + window control)");
+        log::info!("Wayland detected: using X11 backend for winit window control");
     }
 
     env_logger::init();
@@ -52,27 +52,10 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Initialize GTK for tray icon (required by tray-icon GTK backend)
-    let gtk_ok = gtk::init().is_ok();
-    if !gtk_ok {
-        log::warn!("GTK init failed — tray icon disabled");
-    }
-
     let event_loop =
         winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
-    let (_tray, tray_rx) = if gtk_ok {
-        tray::create_tray()
-    } else {
-        let icon = tray_icon::Icon::from_rgba(vec![0; 4], 1, 1).unwrap();
-        let dummy_menu = tray_icon::menu::Menu::new();
-        let dummy_tray = tray_icon::TrayIconBuilder::new()
-            .with_menu(Box::new(dummy_menu))
-            .with_icon(icon)
-            .build()
-            .unwrap();
-        (dummy_tray, tray::dummy_receiver())
-    };
+    let (_tray, tray_rx) = tray::create_tray();
 
     let window = Arc::new(
         WindowBuilder::new()
