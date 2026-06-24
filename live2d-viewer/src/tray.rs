@@ -53,6 +53,11 @@ impl MenuEventReceiver {
         }
         events
     }
+
+    /// Block until a menu event arrives. Used by the background forwarding thread.
+    pub fn recv(&self) -> Result<String, mpsc::RecvError> {
+        self.rx.recv()
+    }
 }
 
 // ── Linux: ksni (pure Rust DBus StatusNotifierItem) ────────────────

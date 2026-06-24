@@ -67,6 +67,27 @@ fn main() -> anyhow::Result<()> {
     let pet_state: tray::PetModeState = Arc::new(AtomicU8::new(tray::PET_OFF));
     let (_tray, tray_rx) = tray::create_tray(pet_state.clone());
 
+    // Forward tray events through EventLoopProxy in a background thread.
+    // This ensures tray messages are processed even when the event loop
+    // is blocked (e.g. minimized Wayland window stalls wl_dispatch).
+    let tray_proxy = proxy.clone();
+    let _tray_thread = std::thread::spawn(move || loop {
+        match tray_rx.recv() {
+            Ok(id) => {
+                let event = match id.as_str() {
+                    "show" => tray::AppEvent::ShowWindow,
+                    "clickthrough" => tray::AppEvent::ToggleClickThrough,
+                    "windowed_pet" => tray::AppEvent::ToggleWindowedPet,
+                    "alwaysontop_pet" => tray::AppEvent::ToggleAlwaysOnTopPet,
+                    "quit" => tray::AppEvent::Quit,
+                    _ => continue,
+                };
+                let _ = tray_proxy.send_event(event);
+            }
+            Err(_) => break,
+        }
+    });
+
     let window = Arc::new(
         WindowBuilder::new()
             .with_title("Live2D Viewer")
@@ -792,6 +813,7 @@ fn main() -> anyhow::Result<()> {
             Event::UserEvent(event) => match event {
                 tray::AppEvent::ShowWindow => {
                     app.request_restore = true;
+                    window.set_visible(true);
                 }
                 tray::AppEvent::ToggleClickThrough => {
                     app.click_through = !app.click_through;
@@ -829,10 +851,13 @@ fn main() -> anyhow::Result<()> {
                     app.pet_mode_changed = true;
                 }
                 tray::AppEvent::Quit => {
-                    // Send exit signal (non-blocking — process will clean up shortly)
                     #[cfg(target_os = "linux")]
                     detach_always_on_top(&mut app);
-                    target.exit();
+                    // On Wayland, target.exit() may not take effect when the window is
+                    // minimized because the event loop is blocked on wl_dispatch and
+                    // EventLoopProxy cannot reliably wake it up in winit 0.29.
+                    // Force immediate exit to work around this.
+                    std::process::exit(0);
                 }
             },
             Event::LoopExiting => {
@@ -850,18 +875,8 @@ fn main() -> anyhow::Result<()> {
                 painter.destroy();
             }
             Event::AboutToWait => {
-                // Poll tray menu events and forward to main event loop
-                for id in tray_rx.poll() {
-                    let event = match id.as_str() {
-                        "show" => tray::AppEvent::ShowWindow,
-                        "clickthrough" => tray::AppEvent::ToggleClickThrough,
-                        "windowed_pet" => tray::AppEvent::ToggleWindowedPet,
-                        "alwaysontop_pet" => tray::AppEvent::ToggleAlwaysOnTopPet,
-                        "quit" => tray::AppEvent::Quit,
-                        _ => continue,
-                    };
-                    let _ = proxy.send_event(event);
-                }
+                // Note: tray events are forwarded by a background thread directly
+                // through the EventLoopProxy.  No polling needed here.
 
                 // Check for pet thread events (collect first to avoid borrow conflict)
                 #[cfg(target_os = "linux")]
