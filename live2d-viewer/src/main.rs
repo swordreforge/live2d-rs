@@ -8,6 +8,8 @@ pub mod motion;
 mod renderer;
 mod texture;
 mod tray;
+#[cfg(target_os = "linux")]
+pub mod wayland_pet;
 
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
