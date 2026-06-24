@@ -432,7 +432,7 @@ fn main() -> anyhow::Result<()> {
                             app.update_pose(delta);
                         }
 
-                        // Sync parameters + camera to AlwaysOnTop overlay thread
+                        // Sync parameters to AlwaysOnTop overlay thread
                         #[cfg(target_os = "linux")]
                         if let Some(ref tx) = app.pet_wayland_cmd_tx {
                             let values = app.parameter_values.clone();
@@ -445,15 +445,6 @@ fn main() -> anyhow::Result<()> {
                                 crate::wayland_pet::PetCommand::SetParameters {
                                     values,
                                     part_opacities,
-                                },
-                            );
-                            let cam = &app.camera;
-                            let _ = tx.send(
-                                crate::wayland_pet::PetCommand::SetCamera {
-                                    scale_x: cam.scale_x,
-                                    scale_y: cam.scale_y,
-                                    translate_x: cam.translate_x,
-                                    translate_y: cam.translate_y,
                                 },
                             );
                         }

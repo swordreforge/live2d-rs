@@ -43,13 +43,6 @@ pub enum PetCommand {
         values: Vec<f32>,
         part_opacities: Vec<f32>,
     },
-    /// Sync camera from main thread
-    SetCamera {
-        scale_x: f32,
-        scale_y: f32,
-        translate_x: f32,
-        translate_y: f32,
-    },
     Exit,
 }
 
@@ -465,11 +458,19 @@ fn setup_pet_surface(
 
     let pet_model = match model_format {
         crate::app::ModelFormat::V3 => {
-            let model_path = model_dir.join("model3.json");
-            let model3_json = crate::model_loader::Model3Json::from_file(&model_path)
+            // Find model3.json by scanning directory (supports any filename)
+            let model3_path =
+                crate::model_loader::find_model3_json(model_dir)
+                    .map_err(|e| anyhow::anyhow!("find model3.json: {e}"))?;
+            // Base dir for resolving relative paths (moc, textures)
+            let base_dir = model3_path
+                .parent()
+                .unwrap_or(model_dir)
+                .to_path_buf();
+            let model3_json = crate::model_loader::Model3Json::from_file(&model3_path)
                 .map_err(|e| anyhow::anyhow!("parse model3.json: {e}"))?;
 
-            let moc_path = model_dir.join(&model3_json.file_references.moc);
+            let moc_path = base_dir.join(&model3_json.file_references.moc);
             let moc_data = std::fs::read(&moc_path)
                 .map_err(|e| anyhow::anyhow!("read moc3: {e}"))?;
 
@@ -483,14 +484,18 @@ fn setup_pet_surface(
                 )
             };
 
-            // Load textures
+            // Load textures (paths relative to base_dir)
             let mut textures = Vec::new();
             for tex_path in &model3_json.file_references.textures {
-                let full_path = model_dir.join(tex_path);
+                let full_path = base_dir.join(tex_path);
                 if let Ok(data) = std::fs::read(&full_path) {
                     if let Ok(tex) = unsafe { crate::texture::load_texture(&gl, &data) } {
                         textures.push(tex);
+                    } else {
+                        log::warn!("[pet/wayland] failed to load texture: {full_path:?}");
                     }
+                } else {
+                    log::warn!("[pet/wayland] texture file not found: {full_path:?}");
                 }
             }
 
@@ -751,22 +756,6 @@ fn run_event_loop(
                             let copy_len = opacities.len().min(part_opacities.len());
                             opacities[..copy_len].copy_from_slice(&part_opacities[..copy_len]);
                         }
-                    }
-                }
-                PetCommand::SetCamera {
-                    scale_x,
-                    scale_y,
-                    translate_x,
-                    translate_y,
-                } => {
-                    if let PetModel::V3 {
-                        ref mut camera, ..
-                    } = pet_model
-                    {
-                        camera.scale_x = scale_x;
-                        camera.scale_y = scale_y;
-                        camera.translate_x = translate_x;
-                        camera.translate_y = translate_y;
                     }
                 }
             }
