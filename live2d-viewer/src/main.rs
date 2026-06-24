@@ -11,6 +11,7 @@ mod tray;
 #[cfg(target_os = "linux")]
 pub mod wayland_pet;
 
+use app::PetMode;
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
@@ -20,6 +21,7 @@ use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowS
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::event::{ElementState, Event, WindowEvent};
@@ -60,7 +62,10 @@ fn main() -> anyhow::Result<()> {
     let event_loop =
         winit::event_loop::EventLoopBuilder::<tray::AppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
-    let (_tray, tray_rx) = tray::create_tray();
+    use std::sync::atomic::AtomicU8;
+
+    let pet_state: tray::PetModeState = Arc::new(AtomicU8::new(tray::PET_OFF));
+    let (_tray, tray_rx) = tray::create_tray(pet_state.clone());
 
     let window = Arc::new(
         WindowBuilder::new()
@@ -293,39 +298,30 @@ fn main() -> anyhow::Result<()> {
                             ));
                         }
 
+                        // --- Helper: kill always-on-top pet thread (Wayland) ---
+                        #[cfg(target_os = "linux")]
+                        fn kill_always_on_top(app: &mut app::AppState) {
+                            if app.pet_wayland_cmd_tx.is_some() {
+                                if let Some(tx) = app.pet_wayland_cmd_tx.take() {
+                                    let _ = tx.send(crate::wayland_pet::PetCommand::Exit);
+                                }
+                                if let Some(handle) = app.pet_wayland_thread.take() {
+                                    let _ = handle.join();
+                                }
+                                app.pet_wayland_event_rx = None;
+                            }
+                        }
+
                         // --- Apply pending pet mode window changes ---
                         if app.pet_mode_changed {
-                            if app.pet_mode {
-                                // ── Wayland native path: spawn sctk layer-shell thread ──
-                                #[cfg(target_os = "linux")]
-                                if on_wayland && !app::is_gnome() {
-                                    let (cmd_tx, cmd_rx) = mpsc::channel();
-                                    let (event_tx, event_rx) = mpsc::channel();
-                                    let handle =
-                                        crate::wayland_pet::spawn_pet_surface(cmd_rx, event_tx);
+                            match app.pet_mode {
+                                PetMode::Windowed => {
+                                    // ── Windowed pet: main window → transparent, always-on-top ──
+                                    pet_state.store(tray::PET_WINDOWED, Ordering::Release);
+                                    // First kill any active always-on-top pet thread
+                                    #[cfg(target_os = "linux")]
+                                    kill_always_on_top(&mut app);
 
-                                    // Send Enter command
-                                    if let (Some(dir), Some(format)) =
-                                        (app.current_model_dir(), app.current_model_format())
-                                    {
-                                        let _ = cmd_tx.send(
-                                            crate::wayland_pet::PetCommand::Enter {
-                                                model_dir: dir,
-                                                model_format: format,
-                                            },
-                                        );
-                                    }
-
-                                    app.pet_wayland_cmd_tx = Some(cmd_tx);
-                                    app.pet_wayland_event_rx = Some(event_rx);
-                                    app.pet_wayland_thread = Some(handle);
-
-                                    // Hide main window
-                                    window.set_visible(false);
-                                }
-
-                                // ── X11 / GNOME path (fallback) ──
-                                if !cfg!(target_os = "linux") || !on_wayland || app::is_gnome() {
                                     window.set_decorations(false);
                                     window.set_window_level(WindowLevel::AlwaysOnTop);
                                     if let Some(ref model) = app.current_model {
@@ -337,44 +333,60 @@ fn main() -> anyhow::Result<()> {
                                         );
                                     }
                                     log::info!(
-                                        "[pet] enter: canvas=({:.0},{:.0})",
+                                        "[pet/windowed] enter: canvas=({:.0},{:.0})",
                                         app.canvas_pixel_size.0,
                                         app.canvas_pixel_size.1
                                     );
                                     app.camera_needs_fit = true;
                                     app.pet_mode_delay = 2;
                                 }
-                            } else {
-                                // ── Exit pet mode ──
-                                #[cfg(target_os = "linux")]
-                                if app.pet_wayland_cmd_tx.is_some() {
-                                    // Tell pet thread to exit
-                                    if let Some(tx) = app.pet_wayland_cmd_tx.take() {
-                                        let _ =
-                                            tx.send(crate::wayland_pet::PetCommand::Exit);
+                                PetMode::AlwaysOnTop => {
+                                    // ── Always on Top pet: spawn sctk layer-shell thread ──
+                                    // Main window stays normal (renders UI + model normally)
+                                    pet_state.store(tray::PET_ALWAYS_ON_TOP, Ordering::Release);
+                                    #[cfg(target_os = "linux")]
+                                    if on_wayland && !app::is_gnome() {
+                                        // Restore window from any previous windowed pet state
+                                        window.set_decorations(true);
+                                        window.set_window_level(WindowLevel::Normal);
+
+                                        let (cmd_tx, cmd_rx) = mpsc::channel();
+                                        let (event_tx, event_rx) = mpsc::channel();
+                                        let handle =
+                                            crate::wayland_pet::spawn_pet_surface(cmd_rx, event_tx);
+
+                                        if let (Some(dir), Some(format)) =
+                                            (app.current_model_dir(), app.current_model_format())
+                                        {
+                                            let _ = cmd_tx.send(
+                                                crate::wayland_pet::PetCommand::Enter {
+                                                    model_dir: dir,
+                                                    model_format: format,
+                                                    click_through: app.click_through,
+                                                },
+                                            );
+                                        }
+
+                                        app.pet_wayland_cmd_tx = Some(cmd_tx);
+                                        app.pet_wayland_event_rx = Some(event_rx);
+                                        app.pet_wayland_thread = Some(handle);
+                                    } else {
+                                        log::warn!(
+                                            "[pet/always-on-top] not supported on this platform"
+                                        );
+                                        app.pet_mode = PetMode::Off;
                                     }
-                                    // Join thread
-                                    if let Some(handle) = app.pet_wayland_thread.take() {
-                                        let _ = handle.join();
-                                    }
-                                    app.pet_wayland_event_rx = None;
-
-                                    // Show main window
-                                    window.set_visible(true);
-                                    window.set_decorations(true);
-                                    window.set_window_level(WindowLevel::Normal);
-                                } else {
-                                    window.set_decorations(true);
-                                    window.set_window_level(WindowLevel::Normal);
                                 }
+                                PetMode::Off => {
+                                    // ── Exit any active pet mode ──
+                                    pet_state.store(tray::PET_OFF, Ordering::Release);
+                                    #[cfg(target_os = "linux")]
+                                    kill_always_on_top(&mut app);
 
-                                #[cfg(not(target_os = "linux"))]
-                                {
                                     window.set_decorations(true);
                                     window.set_window_level(WindowLevel::Normal);
+                                    log::info!("[pet] exit");
                                 }
-
-                                log::info!("[pet] exit");
                             }
                             app.pet_mode_changed = false;
                         }
@@ -383,7 +395,7 @@ fn main() -> anyhow::Result<()> {
                         if app.pet_resize_pending {
                             app.pet_resize_pending = false;
                             app.pet_mode_delay = 2;
-                            if app.pet_mode {
+                            if app.pet_mode == PetMode::Windowed {
                                 if let Some(ref model) = app.current_model {
                                     let canvas = model.canvas_info();
                                     request_model_window(
@@ -424,7 +436,7 @@ fn main() -> anyhow::Result<()> {
                         app.window_size = (size.width as f32, size.height as f32);
                         let clear_color = if app.minimized_to_float {
                             egui::Color32::from_rgb(0x33, 0x99, 0xff)
-                        } else if app.pet_mode {
+                        } else if app.pet_mode == PetMode::Windowed {
                             egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
                         } else {
                             egui::Color32::from_rgb(0x1a, 0x1a, 0x2e)
@@ -626,7 +638,7 @@ fn main() -> anyhow::Result<()> {
                         if !egui_consumed {
                             match event {
                                 WindowEvent::CloseRequested => {
-                                    if app.pet_mode {
+                                    if app.pet_mode == PetMode::Windowed {
                                         if app.minimized_to_float {
                                             app.request_restore = true;
                                         } else {
@@ -699,7 +711,7 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::MouseWheel { delta, .. } => {
-                                    if !app.pet_mode {
+                                    if app.pet_mode != PetMode::Windowed {
                                         let d = match delta {
                                             winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                                             winit::event::MouseScrollDelta::PixelDelta(p) => {
@@ -722,7 +734,7 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 WindowEvent::CursorMoved { position, .. } => {
                                     // Camera pan (mouse_down in normal mode) — V2 uses drag() above instead
-                                    if app.mouse_down && !app.pet_mode && !app.is_v2 {
+                                    if app.mouse_down && app.pet_mode != PetMode::Windowed && !app.is_v2 {
                                         let dx = position.x - app.last_mouse_x;
                                         let dy = position.y - app.last_mouse_y;
                                         app.camera.pan(dx as f32, dy as f32);
@@ -764,6 +776,13 @@ fn main() -> anyhow::Result<()> {
                 tray::AppEvent::ToggleClickThrough => {
                     app.click_through = !app.click_through;
                     let _ = window.set_cursor_hittest(!app.click_through);
+                    // Sync to pet thread if active
+                    #[cfg(target_os = "linux")]
+                    if let Some(ref tx) = app.pet_wayland_cmd_tx {
+                        let _ = tx.send(
+                            crate::wayland_pet::PetCommand::SetClickThrough(app.click_through),
+                        );
+                    }
                     log::info!(
                         "[click-through] {}",
                         if app.click_through {
@@ -772,6 +791,22 @@ fn main() -> anyhow::Result<()> {
                             "disabled"
                         }
                     );
+                }
+                tray::AppEvent::ToggleWindowedPet => {
+                    if app.pet_mode == PetMode::Windowed {
+                        app.pet_mode = PetMode::Off;
+                    } else {
+                        app.pet_mode = PetMode::Windowed;
+                    }
+                    app.pet_mode_changed = true;
+                }
+                tray::AppEvent::ToggleAlwaysOnTopPet => {
+                    if app.pet_mode == PetMode::AlwaysOnTop {
+                        app.pet_mode = PetMode::Off;
+                    } else {
+                        app.pet_mode = PetMode::AlwaysOnTop;
+                    }
+                    app.pet_mode_changed = true;
                 }
                 tray::AppEvent::Quit => {
                     target.exit();
@@ -797,6 +832,8 @@ fn main() -> anyhow::Result<()> {
                     let event = match id.as_str() {
                         "show" => tray::AppEvent::ShowWindow,
                         "clickthrough" => tray::AppEvent::ToggleClickThrough,
+                        "windowed_pet" => tray::AppEvent::ToggleWindowedPet,
+                        "alwaysontop_pet" => tray::AppEvent::ToggleAlwaysOnTopPet,
                         "quit" => tray::AppEvent::Quit,
                         _ => continue,
                     };

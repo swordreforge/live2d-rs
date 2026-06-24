@@ -4,7 +4,16 @@
 //! StatusNotifierItem, no GTK), and [`tray-icon`](https://crates.io/crates/tray-icon)
 //! on macOS/Windows (native platform APIs).
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
+
+/// Pet mode state shared between main thread and tray.
+/// 0 = Off, 1 = Windowed, 2 = AlwaysOnTop
+pub type PetModeState = Arc<AtomicU8>;
+pub const PET_OFF: u8 = 0;
+pub const PET_WINDOWED: u8 = 1;
+pub const PET_ALWAYS_ON_TOP: u8 = 2;
 
 /// Load the embedded app icon (from `res/icon.png`) as raw RGBA8 pixels.
 ///
@@ -25,6 +34,8 @@ pub enum AppEvent {
     ShowWindow,
     Quit,
     ToggleClickThrough,
+    ToggleWindowedPet,
+    ToggleAlwaysOnTopPet,
 }
 
 /// Wraps an [`mpsc::Receiver`] and exposes a non-blocking [`poll`](Self::poll).
@@ -53,6 +64,7 @@ mod tray_imp {
 
     pub struct Live2dTray {
         pub tx: mpsc::Sender<String>,
+        pub pet_state: PetModeState,
     }
 
     impl ksni::Tray for Live2dTray {
@@ -100,6 +112,29 @@ mod tray_imp {
                     ..Default::default()
                 }
                 .into(),
+                // ── Pet mode toggles (mutually exclusive) ──
+                StandardItem {
+                    label: match self.pet_state.load(Ordering::Relaxed) {
+                        PET_WINDOWED => "✓ Windowed Pet".into(),
+                        _ => "  Windowed Pet".into(),
+                    },
+                    activate: Box::new(|this: &mut Live2dTray| {
+                        let _ = this.tx.send("windowed_pet".into());
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: match self.pet_state.load(Ordering::Relaxed) {
+                        PET_ALWAYS_ON_TOP => "✓ Always on Top Pet".into(),
+                        _ => "  Always on Top Pet".into(),
+                    },
+                    activate: Box::new(|this: &mut Live2dTray| {
+                        let _ = this.tx.send("alwaysontop_pet".into());
+                    }),
+                    ..Default::default()
+                }
+                .into(),
                 StandardItem {
                     label: "Quit".into(),
                     activate: Box::new(|this: &mut Live2dTray| {
@@ -112,9 +147,11 @@ mod tray_imp {
         }
     }
 
-    pub fn create_tray() -> (ksni::blocking::Handle<Live2dTray>, MenuEventReceiver) {
+    pub fn create_tray(
+        pet_state: PetModeState,
+    ) -> (ksni::blocking::Handle<Live2dTray>, MenuEventReceiver) {
         let (tx, rx) = mpsc::channel();
-        let tray = Live2dTray { tx };
+        let tray = Live2dTray { tx, pet_state };
         let handle = tray
             .spawn()
             .expect("ksni tray: failed to register StatusNotifierItem");
@@ -134,7 +171,9 @@ mod tray_imp {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    pub fn create_tray() -> (tray_icon::TrayIcon, MenuEventReceiver) {
+    pub fn create_tray(
+        _pet_state: PetModeState,
+    ) -> (tray_icon::TrayIcon, MenuEventReceiver) {
         let menu = Menu::new();
         let show_item = MenuItem::with_id("show", "Show Window", true, None);
         let clickthrough_item =

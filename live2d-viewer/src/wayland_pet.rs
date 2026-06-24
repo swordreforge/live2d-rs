@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
-use smithay_client_toolkit::reexports::client::protocol::{wl_compositor, wl_registry, wl_surface};
+use smithay_client_toolkit::reexports::client::protocol::wl_compositor;
+use smithay_client_toolkit::reexports::client::protocol::wl_region;
+use smithay_client_toolkit::reexports::client::protocol::{wl_registry, wl_surface};
 use smithay_client_toolkit::reexports::client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
@@ -29,7 +31,11 @@ pub enum PetCommand {
     Enter {
         model_dir: PathBuf,
         model_format: crate::app::ModelFormat,
+        /// Initial click-through state (input passthrough) from main window
+        click_through: bool,
     },
+    /// Toggle click-through state at runtime
+    SetClickThrough(bool),
     Exit,
 }
 
@@ -63,6 +69,8 @@ enum PetModel {
 #[allow(dead_code)]
 struct PetState {
     configured_size: Option<(u32, u32)>,
+    compositor: wl_compositor::WlCompositor,
+    surface: wl_surface::WlSurface,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +154,18 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for PetState {
     }
 }
 
+impl Dispatch<wl_region::WlRegion, ()> for PetState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_region::WlRegion,
+        _event: wl_region::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Surface setup
 // ---------------------------------------------------------------------------
@@ -153,6 +173,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for PetState {
 fn setup_pet_surface(
     model_dir: &PathBuf,
     model_format: crate::app::ModelFormat,
+    click_through: bool,
     cmd_rx: &mpsc::Receiver<PetCommand>,
     event_tx: &mpsc::Sender<PetEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -181,10 +202,20 @@ fn setup_pet_surface(
     layer_surface.set_keyboard_interactivity(
         zwlr_layer_surface_v1::KeyboardInteractivity::None,
     );
+
+    // Apply initial click-through state (empty input region → passthrough)
+    if click_through {
+        let empty_region = compositor.create_region(&qh, ());
+        surface.set_input_region(Some(&empty_region));
+    }
     surface.commit();
 
+    // Clone surface for GL context (PetState takes ownership)
+    let surface_for_gl = surface.clone();
     let mut state = PetState {
         configured_size: None,
+        compositor,
+        surface,
     };
 
     event_queue.roundtrip(&mut state)?;
@@ -206,7 +237,7 @@ fn setup_pet_surface(
         .next()
         .ok_or_else(|| anyhow::anyhow!("no suitable GL config"))?;
 
-    let surface_ptr = surface.id().as_ptr() as *mut c_void;
+    let surface_ptr = surface_for_gl.id().as_ptr() as *mut c_void;
     let mut raw_window_handle = WaylandWindowHandle::empty();
     raw_window_handle.surface = surface_ptr;
     let raw_window = RawWindowHandle::Wayland(raw_window_handle);
@@ -362,6 +393,7 @@ fn setup_pet_surface(
     run_event_loop(
         &mut state,
         &mut event_queue,
+        &qh,
         gl,
         egl_surface,
         gl_context,
@@ -381,6 +413,7 @@ fn setup_pet_surface(
 fn run_event_loop(
     state: &mut PetState,
     event_queue: &mut EventQueue<PetState>,
+    qh: &QueueHandle<PetState>,
     gl: glow::Context,
     egl_surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
@@ -407,6 +440,19 @@ fn run_event_loop(
                 }
                 PetCommand::Enter { .. } => {
                     // Already in pet mode, ignore
+                }
+                PetCommand::SetClickThrough(enabled) => {
+                    if enabled {
+                        let empty_region = state.compositor.create_region(qh, ());
+                        state.surface.set_input_region(Some(&empty_region));
+                    } else {
+                        state.surface.set_input_region(None);
+                    }
+                    state.surface.commit();
+                    log::info!(
+                        "[pet/wayland] click-through: {}",
+                        if enabled { "on" } else { "off" }
+                    );
                 }
             }
         }
@@ -512,12 +558,23 @@ pub fn spawn_pet_surface(
             Ok(PetCommand::Enter {
                 model_dir,
                 model_format,
+                click_through,
             }) => {
                 log::info!("[pet/wayland] enter: {:?}", model_dir);
-                if let Err(e) = setup_pet_surface(&model_dir, model_format, &cmd_rx, &event_tx) {
+                if let Err(e) = setup_pet_surface(
+                    &model_dir,
+                    model_format,
+                    click_through,
+                    &cmd_rx,
+                    &event_tx,
+                ) {
                     log::error!("[pet/wayland] setup error: {:?}", e);
                     let _ = event_tx.send(PetEvent::Error(format!("{:#}", e)));
                 }
+            }
+            Ok(PetCommand::SetClickThrough(_)) => {
+                // Received before Enter (toggled before pet mode started) — ignore
+                log::info!("[pet/wayland] click-through ignored (no surface yet)");
             }
             Ok(PetCommand::Exit) | Err(_) => {
                 log::info!("[pet/wayland] exited before enter");

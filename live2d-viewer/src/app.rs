@@ -75,6 +75,16 @@ pub enum PendingLoad {
     V3Loading(mpsc::Receiver<Result<V3RawData, String>>),
 }
 
+/// Pet mode type — mutually exclusive.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PetMode {
+    Off,
+    /// Transparent frameless window with click-through (legacy behavior).
+    Windowed,
+    /// Separate Wayland layer-shell surface always on top.
+    AlwaysOnTop,
+}
+
 /// Detect whether running on GNOME (GNOME does not support wlr-layer-shell).
 pub fn is_gnome() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP")
@@ -126,8 +136,8 @@ pub struct AppState {
     pub pose_fade_remaining: f32,
     /// Part IDs from the current model (for PartOpacity motion curves)
     pub part_ids: Vec<String>,
-    /// Desktop pet mode: transparent, frameless, minimal UI
-    pub pet_mode: bool,
+    /// Desktop pet mode: Off, Windowed, or AlwaysOnTop
+    pub pet_mode: PetMode,
     /// Window click-through mode (input passthrough), toggled from tray menu.
     pub click_through: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
@@ -214,7 +224,7 @@ impl AppState {
             pose_data: None,
             pose_fade_remaining: 0.0,
             part_ids: Vec::new(),
-            pet_mode: false,
+            pet_mode: PetMode::Off,
             click_through: false,
             pet_mode_changed: false,
             camera_needs_fit: false,

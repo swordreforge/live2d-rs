@@ -1,4 +1,4 @@
-use crate::app::AppState;
+use crate::app::{AppState, PetMode};
 use egui::{Context, Slider, Window};
 
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
@@ -7,8 +7,11 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
         return;
     }
 
-    if app.pet_mode {
-        draw_pet_ui(ctx, app);
+    if app.pet_mode != PetMode::Off {
+        if app.pet_mode == PetMode::Windowed {
+            draw_pet_ui(ctx, app);
+        }
+        // AlwaysOnTop: main window stays in normal UI mode, draw nothing special
     } else {
         draw_normal_ui(ctx, app);
     }
@@ -91,8 +94,20 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             }
 
             ui.separator();
-            if ui.button("\u{1f43e} Pet Mode").clicked() {
-                app.pet_mode = true;
+            if ui.button("\u{1f43e} Windowed Pet").clicked() {
+                if app.pet_mode == PetMode::Windowed {
+                    app.pet_mode = PetMode::Off;
+                } else {
+                    app.pet_mode = PetMode::Windowed;
+                }
+                app.pet_mode_changed = true;
+            }
+            if ui.button("\u{1f43e} Always on Top").clicked() {
+                if app.pet_mode == PetMode::AlwaysOnTop {
+                    app.pet_mode = PetMode::Off;
+                } else {
+                    app.pet_mode = PetMode::AlwaysOnTop;
+                }
                 app.pet_mode_changed = true;
             }
 
@@ -327,7 +342,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                     ui.add_space(3.0);
 
                     small_btn(ui, "\u{2716}").clicked().then(|| {
-                        app.pet_mode = false;
+                        app.pet_mode = PetMode::Off;
                         app.pet_mode_changed = true;
                     });
                 });
