@@ -826,6 +826,17 @@ fn main() -> anyhow::Result<()> {
                     app.pet_mode_changed = true;
                 }
                 tray::AppEvent::Quit => {
+                    // Clean up pet thread before exiting
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Some(tx) = app.pet_wayland_cmd_tx.take() {
+                            let _ = tx.send(crate::wayland_pet::PetCommand::Exit);
+                        }
+                        if let Some(handle) = app.pet_wayland_thread.take() {
+                            let _ = handle.join();
+                        }
+                        app.pet_wayland_event_rx = None;
+                    }
                     target.exit();
                 }
             },
