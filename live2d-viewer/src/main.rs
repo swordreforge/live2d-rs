@@ -269,6 +269,18 @@ fn main() -> anyhow::Result<()> {
     // Frame timing
     let mut last_frame_time = Instant::now();
 
+    // Helper: detach always-on-top pet thread (non-blocking).
+    // Sends Exit and drops the JoinHandle — the old thread runs its
+    // cleanup asynchronously. Old and new threads share no resources.
+    #[cfg(target_os = "linux")]
+    let detach_always_on_top = |app: &mut app::AppState| {
+        if let Some(tx) = app.pet_wayland_cmd_tx.take() {
+            let _ = tx.send(crate::wayland_pet::PetCommand::Exit);
+        }
+        let _ = app.pet_wayland_thread.take();
+        app.pet_wayland_event_rx = None;
+    };
+
     event_loop.run(move |event, target| {
         match event {
             Event::WindowEvent { event, .. } => {
@@ -298,20 +310,6 @@ fn main() -> anyhow::Result<()> {
                             ));
                         }
 
-                        // --- Helper: kill always-on-top pet thread (Wayland) ---
-                        #[cfg(target_os = "linux")]
-                        fn kill_always_on_top(app: &mut app::AppState) {
-                            if app.pet_wayland_cmd_tx.is_some() {
-                                if let Some(tx) = app.pet_wayland_cmd_tx.take() {
-                                    let _ = tx.send(crate::wayland_pet::PetCommand::Exit);
-                                }
-                                if let Some(handle) = app.pet_wayland_thread.take() {
-                                    let _ = handle.join();
-                                }
-                                app.pet_wayland_event_rx = None;
-                            }
-                        }
-
                         // --- Apply pending pet mode window changes ---
                         if app.pet_mode_changed {
                             match app.pet_mode {
@@ -320,7 +318,7 @@ fn main() -> anyhow::Result<()> {
                                     pet_state.store(tray::PET_WINDOWED, Ordering::Release);
                                     // First kill any active always-on-top pet thread
                                     #[cfg(target_os = "linux")]
-                                    kill_always_on_top(&mut app);
+                                    detach_always_on_top(&mut app);
 
                                     window.set_decorations(false);
                                     window.set_window_level(WindowLevel::AlwaysOnTop);
@@ -349,6 +347,9 @@ fn main() -> anyhow::Result<()> {
                                         // Restore window from any previous windowed pet state
                                         window.set_decorations(true);
                                         window.set_window_level(WindowLevel::Normal);
+
+                                        // Detach any existing thread before spawning a new one
+                                        detach_always_on_top(&mut app);
 
                                         let (cmd_tx, cmd_rx) = mpsc::channel();
                                         let (event_tx, event_rx) = mpsc::channel();
@@ -381,7 +382,7 @@ fn main() -> anyhow::Result<()> {
                                     // ── Exit any active pet mode ──
                                     pet_state.store(tray::PET_OFF, Ordering::Release);
                                     #[cfg(target_os = "linux")]
-                                    kill_always_on_top(&mut app);
+                                    detach_always_on_top(&mut app);
 
                                     window.set_decorations(true);
                                     window.set_window_level(WindowLevel::Normal);
@@ -828,17 +829,9 @@ fn main() -> anyhow::Result<()> {
                     app.pet_mode_changed = true;
                 }
                 tray::AppEvent::Quit => {
-                    // Clean up pet thread before exiting
+                    // Send exit signal (non-blocking — process will clean up shortly)
                     #[cfg(target_os = "linux")]
-                    {
-                        if let Some(tx) = app.pet_wayland_cmd_tx.take() {
-                            let _ = tx.send(crate::wayland_pet::PetCommand::Exit);
-                        }
-                        if let Some(handle) = app.pet_wayland_thread.take() {
-                            let _ = handle.join();
-                        }
-                        app.pet_wayland_event_rx = None;
-                    }
+                    detach_always_on_top(&mut app);
                     target.exit();
                 }
             },
