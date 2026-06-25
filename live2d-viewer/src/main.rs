@@ -462,9 +462,16 @@ fn main() -> anyhow::Result<()> {
                                     pet_state.store(tray::PET_ALWAYS_ON_TOP, Ordering::Release);
                                     #[cfg(target_os = "linux")]
                                     if on_wayland && !app::is_gnome() {
-                                        // Restore window from any previous windowed pet state
-                                        window.set_decorations(true);
-                                        window.set_window_level(WindowLevel::Normal);
+                                        window.set_decorations(false);
+                                        window.set_window_level(WindowLevel::AlwaysOnTop);
+
+                                        // Resize to model size first — same sequence as Windowed pet,
+                                        // "warms up" XWayland so subsequent 50×50 resize is accepted.
+                                        let cw = app.canvas_pixel_size.0;
+                                        let ch = app.canvas_pixel_size.1;
+                                        if cw > 0.0 && ch > 0.0 {
+                                            request_model_window(&window, cw, ch);
+                                        }
 
                                         // Detach any existing thread before spawning a new one
                                         detach_always_on_top(&mut app);
@@ -490,8 +497,8 @@ fn main() -> anyhow::Result<()> {
                                         app.pet_wayland_event_rx = Some(event_rx);
                                         app.pet_wayland_thread = Some(handle);
 
-                                        // Minimize main window to taskbar — the layer-shell overlay renders the model
-                                        window.set_minimized(true);
+                                        app.request_minimize = true;
+                                        log::info!("[pet] AlwaysOnTop set request_minimize=true");
                                     } else {
                                         log::warn!(
                                             "[pet/always-on-top] not supported on this platform"
@@ -733,6 +740,7 @@ fn main() -> anyhow::Result<()> {
 
                         // Minimize (↓ button)
                         if app.request_minimize {
+                            log::info!("[pet] request_minimize block entered");
                             app.request_minimize = false;
                             let on_x11 = matches!(
                                 window.raw_window_handle(),
@@ -744,6 +752,7 @@ fn main() -> anyhow::Result<()> {
                             if on_x11 && !on_wayland {
                                 window.set_visible(false);
                             } else {
+                                log::info!("[pet] request_minimize: doing 50x50 resize");
                                 app.minimized_to_float = true;
                                 let sf = window.scale_factor();
                                 app.saved_window_pet_size =
@@ -762,6 +771,10 @@ fn main() -> anyhow::Result<()> {
                                 {
                                     surface.resize(&gl_context, rw, rh);
                                 }
+                                // XWayland buffers resize requests and only flushes
+                                // when user X11 events arrive. current_monitor()
+                                // triggers an X11 roundtrip that forces the flush.
+                                let _ = window.current_monitor();
                             }
                         }
                         if app.request_restore {
