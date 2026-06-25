@@ -484,8 +484,8 @@ fn main() -> anyhow::Result<()> {
                                         app.pet_wayland_event_rx = Some(event_rx);
                                         app.pet_wayland_thread = Some(handle);
 
-                                        // Hide main window — the layer-shell overlay renders the model
-                                        window.set_visible(false);
+                                        // Minimize main window to taskbar — the layer-shell overlay renders the model
+                                        window.set_minimized(true);
                                     } else {
                                         log::warn!(
                                             "[pet/always-on-top] not supported on this platform"
