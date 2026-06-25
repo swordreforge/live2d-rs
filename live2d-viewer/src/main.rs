@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
                     // For those, spawn a new process directly.  Windowed/Off
                     // modes have the window visible, so EventLoopProxy works.
                     let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
-                    let needs_respawn = id == "show" || pm == 2;
+                    let needs_respawn = id == "show" || (pm == 2 && id != "quit");
                     if needs_respawn {
                         let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
                         let new_ct = if id == "clickthrough" { !ct } else { ct };
