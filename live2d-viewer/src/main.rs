@@ -342,6 +342,7 @@ fn main() -> anyhow::Result<()> {
         // Restore state from previous process (Wayland respawn preserves via CLI flags)
         if arg_click_through {
             app.click_through = true;
+            let _ = window.set_cursor_hittest(false);
         }
         if let Some(ref mode) = arg_pet_mode {
             match mode.as_str() {
@@ -452,7 +453,6 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 PetMode::AlwaysOnTop => {
                                     // ── Always on Top pet: spawn sctk layer-shell thread ──
-                                    // Main window stays normal (renders UI + model normally)
                                     pet_state.store(tray::PET_ALWAYS_ON_TOP, Ordering::Release);
                                     #[cfg(target_os = "linux")]
                                     if on_wayland && !app::is_gnome() {
@@ -483,6 +483,9 @@ fn main() -> anyhow::Result<()> {
                                         app.pet_wayland_cmd_tx = Some(cmd_tx);
                                         app.pet_wayland_event_rx = Some(event_rx);
                                         app.pet_wayland_thread = Some(handle);
+
+                                        // Hide main window — the layer-shell overlay renders the model
+                                        window.set_visible(false);
                                     } else {
                                         log::warn!(
                                             "[pet/always-on-top] not supported on this platform"
