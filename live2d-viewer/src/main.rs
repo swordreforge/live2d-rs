@@ -583,7 +583,12 @@ fn main() -> anyhow::Result<()> {
                         let size = window.inner_size();
                         app.window_size = (size.width as f32, size.height as f32);
                         let clear_color = if app.minimized_to_float {
-                            egui::Color32::from_rgb(0x33, 0x99, 0xff)
+                            if app.pet_mode == PetMode::AlwaysOnTop {
+                                // AlwaysOnTop: transparent window (pet on Wayland surface)
+                                egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
+                            } else {
+                                egui::Color32::from_rgb(0x33, 0x99, 0xff)
+                            }
                         } else if app.pet_mode == PetMode::Windowed {
                             egui::Color32::from_rgba_premultiplied(0, 0, 0, 0)
                         } else {
@@ -684,14 +689,16 @@ fn main() -> anyhow::Result<()> {
 
                         // Render shapes: egui_glow when normal, raw GL triangle when floating
                         if app.minimized_to_float {
-                            unsafe {
-                                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                                gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                float_overlay.draw_play_button(
-                                    &gl,
-                                    size.width as f32,
-                                    size.height as f32,
-                                );
+                            if app.pet_mode != PetMode::AlwaysOnTop {
+                                unsafe {
+                                    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                                    gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                    float_overlay.draw_play_button(
+                                        &gl,
+                                        size.width as f32,
+                                        size.height as f32,
+                                    );
+                                }
                             }
                         } else {
                             let clipped_primitives =
