@@ -50,9 +50,17 @@ fn main() -> anyhow::Result<()> {
     // Parse CLI args: --overlay flag optional, then model path
     let mut args: Vec<String> = std::env::args().collect();
     let mut overlay_mode = false;
+    let mut arg_click_through = false;
+    let mut arg_pet_mode: Option<String> = None;
     args.retain(|a| {
         if a == "--overlay" {
             overlay_mode = true;
+            false
+        } else if a == "--click-through" {
+            arg_click_through = true;
+            false
+        } else if a.starts_with("--pet-mode=") {
+            arg_pet_mode = Some(a[11..].to_string());
             false
         } else {
             true
@@ -67,13 +75,67 @@ fn main() -> anyhow::Result<()> {
     let pet_state: tray::PetModeState = Arc::new(AtomicU8::new(tray::PET_OFF));
     let (_tray, tray_rx) = tray::create_tray(pet_state.clone());
 
-    // Forward tray events through EventLoopProxy in a background thread.
-    // This ensures tray messages are processed even when the event loop
-    // is blocked (e.g. minimized Wayland window stalls wl_dispatch).
+    // Shared state for Wayland direct-respawn: on Wayland, set_visible(false)
+    // kills event-loop delivery so the tray thread must act directly instead
+    // of sending events via EventLoopProxy.
+    let click_through_state: Arc<std::sync::atomic::AtomicBool> =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pet_mode_state: Arc<AtomicU8> = Arc::new(AtomicU8::new(0)); // 0=Off,1=Windowed,2=AlwaysOnTop
+
     let tray_proxy = proxy.clone();
+    let tray_ct_state = click_through_state.clone();
+    let tray_pm_state = pet_mode_state.clone();
     let _tray_thread = std::thread::spawn(move || loop {
         match tray_rx.recv() {
             Ok(id) => {
+                #[cfg(target_os = "linux")]
+                if on_wayland {
+                    // On Wayland, the winit event loop stalls when the window
+                    // is minimized — EventLoopProxy can't deliver.  Spawn
+                    // a new process with the updated state directly.
+                    match id.as_str() {
+                        "show" | "clickthrough" | "windowed_pet" | "alwaysontop_pet" => {
+                            let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
+                            let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
+
+                            let new_ct = if id == "clickthrough" { !ct } else { ct };
+                            let new_pm = match id.as_str() {
+                                "windowed_pet" => {
+                                    if pm == 1 { 0u8 } else { 1u8 }
+                                }
+                                "alwaysontop_pet" => {
+                                    if pm == 2 { 0u8 } else { 2u8 }
+                                }
+                                _ => pm,
+                            };
+
+                            if let Ok(exe) = std::env::current_exe() {
+                                let mut args: Vec<String> = std::env::args()
+                                    .skip(1)
+                                    .filter(|a| {
+                                        !a.starts_with("--click-through")
+                                            && !a.starts_with("--pet-mode=")
+                                    })
+                                    .collect();
+                                if new_ct {
+                                    args.push("--click-through".into());
+                                }
+                                match new_pm {
+                                    1 => args.push("--pet-mode=windowed".into()),
+                                    2 => args.push("--pet-mode=alwaysontop".into()),
+                                    _ => {}
+                                }
+                                let _ = std::process::Command::new(&exe).args(&args).spawn();
+                            }
+                            std::process::exit(0);
+                        }
+                        "quit" => {
+                            std::process::exit(0);
+                        }
+                        _ => {}
+                    }
+                }
+                // Non-Wayland path: send via EventLoopProxy as before
                 let event = match id.as_str() {
                     "show" => tray::AppEvent::ShowWindow,
                     "clickthrough" => tray::AppEvent::ToggleClickThrough,
@@ -276,6 +338,21 @@ fn main() -> anyhow::Result<()> {
 
     if !app.model_list.is_empty() {
         let _ = app.switch_to(0);
+
+        // Restore state from previous process (Wayland respawn preserves via CLI flags)
+        if arg_click_through {
+            app.click_through = true;
+        }
+        if let Some(ref mode) = arg_pet_mode {
+            match mode.as_str() {
+                "windowed" => app.pet_mode = PetMode::Windowed,
+                "alwaysontop" => app.pet_mode = PetMode::AlwaysOnTop,
+                _ => {}
+            }
+            if app.pet_mode != PetMode::Off {
+                app.pet_mode_changed = true;
+            }
+        }
         for path in &app.texture_paths {
             match std::fs::read(path) {
                 Ok(img_data) => match unsafe { texture::load_texture(&gl, &img_data) } {
@@ -312,8 +389,22 @@ fn main() -> anyhow::Result<()> {
 
                         // --- Frame timing ---
                         let now = Instant::now();
-                        let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1); // cap at 100ms
+                        let delta = now.duration_since(last_frame_time).as_secs_f32().min(0.1);
                         last_frame_time = now;
+
+                        // Sync shared state to tray thread atomics (used for Wayland respawn)
+                        click_through_state.store(
+                            app.click_through,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        pet_mode_state.store(
+                            match app.pet_mode {
+                                PetMode::Off => 0,
+                                PetMode::Windowed => 1,
+                                PetMode::AlwaysOnTop => 2,
+                            },
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
 
                         // --- Helper: request window sized to model display, clamped to monitor ---
                         fn request_model_window(window: &winit::window::Window, cw: f32, ch: f32) {
@@ -596,20 +687,38 @@ fn main() -> anyhow::Result<()> {
                             );
                         }
 
-                        // Intercept WM minimize: detect via is_minimized() and convert
-                        // to a hide (set_visible(false)) so we can later restore via
-                        // ShowWindow.  On Wayland, unminimize is unsupported by winit,
-                        // but we CAN destroy the xdg_toplevel (set_visible false) and
-                        // recreate it (set_visible true) to regain control.
-                        // Skip detection for 10 frames after a restore to allow the
-                        // compositor to settle (is_minimized may report stale true).
+                        // Intercept WM minimize: on X11 hide the window so we can
+                        // later restore via ShowWindow.  On Wayland, set_visible(false)
+                        // kills event-loop delivery (tray operations stop working), so
+                        // we use the 50×50 float circle instead — keeps the X11 toplevel
+                        // mapped so EventLoopProxy can still deliver tray events.
                         if app.restore_cooldown > 0 {
                             app.restore_cooldown -= 1;
                         } else if !app.minimized_to_float && !app.request_restore {
                             if window.is_minimized().unwrap_or(false) {
                                 app.minimized_to_float = true;
                                 app.camera_needs_fit = false;
-                                window.set_visible(false);
+                                if on_wayland {
+                                    let sf = window.scale_factor();
+                                    app.saved_window_pet_size = (
+                                        app.window_size.0 as f64 / sf,
+                                        app.window_size.1 as f64 / sf,
+                                    );
+                                    window.set_max_inner_size(Some(
+                                        winit::dpi::LogicalSize::new(50.0, 50.0),
+                                    ));
+                                    let _ = window
+                                        .request_inner_size(winit::dpi::LogicalSize::new(50.0, 50.0));
+                                    let phys_w = (50.0_f64 * sf) as u32;
+                                    let phys_h = (50.0_f64 * sf) as u32;
+                                    if let (Some(rw), Some(rh)) =
+                                        (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h))
+                                    {
+                                        surface.resize(&gl_context, rw, rh);
+                                    }
+                                } else {
+                                    window.set_visible(false);
+                                }
                             }
                         }
 
@@ -621,7 +730,9 @@ fn main() -> anyhow::Result<()> {
                                 raw_window_handle::RawWindowHandle::Xlib(_)
                                     | raw_window_handle::RawWindowHandle::Xcb(_)
                             );
-                            if on_x11 {
+                            // On Wayland, never set_visible(false) — it kills tray event delivery.
+                            // Use the same 50×50 float circle as other platforms.
+                            if on_x11 && !on_wayland {
                                 window.set_visible(false);
                             } else {
                                 app.minimized_to_float = true;
@@ -663,9 +774,26 @@ fn main() -> anyhow::Result<()> {
                                 {
                                     surface.resize(&gl_context, pw, ph);
                                 }
+                                window.set_visible(true);
                                 app.camera_needs_fit = true;
                             } else {
                                 window.set_visible(true);
+                            }
+                            // Re-apply window-level state lost during minimize
+                            let _ = window.set_cursor_hittest(!app.click_through);
+                            match app.pet_mode {
+                                PetMode::Windowed => {
+                                    window.set_decorations(false);
+                                    window.set_window_level(WindowLevel::AlwaysOnTop);
+                                }
+                                PetMode::AlwaysOnTop => {
+                                    window.set_decorations(true);
+                                    window.set_window_level(WindowLevel::Normal);
+                                }
+                                PetMode::Off => {
+                                    window.set_decorations(true);
+                                    window.set_window_level(WindowLevel::Normal);
+                                }
                             }
                             // Snap look to neutral (escapes stale pre-minimize target)
                             app.look.target.reset();
@@ -832,19 +960,8 @@ fn main() -> anyhow::Result<()> {
             }
             Event::UserEvent(event) => match event {
                 tray::AppEvent::ShowWindow => {
-                    // Wayland 上无法恢复最小化窗口。改为重启进程：
-                    // 关闭当前实例，启动一个新实例。新进程创建全新的
-                    // xdg_toplevel + Wayland connection，保证窗口显示。
-                    #[cfg(target_os = "linux")]
-                    if on_wayland {
-                        if let Ok(exe) = std::env::current_exe() {
-                            let args: Vec<String> = std::env::args().skip(1).collect();
-                            let _ = std::process::Command::new(&exe)
-                                .args(&args)
-                                .spawn();
-                        }
-                        std::process::exit(0);
-                    }
+                    // On Wayland, the tray thread handles ShowWindow directly
+                    // via process respawn — this code only runs on non-Wayland.
                     app.request_restore = true;
                 }
                 tray::AppEvent::ToggleClickThrough => {
