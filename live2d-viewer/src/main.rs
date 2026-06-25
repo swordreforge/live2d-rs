@@ -90,49 +90,37 @@ fn main() -> anyhow::Result<()> {
             Ok(id) => {
                 #[cfg(target_os = "linux")]
                 if on_wayland {
-                    // On Wayland, the winit event loop stalls when the window
-                    // is minimized — EventLoopProxy can't deliver.  Spawn
-                    // a new process with the updated state directly.
-                    match id.as_str() {
-                        "show" | "clickthrough" | "windowed_pet" | "alwaysontop_pet" => {
-                            let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
-                            let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
-
-                            let new_ct = if id == "clickthrough" { !ct } else { ct };
-                            let new_pm = match id.as_str() {
-                                "windowed_pet" => {
-                                    if pm == 1 { 0u8 } else { 1u8 }
-                                }
-                                "alwaysontop_pet" => {
-                                    if pm == 2 { 0u8 } else { 2u8 }
-                                }
-                                _ => pm,
-                            };
-
-                            if let Ok(exe) = std::env::current_exe() {
-                                let mut args: Vec<String> = std::env::args()
-                                    .skip(1)
-                                    .filter(|a| {
-                                        !a.starts_with("--click-through")
-                                            && !a.starts_with("--pet-mode=")
-                                    })
-                                    .collect();
-                                if new_ct {
-                                    args.push("--click-through".into());
-                                }
-                                match new_pm {
-                                    1 => args.push("--pet-mode=windowed".into()),
-                                    2 => args.push("--pet-mode=alwaysontop".into()),
-                                    _ => {}
-                                }
-                                let _ = std::process::Command::new(&exe).args(&args).spawn();
+                    // On Wayland, AlwaysOnTop mode minimizes the main window —
+                    // EventLoopProxy can't deliver to a minimized X11 toplevel.
+                    // For those, spawn a new process directly.  Windowed/Off
+                    // modes have the window visible, so EventLoopProxy works.
+                    let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
+                    let needs_respawn = id == "show" || pm == 2;
+                    if needs_respawn {
+                        let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
+                        let new_ct = if id == "clickthrough" { !ct } else { ct };
+                        let new_pm = match id.as_str() {
+                            "windowed_pet" => if pm == 1 { 0u8 } else { 1u8 },
+                            "alwaysontop_pet" => if pm == 2 { 0u8 } else { 2u8 },
+                            _ => pm,
+                        };
+                        if let Ok(exe) = std::env::current_exe() {
+                            let mut args: Vec<String> = std::env::args()
+                                .skip(1)
+                                .filter(|a| !a.starts_with("--click-through") && !a.starts_with("--pet-mode="))
+                                .collect();
+                            if new_ct { args.push("--click-through".into()); }
+                            match new_pm {
+                                1 => args.push("--pet-mode=windowed".into()),
+                                2 => args.push("--pet-mode=alwaysontop".into()),
+                                _ => {}
                             }
-                            std::process::exit(0);
+                            let _ = std::process::Command::new(&exe).args(&args).spawn();
                         }
-                        "quit" => {
-                            std::process::exit(0);
-                        }
-                        _ => {}
+                        std::process::exit(0);
+                    }
+                    if id == "quit" {
+                        std::process::exit(0);
                     }
                 }
                 // Non-Wayland path: send via EventLoopProxy as before
