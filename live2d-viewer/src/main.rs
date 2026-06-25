@@ -81,10 +81,13 @@ fn main() -> anyhow::Result<()> {
     let click_through_state: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
     let pet_mode_state: Arc<AtomicU8> = Arc::new(AtomicU8::new(0)); // 0=Off,1=Windowed,2=AlwaysOnTop
+    let current_model_dir: Arc<std::sync::Mutex<Option<String>>> =
+        Arc::new(std::sync::Mutex::new(None));
 
     let tray_proxy = proxy.clone();
     let tray_ct_state = click_through_state.clone();
     let tray_pm_state = pet_mode_state.clone();
+    let tray_model_dir = current_model_dir.clone();
     let _tray_thread = std::thread::spawn(move || loop {
         match tray_rx.recv() {
             Ok(id) => {
@@ -107,8 +110,16 @@ fn main() -> anyhow::Result<()> {
                         if let Ok(exe) = std::env::current_exe() {
                             let mut args: Vec<String> = std::env::args()
                                 .skip(1)
-                                .filter(|a| !a.starts_with("--click-through") && !a.starts_with("--pet-mode="))
+                                .filter(|a| !a.starts_with("--click-through") && !a.starts_with("--pet-mode=")
+                                    && !a.starts_with("--overlay"))
                                 .collect();
+                            // Use the currently displayed model dir, not the original CLI arg
+                            if let Ok(guard) = tray_model_dir.lock() {
+                                if let Some(ref dir) = *guard {
+                                    args.retain(|a| a.starts_with("--"));
+                                    args.push(dir.clone());
+                                }
+                            }
                             if new_ct { args.push("--click-through".into()); }
                             match new_pm {
                                 1 => args.push("--pet-mode=windowed".into()),
@@ -394,6 +405,13 @@ fn main() -> anyhow::Result<()> {
                             },
                             std::sync::atomic::Ordering::Relaxed,
                         );
+                        if let Ok(mut guard) = current_model_dir.lock() {
+                            let dir = app.current_model_dir()
+                                .map(|p| p.to_string_lossy().into_owned());
+                            if *guard != dir {
+                                *guard = dir;
+                            }
+                        }
 
                         // --- Helper: request window sized to model display, clamped to monitor ---
                         fn request_model_window(window: &winit::window::Window, cw: f32, ch: f32) {
