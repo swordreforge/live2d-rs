@@ -44,16 +44,6 @@ pub struct MenuEventReceiver {
 }
 
 impl MenuEventReceiver {
-    /// Poll for pending menu events. Returns the IDs of all clicked items
-    /// since the last call (typically 0 or 1).
-    pub fn poll(&self) -> Vec<String> {
-        let mut events = Vec::new();
-        while let Ok(id) = self.rx.try_recv() {
-            events.push(id);
-        }
-        events
-    }
-
     /// Block until a menu event arrives. Used by the background forwarding thread.
     pub fn recv(&self) -> Result<String, mpsc::RecvError> {
         self.rx.recv()
