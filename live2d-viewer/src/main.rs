@@ -669,45 +669,51 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // --- Egui frame (always runs for input, rendering skipped when floating) ---
-                        unsafe {
-                            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                            gl.viewport(0, 0, size.width as i32, size.height as i32);
-                        }
-                        let raw_input = egui_state.take_egui_input(&window);
-                        egui_ctx.begin_frame(raw_input);
-                        gui::draw_ui(&egui_ctx, &mut app);
-                        let output = egui_ctx.end_frame();
-
-                        // Always process textures
-                        for (id, delta) in &output.textures_delta.set {
-                            painter.set_texture(*id, delta);
-                        }
-                        for id in &output.textures_delta.free {
-                            painter.free_texture(*id);
-                        }
-
-                        // Render shapes: egui_glow when normal, raw GL triangle when floating
-                        if app.minimized_to_float {
-                            if app.pet_mode != PetMode::AlwaysOnTop {
-                                unsafe {
-                                    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                                    gl.viewport(0, 0, size.width as i32, size.height as i32);
-                                    float_overlay.draw_play_button(
-                                        &gl,
-                                        size.width as f32,
-                                        size.height as f32,
-                                    );
-                                }
-                            }
+                        // --- Egui frame (skipped when AlwaysOnTop minimized — 1×1 window crashes font.rs) ---
+                        if app.minimized_to_float && app.pet_mode == PetMode::AlwaysOnTop {
+                            // No egui frame: 1×1 surface, model already skipped, we just clear to
+                            // transparent and swap.  run_ui_animations still fires from event
+                            // processing below.
                         } else {
-                            let clipped_primitives =
-                                egui_ctx.tessellate(output.shapes, output.pixels_per_point);
-                            painter.paint_primitives(
-                                [size.width, size.height],
-                                output.pixels_per_point,
-                                &clipped_primitives,
-                            );
+                            unsafe {
+                                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                                gl.viewport(0, 0, size.width as i32, size.height as i32);
+                            }
+                            let raw_input = egui_state.take_egui_input(&window);
+                            egui_ctx.begin_frame(raw_input);
+                            gui::draw_ui(&egui_ctx, &mut app);
+                            let output = egui_ctx.end_frame();
+
+                            // Always process textures
+                            for (id, delta) in &output.textures_delta.set {
+                                painter.set_texture(*id, delta);
+                            }
+                            for id in &output.textures_delta.free {
+                                painter.free_texture(*id);
+                            }
+
+                            // Render shapes: egui_glow when normal, raw GL triangle when floating
+                            if app.minimized_to_float {
+                                if app.pet_mode != PetMode::AlwaysOnTop {
+                                    unsafe {
+                                        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                                        gl.viewport(0, 0, size.width as i32, size.height as i32);
+                                        float_overlay.draw_play_button(
+                                            &gl,
+                                            size.width as f32,
+                                            size.height as f32,
+                                        );
+                                    }
+                                }
+                            } else {
+                                let clipped_primitives =
+                                    egui_ctx.tessellate(output.shapes, output.pixels_per_point);
+                                painter.paint_primitives(
+                                    [size.width, size.height],
+                                    output.pixels_per_point,
+                                    &clipped_primitives,
+                                );
+                            }
                         }
 
                         // Intercept WM minimize: on X11 hide the window so we can
@@ -755,27 +761,32 @@ fn main() -> anyhow::Result<()> {
                                     | raw_window_handle::RawWindowHandle::Xcb(_)
                             );
                             // On Wayland, never set_visible(false) — it kills tray event delivery.
-                            // Use the same 50×50 float circle as other platforms.
+                            let is_aot = app.pet_mode == PetMode::AlwaysOnTop;
                             if on_x11 && !on_wayland {
                                 window.set_visible(false);
                             } else {
-                                log::info!("[pet] request_minimize: doing 50x50 resize");
+                                let float_size = if is_aot { 1.0 } else { 50.0 };
+                                log::info!(
+                                    "[pet] request_minimize: doing {float_size}x{float_size} resize"
+                                );
                                 app.minimized_to_float = true;
                                 let sf = window.scale_factor();
                                 app.saved_window_pet_size =
                                     (app.window_size.0 as f64 / sf, app.window_size.1 as f64 / sf);
                                 app.camera_needs_fit = false;
                                 window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(
-                                    50.0, 50.0,
+                                    float_size, float_size,
                                 )));
-                                let _ = window
-                                    .request_inner_size(winit::dpi::LogicalSize::new(50.0, 50.0));
+                                let _ = window.request_inner_size(
+                                    winit::dpi::LogicalSize::new(float_size, float_size),
+                                );
                                 // Force EGL surface resize immediately (Wayland workaround)
-                                let phys_w = (50.0_f64 * sf) as u32;
-                                let phys_h = (50.0_f64 * sf) as u32;
-                                if let (Some(rw), Some(rh)) =
-                                    (NonZeroU32::new(phys_w), NonZeroU32::new(phys_h))
-                                {
+                                let phys_w = (float_size * sf) as u32;
+                                let phys_h = (float_size * sf) as u32;
+                                if let (Some(rw), Some(rh)) = (
+                                    NonZeroU32::new(phys_w.max(1)),
+                                    NonZeroU32::new(phys_h.max(1)),
+                                ) {
                                     surface.resize(&gl_context, rw, rh);
                                 }
                                 // XWayland buffers resize requests and only flushes
@@ -868,7 +879,11 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 WindowEvent::Resized(size) => {
                                     if app.minimized_to_float {
-                                        let float_logical = 50.0;
+                                        let float_logical = if app.pet_mode == PetMode::AlwaysOnTop {
+                                            1.0
+                                        } else {
+                                            50.0
+                                        };
                                         let max_phys =
                                             (float_logical * window.scale_factor()).ceil() as u32;
                                         if size.width > max_phys || size.height > max_phys {
