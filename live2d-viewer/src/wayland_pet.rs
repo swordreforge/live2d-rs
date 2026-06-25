@@ -80,6 +80,8 @@ enum PetModel {
         model: live2d_core::Model<'static>,
         renderer: crate::renderer::Live2dRenderer,
         camera: crate::camera::Camera,
+        look: crate::motion::look::Look,
+        param_lookup: std::collections::HashMap<String, usize>,
     },
     V2 {
         v2_model: live2d_v2_core::Model,
@@ -565,11 +567,21 @@ fn setup_pet_surface(
                 state.configured_size
             );
 
+            let param_lookup: std::collections::HashMap<String, usize> = model
+                .parameters()
+                .ids()
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.to_string_lossy().into_owned(), i))
+                .collect();
+
             PetModel::V3 {
                 _moc: moc,
                 model,
                 renderer,
                 camera,
+                look: crate::motion::look::Look::new(),
+                param_lookup,
             }
         }
         crate::app::ModelFormat::V2 => {
@@ -651,6 +663,7 @@ fn run_event_loop(
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / 60.0);
     log::info!("[pet/wayland] event loop started (60 fps)");
 
+    let mut prev_look_time = std::time::Instant::now();
     'frame: loop {
         let frame_start = std::time::Instant::now();
 
@@ -720,8 +733,47 @@ fn run_event_loop(
                 model,
                 renderer,
                 camera,
+                look,
+                param_lookup,
                 ..
             } => {
+                // V3 local look: self-contained like V2's drag() — no main-thread dependency
+                let (px, py) = (state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
+                let (cw, ch) = (size.0 as f32, size.1 as f32);
+                let ndc_x = 2.0 * px / cw - 1.0;
+                let ndc_y = 1.0 - 2.0 * py / ch;
+                look.set_target(ndc_x, ndc_y);
+
+                let now = std::time::Instant::now();
+                let dt = (now - prev_look_time).as_secs_f32().min(0.1);
+                prev_look_time = now;
+
+                {
+                    let mut params = model.parameters();
+                    let mut vals = params.values_mut();
+                    let slice = vals.as_mut_slice();
+                    for p in &look.params {
+                        if let Some(&idx) = param_lookup.get(&p.id) {
+                            if idx < slice.len() {
+                                slice[idx] -= p.current_offset;
+                            }
+                        }
+                    }
+                }
+                look.compute_raw(dt);
+                {
+                    let mut params = model.parameters();
+                    let mut vals = params.values_mut();
+                    let slice = vals.as_mut_slice();
+                    for p in &look.params {
+                        if let Some(&idx) = param_lookup.get(&p.id) {
+                            if idx < slice.len() {
+                                slice[idx] += p.current_offset;
+                            }
+                        }
+                    }
+                }
+
                 model.update();
 
                 // Forward tap to main thread (it has model, motion, V2/V2 dispatch)

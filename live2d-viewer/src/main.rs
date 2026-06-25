@@ -667,6 +667,8 @@ fn main() -> anyhow::Result<()> {
                             } else {
                                 window.set_visible(true);
                             }
+                            // Snap look to neutral (escapes stale pre-minimize target)
+                            app.look.target.reset();
                         }
 
                         let _ = surface.swap_buffers(&gl_context);

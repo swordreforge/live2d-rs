@@ -42,6 +42,15 @@ impl TargetPoint {
         self.target_y = y.clamp(-1.0, 1.0);
     }
 
+    pub fn reset(&mut self) {
+        self.target_x = 0.0;
+        self.target_y = 0.0;
+        self.x = 0.0;
+        self.y = 0.0;
+        self.vx = 0.0;
+        self.vy = 0.0;
+    }
+
     /// Returns current (x, y) in NDC [-1,1].
     pub fn update(&mut self, delta: f32) -> (f32, f32) {
         self.user_time += delta;
