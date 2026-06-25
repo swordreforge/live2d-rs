@@ -760,20 +760,27 @@ fn main() -> anyhow::Result<()> {
                                 raw_window_handle::RawWindowHandle::Xlib(_)
                                     | raw_window_handle::RawWindowHandle::Xcb(_)
                             );
-                            // On Wayland, never set_visible(false) — it kills tray event delivery.
                             let is_aot = app.pet_mode == PetMode::AlwaysOnTop;
+                            let is_capable_de = app::is_gnome() || app::is_kde();
+                            // Always save restore state regardless of strategy
+                            let sf = window.scale_factor();
+                            app.saved_window_pet_size =
+                                (app.window_size.0 as f64 / sf, app.window_size.1 as f64 / sf);
+                            app.minimized_to_float = true;
+                            app.camera_needs_fit = false;
+
                             if on_x11 && !on_wayland {
                                 window.set_visible(false);
+                            } else if is_aot && is_capable_de {
+                                // GNOME/KDE: proper window minimize — 1×1 crashes egui
+                                log::info!("[pet] request_minimize: GNOME/KDE set_minimized(true)");
+                                window.set_minimized(true);
                             } else {
+                                // niri and others: 1×1 or 50×50 resize to become invisible
                                 let float_size = if is_aot { 1.0 } else { 50.0 };
                                 log::info!(
                                     "[pet] request_minimize: doing {float_size}x{float_size} resize"
                                 );
-                                app.minimized_to_float = true;
-                                let sf = window.scale_factor();
-                                app.saved_window_pet_size =
-                                    (app.window_size.0 as f64 / sf, app.window_size.1 as f64 / sf);
-                                app.camera_needs_fit = false;
                                 window.set_max_inner_size(Some(winit::dpi::LogicalSize::new(
                                     float_size, float_size,
                                 )));
@@ -800,6 +807,10 @@ fn main() -> anyhow::Result<()> {
                             if app.minimized_to_float {
                                 app.minimized_to_float = false;
                                 app.restore_cooldown = 10;
+                                // GNOME/KDE minimised via set_minimized — undo it first
+                                if app::is_gnome() || app::is_kde() {
+                                    window.set_minimized(false);
+                                }
                                 let (w, h) = app.saved_window_pet_size;
                                 let rw = w.clamp(200.0, 4000.0);
                                 let rh = h.clamp(200.0, 4000.0);
@@ -878,7 +889,10 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 WindowEvent::Resized(size) => {
-                                    if app.minimized_to_float {
+                                    // GNOME/KDE AlwaysOnTop uses set_minimized, not 1×1 — skip the guard
+                                    let skip_guard = app.pet_mode == PetMode::AlwaysOnTop
+                                        && (app::is_gnome() || app::is_kde());
+                                    if app.minimized_to_float && !skip_guard {
                                         let float_logical = if app.pet_mode == PetMode::AlwaysOnTop {
                                             1.0
                                         } else {

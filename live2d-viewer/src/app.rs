@@ -85,10 +85,51 @@ pub enum PetMode {
     AlwaysOnTop,
 }
 
-/// Detect whether running on GNOME (GNOME does not support wlr-layer-shell).
+/// Detect whether running on GNOME.
+///
+/// GNOME does not always set `XDG_CURRENT_DESKTOP`, so we check multiple
+/// indicators in order of reliability, matching `check-wm.sh`:
+///  1. `XDG_CURRENT_DESKTOP` contains "gnome"
+///  2. `GNOME_DESKTOP_SESSION_ID` is set (legacy but reliable)
+///  3. `gnome-shell` process is running via `pgrep`
 pub fn is_gnome() -> bool {
-    std::env::var("XDG_CURRENT_DESKTOP")
+    #[allow(clippy::if_same_then_else)]
+    if std::env::var("XDG_CURRENT_DESKTOP")
         .map(|d| d.to_lowercase().contains("gnome"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if std::env::var("GNOME_DESKTOP_SESSION_ID").is_ok() {
+        return true;
+    }
+    std::process::Command::new("pgrep")
+        .arg("-x")
+        .arg("gnome-shell")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Detect whether running on KDE Plasma.
+///
+/// KDE reliably sets `XDG_CURRENT_DESKTOP`, so the env-var check suffices.
+/// Falls back to `plasmashell` process check as a safety net.
+pub fn is_kde() -> bool {
+    if std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|d| {
+            let d = d.to_lowercase();
+            d.contains("kde")
+        })
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    std::process::Command::new("pgrep")
+        .arg("-x")
+        .arg("plasmashell")
+        .output()
+        .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
