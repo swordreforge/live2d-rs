@@ -202,8 +202,7 @@ pub struct AppState {
     pub saved_window_pet_size: (f64, f64),
     /// Pre-built parameter name → index lookup (built once at model load)
     pub param_lookup: HashMap<String, usize>,
-    /// Scratch buffer reused each frame in advance_motion to avoid Vec allocation.
-    pub motion_part_opacities_scratch: Vec<f32>,
+
     /// Scratch buffer for pet thread events, avoiding per-frame Vec allocation.
     #[cfg(target_os = "linux")]
     pub pet_events_scratch: Vec<crate::wayland_pet::PetEvent>,
@@ -322,7 +321,6 @@ impl AppState {
             pet_wayland_event_rx: None,
             #[cfg(not(target_os = "linux"))]
             pet_wayland_thread: None,
-            motion_part_opacities_scratch: Vec::new(),
             #[cfg(target_os = "linux")]
             pet_events_scratch: Vec::new(),
             #[cfg(not(target_os = "linux"))]
@@ -1127,35 +1125,30 @@ impl AppState {
     pub fn advance_motion(&mut self, delta_time: f32) {
         self.motion_queue.advance_time(delta_time);
 
-        // Read current part opacities from model for PartOpacity curve evaluation
-        self.motion_part_opacities_scratch.clear();
-        if let Some(ref model) = self.current_model {
-            self.motion_part_opacities_scratch
-                .extend_from_slice(model.parts().opacities());
-        }
-
-        // Evaluate motion curves from the single queue
-        self.motion_queue.do_update_motion(
-            &self.param_lookup,
-            &mut self.parameter_values,
-            &self.eye_blink_param_ids,
-            &self.lip_sync_param_ids,
-            &self.part_ids,
-            &mut self.motion_part_opacities_scratch,
-        );
-
-        // Write motion-updated part opacities to model (pose system will override
-        // specific pose-group parts in update_pose, which runs after this)
-        if !self.motion_part_opacities_scratch.is_empty() {
-            if let Some(ref mut model) = self.current_model {
-                let mut parts = model.parts();
-                let opacities = parts.opacities_mut();
-                let len = opacities
-                    .len()
-                    .min(self.motion_part_opacities_scratch.len());
-                opacities[..len]
-                    .copy_from_slice(&self.motion_part_opacities_scratch[..len]);
-            }
+        // Evaluate motion curves from the single queue.
+        // PartOpacity curves operate directly on model's part opacities in-place,
+        // avoiding an extra Vec allocation and double copy (model → scratch → model)
+        // of 50–200+ f32 values every frame.
+        if let Some(ref mut model) = self.current_model {
+            let mut parts = model.parts();
+            let opacities = parts.opacities_mut();
+            self.motion_queue.do_update_motion(
+                &self.param_lookup,
+                &mut self.parameter_values,
+                &self.eye_blink_param_ids,
+                &self.lip_sync_param_ids,
+                &self.part_ids,
+                opacities,
+            );
+        } else {
+            self.motion_queue.do_update_motion(
+                &self.param_lookup,
+                &mut self.parameter_values,
+                &self.eye_blink_param_ids,
+                &self.lip_sync_param_ids,
+                &self.part_ids,
+                &mut [],
+            );
         }
 
         // Apply expression (if active)
