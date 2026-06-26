@@ -171,4 +171,32 @@ impl AppDb {
         )?;
         Ok(())
     }
+
+    /// Given the current model's `file_path`, return the previous and next
+    /// model paths in stable `file_path ASC` order (wrapping around).
+    /// Returns `(prev, next)` or `None` if only one record exists.
+    pub fn prev_next_paths(&self, current: &str) -> Result<Option<(String, String)>> {
+        let paths: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_path FROM model_history ORDER BY file_path ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![], |row| row.get::<_, String>(0))?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+        if paths.len() < 2 {
+            return Ok(None);
+        }
+        let idx = paths.iter().position(|p| p == current);
+        let idx = match idx {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+        let prev = if idx == 0 { paths.len() - 1 } else { idx - 1 };
+        let next = (idx + 1) % paths.len();
+        Ok(Some((paths[prev].clone(), paths[next].clone())))
+    }
 }

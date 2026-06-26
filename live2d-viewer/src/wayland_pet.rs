@@ -36,8 +36,6 @@ pub enum PetCommand {
         /// Initial click-through state (input passthrough) from main window
         click_through: bool,
     },
-    /// Full model list for Prev/Next cycling.
-    SetModelList(Vec<(PathBuf, crate::app::ModelFormat)>),
     /// Toggle click-through state at runtime
     SetClickThrough(bool),
     /// Overwrite model parameter values (synced from main thread each frame)
@@ -758,7 +756,6 @@ fn run_event_loop(
             .map_err(|e| anyhow::anyhow!("toolbar init: {e}"))?
     };
 
-    let mut model_list: Vec<(PathBuf, crate::app::ModelFormat)> = Vec::new();
     let mut prev_look_time = std::time::Instant::now();
     // Surface size is pinned: the Configure handler bounces any compositor-
     // initiated resize back to the original configured size.  No EGL buffer /
@@ -786,9 +783,6 @@ fn run_event_loop(
                 }
                 PetCommand::Enter { .. } => {
                     // Already in pet mode, ignore
-                }
-                PetCommand::SetModelList(list) => {
-                    model_list = list;
                 }
                 PetCommand::SetClickThrough(enabled) => {
                     click_through = enabled;
@@ -842,7 +836,6 @@ fn run_event_loop(
                 &mut pet_model,
                 model_dir,
                 click_through,
-                &model_list,
             );
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
@@ -1045,6 +1038,11 @@ fn run_event_loop(
     Ok(())
 }
 
+fn query_prev_next(model_dir: &std::path::Path) -> Option<(String, String)> {
+    let db = crate::db::AppDb::open(&crate::data_dir::db_path()).ok()?;
+    db.prev_next_paths(&model_dir.to_string_lossy()).ok()?
+}
+
 // ---------------------------------------------------------------------------
 // Toolbar action dispatch
 // ---------------------------------------------------------------------------
@@ -1091,27 +1089,18 @@ fn respawn_process(model_dir: &std::path::Path, click_through: bool, alwaysontop
 fn handle_toolbar_action(
     action: crate::toolbar::ToolbarAction,
     pet_model: &mut PetModel,
-    model_dir: &std::path::PathBuf,
+    model_dir: &std::path::Path,
     click_through: bool,
-    model_list: &[(std::path::PathBuf, crate::app::ModelFormat)],
 ) {
     match action {
         crate::toolbar::ToolbarAction::PrevModel => {
-            if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
-                let prev = if idx > 0 {
-                    idx - 1
-                } else {
-                    model_list.len() - 1
-                };
-                let (new_dir, _) = &model_list[prev];
-                respawn_process(new_dir, click_through, true);
+            if let Some((prev, _)) = query_prev_next(model_dir) {
+                respawn_process(std::path::Path::new(&prev), click_through, true);
             }
         }
         crate::toolbar::ToolbarAction::NextModel => {
-            if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
-                let next = (idx + 1) % model_list.len();
-                let (new_dir, _) = &model_list[next];
-                respawn_process(new_dir, click_through, true);
+            if let Some((_, next)) = query_prev_next(model_dir) {
+                respawn_process(std::path::Path::new(&next), click_through, true);
             }
         }
         crate::toolbar::ToolbarAction::ExitPet => {
