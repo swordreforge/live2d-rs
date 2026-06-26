@@ -153,7 +153,6 @@ impl MotionQueueManager {
     #[allow(clippy::too_many_arguments)]
     pub fn do_update_motion(
         &mut self,
-        param_names: &[String],
         param_lookup: &HashMap<String, usize>,
         param_values: &mut [f32],
         eye_blink_param_ids: &[String],
@@ -164,6 +163,17 @@ impl MotionQueueManager {
         let mut updated = false;
         let user_time = self.user_time_seconds;
         let mut finished_indices: Vec<usize> = Vec::new();
+
+        // Pre-compute eye blink / lip sync parameter indices once per frame
+        // (avoids redundant Hashmap lookups per motion entry per frame)
+        let eye_blink_indices: Vec<usize> = eye_blink_param_ids
+            .iter()
+            .filter_map(|id| param_lookup.get(id).copied())
+            .collect();
+        let lip_sync_indices: Vec<usize> = lip_sync_param_ids
+            .iter()
+            .filter_map(|id| param_lookup.get(id).copied())
+            .collect();
 
         // Process all entries in place using indices
         for i in 0..self.entries.len() {
@@ -212,7 +222,6 @@ impl MotionQueueManager {
             let duration = entry.motion.data.duration;
 
             entry.motion.do_update_parameters(
-                param_names,
                 param_lookup,
                 param_values,
                 user_time,
@@ -224,6 +233,8 @@ impl MotionQueueManager {
                 lip_sync_param_ids,
                 part_ids,
                 part_opacities,
+                &eye_blink_indices,
+                &lip_sync_indices,
             );
 
             updated = true;

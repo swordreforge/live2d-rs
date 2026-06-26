@@ -80,10 +80,13 @@ impl CubismMotion {
     }
 
     /// Evaluate curves and apply parameter values and part opacities.
+    ///
+    /// `eye_blink_indices` and `lip_sync_indices` are pre-computed parameter indices
+    /// (built once per frame in `MotionQueueManager::do_update_motion`) to avoid
+    /// redundant hashmap lookups per motion entry.
     #[allow(clippy::too_many_arguments)]
     pub fn do_update_parameters(
         &self,
-        _param_names: &[String],
         param_lookup: &HashMap<String, usize>,
         param_values: &mut [f32],
         user_time_seconds: f32,
@@ -95,6 +98,8 @@ impl CubismMotion {
         lip_sync_param_ids: &[String],
         part_ids: &[String],
         part_opacities: &mut [f32],
+        eye_blink_indices: &[usize],
+        lip_sync_indices: &[usize],
     ) -> f32 {
         let time_offset_seconds = (user_time_seconds - entry_start_time).max(0.0);
 
@@ -131,15 +136,6 @@ impl CubismMotion {
         }
 
         let is_correction = self.is_loop;
-
-        let eye_blink_indices: Vec<usize> = eye_blink_param_ids
-            .iter()
-            .filter_map(|id| param_lookup.get(id).copied())
-            .collect();
-        let lip_sync_indices: Vec<usize> = lip_sync_param_ids
-            .iter()
-            .filter_map(|id| param_lookup.get(id).copied())
-            .collect();
 
         let mut eye_blink_flags: u64 = 0;
         let mut lip_sync_flags: u64 = 0;
@@ -397,7 +393,6 @@ mod tests {
         let parsed = parse_motion_json(json).unwrap();
         let motion = CubismMotion::new(parsed, 0.0, 0.0);
 
-        let param_names = vec!["ParamA".to_string()];
         let param_lookup: HashMap<String, usize> =
             [("ParamA".to_string(), 0)].into_iter().collect();
         let mut param_values = vec![0.0f32];
@@ -407,9 +402,9 @@ mod tests {
         let empty_parts: Vec<String> = vec![];
         let mut part_opacities: Vec<f32> = vec![];
 
+        let empty_indices: &[usize] = &[];
         // At time 0
         motion.do_update_parameters(
-            &param_names,
             &param_lookup,
             &mut param_values,
             0.0,
@@ -421,6 +416,8 @@ mod tests {
             &lip_sync,
             &empty_parts,
             &mut part_opacities,
+            empty_indices,
+            empty_indices,
         );
         assert!(
             (param_values[0] - 0.0).abs() < 1e-5,
@@ -431,7 +428,6 @@ mod tests {
         // At time 1 (midpoint)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names,
             &param_lookup,
             &mut param_values,
             1.0,
@@ -443,6 +439,8 @@ mod tests {
             &lip_sync,
             &empty_parts,
             &mut part_opacities,
+            empty_indices,
+            empty_indices,
         );
         assert!(
             (param_values[0] - 50.0).abs() < 1e-5,
@@ -453,7 +451,6 @@ mod tests {
         // At time 2 (end)
         param_values[0] = 0.0;
         motion.do_update_parameters(
-            &param_names,
             &param_lookup,
             &mut param_values,
             2.0,
@@ -465,6 +462,8 @@ mod tests {
             &lip_sync,
             &empty_parts,
             &mut part_opacities,
+            empty_indices,
+            empty_indices,
         );
         assert!(
             (param_values[0] - 100.0).abs() < 1e-5,
