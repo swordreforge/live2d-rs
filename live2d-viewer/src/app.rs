@@ -217,6 +217,8 @@ pub struct AppState {
     pub v2_scale: f32,
     /// Last V2 resize dimensions — skip v2.resize() in render loop if unchanged
     pub last_v2_size: (i32, i32),
+    /// Last hovered V2 hit area name (tracked for per-area hover motion)
+    pub v2_last_hovered_area: Option<String>,
     /// Pending async model switch (V3 loads files on background thread)
     pub pending_load: PendingLoad,
     /// Optional database for model history and settings persistence
@@ -293,6 +295,7 @@ impl AppState {
             canvas_pixel_size: (0.0, 0.0),
             physics: None,
             v2_scale: 1.0,
+            v2_last_hovered_area: None,
             last_v2_size: (0, 0),
             pending_load: PendingLoad::None,
             db,
@@ -736,6 +739,11 @@ impl AppState {
                         log::info!("Restored V2 zoom={:.2} for {}", z, rec.name);
                     }
                 }
+            }
+
+            // Opening animation: play a random motion on model load
+            if let Some(ref mut v2) = self.v2_model {
+                v2.start_random_motion("", 3);
             }
         } else {
             // ── V3 model path (existing code) ──
@@ -1206,34 +1214,9 @@ impl AppState {
         cam_trans_y: f32,
     ) {
             if self.is_v2 {
-                // V2: iterate hit areas and test each drawable ID
+                // Python convention: click triggers random motion from any group
                 if let Some(ref mut v2) = self.v2_model {
-                    let (cx, cy) = (x as f32, y as f32);
-                    if self.hit_areas.is_empty() {
-                        // Fallback: whole-body tap via hit_part
-                        let ids = v2.hit_part(cx, cy, false);
-                        if !ids.is_empty() {
-                            for group in ["tap_body", "tap_face", "tap_breast",
-                                          "tap_belly", "tap_leg", "flick_head"] {
-                                v2.start_random_motion(group, 3);
-                            }
-                        }
-                    } else {
-                        // Per-area tap: test each drawable ID
-                        for area in &self.hit_areas {
-                            if v2.hit_test(&area.id, cx, cy) {
-                                eprintln!("[V2 tap] area={} drawable={}", area.name, area.id);
-                                // Convention: area "face" → motion group "tap_face"
-                                let group = format!("tap_{}", area.name);
-                                v2.start_random_motion(&group, 3);
-                                // Some models use "flick_head" instead of "tap_head"
-                                if area.name == "head" {
-                                    v2.start_random_motion("flick_head", 3);
-                                }
-                                break;
-                            }
-                        }
-                    }
+                    v2.start_random_motion("", 3);
                 }
                 return;
             }
@@ -1303,6 +1286,33 @@ impl AppState {
                     }
                     return;
                 }
+            }
+        }
+    }
+
+    /// Handle V2 hover: detect hit area transitions and play per-area motion.
+    pub fn handle_v2_hover(&mut self, x: f64, y: f64) {
+        if !self.is_v2 || self.hit_areas.is_empty() {
+            return;
+        }
+        if let Some(ref mut v2) = self.v2_model {
+            let cx = x as f32;
+            let cy = y as f32;
+            let mut current: Option<String> = None;
+            for area in &self.hit_areas {
+                if v2.hit_test(&area.id, cx, cy) {
+                    current = Some(area.name.clone());
+                    break;
+                }
+            }
+            if current != self.v2_last_hovered_area {
+                if let Some(ref name) = current {
+                    v2.start_random_motion(&format!("tap_{}", name), 3);
+                    if name == "head" {
+                        v2.start_random_motion("flick_head", 3);
+                    }
+                }
+                self.v2_last_hovered_area = current;
             }
         }
     }

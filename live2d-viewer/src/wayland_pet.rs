@@ -91,6 +91,7 @@ enum PetModel {
         v2_vao: glow::NativeVertexArray,
         last_size: (i32, i32),
         hit_areas: Vec<crate::model_loader::HitArea>,
+        last_hovered_area: Option<String>,
     },
 }
 
@@ -650,11 +651,15 @@ fn setup_pet_surface(
                 cw, ch, hit_areas.len(), state.configured_size
             );
 
+            // Opening animation: play a random motion on model load
+            v2.start_random_motion("", 3);
+
             PetModel::V2 {
                 v2_model: v2,
                 v2_vao,
                 last_size: (init_size.0 as i32, init_size.1 as i32),
                 hit_areas,
+                last_hovered_area: None,
             }
         }
     };
@@ -833,36 +838,36 @@ fn run_event_loop(
                 v2_vao,
                 last_size,
                 hit_areas,
+                last_hovered_area,
             } => {
                 // V2 head tracking (drag manager converts screen → scene internally)
                 v2_model.drag(state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
 
-                // V2 tap: iterate hit areas and test each drawable ID
-                if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                    if hit_areas.is_empty() {
-                        // Fallback: whole-body tap via hit_part
-                        let ids = v2_model.hit_part(cx as f32, cy as f32, false);
-                        if !ids.is_empty() {
-                            for group in ["tap_body", "tap_face", "tap_breast",
-                                          "tap_belly", "tap_leg", "flick_head"] {
-                                v2_model.start_random_motion(group, 3);
-                            }
-                        }
-                    } else {
-                        for area in hit_areas {
-                            if v2_model.hit_test(&area.id, cx as f32, cy as f32) {
-                                log::info!(
-                                    "[pet/V2 tap] area={} drawable={}",
-                                    area.name, area.id,
-                                );
-                                v2_model.start_random_motion(&format!("tap_{}", area.name), 3);
-                                if area.name == "head" {
-                                    v2_model.start_random_motion("flick_head", 3);
-                                }
-                                break;
-                            }
+                // V2 per-area hover: detect area transition
+                if !hit_areas.is_empty() {
+                    let cx = state.ptr.pointer_x as f32;
+                    let cy = state.ptr.pointer_y as f32;
+                    let mut found: Option<String> = None;
+                    for area in hit_areas.iter() {
+                        if v2_model.hit_test(&area.id, cx, cy) {
+                            found = Some(area.name.clone());
+                            break;
                         }
                     }
+                    if found != *last_hovered_area {
+                        if let Some(ref name) = found {
+                            v2_model.start_random_motion(&format!("tap_{}", name), 3);
+                            if name == "head" {
+                                v2_model.start_random_motion("flick_head", 3);
+                            }
+                        }
+                        *last_hovered_area = found;
+                    }
+                }
+
+                // V2 tap: Python convention — random motion on click
+                if state.ptr.pending_click.take().is_some() {
+                    v2_model.start_random_motion("", 3);
                 }
 
                 let (vw, vh) = (size.0 as i32, size.1 as i32);

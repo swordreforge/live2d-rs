@@ -898,6 +898,7 @@ fn main() -> anyhow::Result<()> {
                                 if let Some(ref mut v2) = app.v2_model {
                                     v2.drag(mx as f32, my as f32);
                                 }
+                                app.handle_v2_hover(mx, my);
                             }
                         }
 
