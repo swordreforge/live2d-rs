@@ -267,7 +267,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for PetState {
                     _ => return,
                 };
                 if cap.contains(wl_seat::Capability::Pointer) {
-                    let pointer = seat.get_pointer(&qh, ());
+                    let pointer = seat.get_pointer(qh, ());
                     state.pointer = Some(pointer);
                     log::info!("[pet/wayland] got wl_pointer");
                 }

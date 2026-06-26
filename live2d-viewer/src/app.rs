@@ -184,9 +184,6 @@ pub struct AppState {
     pub click_through: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
     pub pet_mode_changed: bool,
-    /// Seconds until next random idle motion switch.
-    /// Recharged each time a new idle motion starts.
-    pub idle_switch_timer: f32,
     /// True when camera needs recalculation (after pet mode window resize)
     pub camera_needs_fit: bool,
     /// Frame delay before showing pet toolbar (let window resize settle)
@@ -271,7 +268,6 @@ impl AppState {
             eye_blink_param_ids: Vec::new(),
             lip_sync_param_ids: Vec::new(),
             auto_play_idle: true,
-            idle_switch_timer: 0.0,
             base_dir: None,
             hit_areas: Vec::new(),
             tap_count: 0,

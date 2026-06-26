@@ -59,8 +59,8 @@ fn main() -> anyhow::Result<()> {
         } else if a == "--click-through" {
             arg_click_through = true;
             false
-        } else if a.starts_with("--pet-mode=") {
-            arg_pet_mode = Some(a[11..].to_string());
+        } else if let Some(val) = a.strip_prefix("--pet-mode=") {
+            arg_pet_mode = Some(val.to_string());
             false
         } else {
             true
@@ -88,81 +88,66 @@ fn main() -> anyhow::Result<()> {
     let tray_ct_state = click_through_state.clone();
     let tray_pm_state = pet_mode_state.clone();
     let tray_model_dir = current_model_dir.clone();
-    let _tray_thread = std::thread::spawn(move || loop {
-        match tray_rx.recv() {
-            Ok(id) => {
-                #[cfg(target_os = "linux")]
-                if on_wayland {
-                    // On Wayland, AlwaysOnTop mode minimizes the main window —
-                    // EventLoopProxy can't deliver to a minimized X11 toplevel.
-                    // For those, spawn a new process directly.  Windowed/Off
-                    // modes have the window visible, so EventLoopProxy works.
-                    let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
-                    let needs_respawn = id == "show" || (pm == 2 && id != "quit");
-                    if needs_respawn {
-                        let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
-                        let new_ct = if id == "clickthrough" { !ct } else { ct };
-                        let new_pm = match id.as_str() {
-                            "windowed_pet" => {
-                                if pm == 1 {
-                                    0u8
-                                } else {
-                                    1u8
-                                }
+    let _tray_thread = std::thread::spawn(move || {
+        while let Ok(id) = tray_rx.recv() {
+            #[cfg(target_os = "linux")]
+            if on_wayland {
+                // On Wayland, AlwaysOnTop mode minimizes the main window —
+                // EventLoopProxy can't deliver to a minimized X11 toplevel.
+                // For those, spawn a new process directly.  Windowed/Off
+                // modes have the window visible, so EventLoopProxy works.
+                let pm = tray_pm_state.load(std::sync::atomic::Ordering::Relaxed);
+                let needs_respawn = id == "show" || (pm == 2 && id != "quit");
+                if needs_respawn {
+                    let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
+                    let new_ct = if id == "clickthrough" { !ct } else { ct };
+                    let new_pm = match id.as_str() {
+                        "windowed_pet" => if pm == 1 { 0u8 } else { 1u8 },
+                        "alwaysontop_pet" => if pm == 2 { 0u8 } else { 2u8 },
+                        _ => pm,
+                    };
+                    if let Ok(exe) = std::env::current_exe() {
+                        let mut args: Vec<String> = std::env::args()
+                            .skip(1)
+                            .filter(|a| {
+                                !a.starts_with("--click-through")
+                                    && !a.starts_with("--pet-mode=")
+                                    && !a.starts_with("--overlay")
+                            })
+                            .collect();
+                        // Use the currently displayed model dir, not the original CLI arg
+                        if let Ok(guard) = tray_model_dir.lock() {
+                            if let Some(ref dir) = *guard {
+                                args.retain(|a| a.starts_with("--"));
+                                args.push(dir.clone());
                             }
-                            "alwaysontop_pet" => {
-                                if pm == 2 {
-                                    0u8
-                                } else {
-                                    2u8
-                                }
-                            }
-                            _ => pm,
-                        };
-                        if let Ok(exe) = std::env::current_exe() {
-                            let mut args: Vec<String> = std::env::args()
-                                .skip(1)
-                                .filter(|a| {
-                                    !a.starts_with("--click-through")
-                                        && !a.starts_with("--pet-mode=")
-                                        && !a.starts_with("--overlay")
-                                })
-                                .collect();
-                            // Use the currently displayed model dir, not the original CLI arg
-                            if let Ok(guard) = tray_model_dir.lock() {
-                                if let Some(ref dir) = *guard {
-                                    args.retain(|a| a.starts_with("--"));
-                                    args.push(dir.clone());
-                                }
-                            }
-                            if new_ct {
-                                args.push("--click-through".into());
-                            }
-                            match new_pm {
-                                1 => args.push("--pet-mode=windowed".into()),
-                                2 => args.push("--pet-mode=alwaysontop".into()),
-                                _ => {}
-                            }
-                            let _ = std::process::Command::new(&exe).args(&args).spawn();
                         }
-                        std::process::exit(0);
+                        if new_ct {
+                            args.push("--click-through".into());
+                        }
+                        match new_pm {
+                            1 => args.push("--pet-mode=windowed".into()),
+                            2 => args.push("--pet-mode=alwaysontop".into()),
+                            _ => {}
+                        }
+                        let _ = std::process::Command::new(&exe).args(&args).spawn();
                     }
-                    if id == "quit" {
-                        std::process::exit(0);
-                    }
+                    std::process::exit(0);
                 }
-                // Non-Wayland path: send via EventLoopProxy as before
-                let event = match id.as_str() {
-                    "show" => tray::AppEvent::ShowWindow,
-                    "clickthrough" => tray::AppEvent::ToggleClickThrough,
-                    "windowed_pet" => tray::AppEvent::ToggleWindowedPet,
-                    "alwaysontop_pet" => tray::AppEvent::ToggleAlwaysOnTopPet,
-                    "quit" => tray::AppEvent::Quit,
-                    _ => continue,
-                };
-                let _ = tray_proxy.send_event(event);
+                if id == "quit" {
+                    std::process::exit(0);
+                }
             }
-            Err(_) => break,
+            // Non-Wayland path: send via EventLoopProxy as before
+            let event = match id.as_str() {
+                "show" => tray::AppEvent::ShowWindow,
+                "clickthrough" => tray::AppEvent::ToggleClickThrough,
+                "windowed_pet" => tray::AppEvent::ToggleWindowedPet,
+                "alwaysontop_pet" => tray::AppEvent::ToggleAlwaysOnTopPet,
+                "quit" => tray::AppEvent::Quit,
+                _ => continue,
+            };
+            let _ = tray_proxy.send_event(event);
         }
     });
 
@@ -751,8 +736,8 @@ fn main() -> anyhow::Result<()> {
                         // mapped so EventLoopProxy can still deliver tray events.
                         if app.restore_cooldown > 0 {
                             app.restore_cooldown -= 1;
-                        } else if !app.minimized_to_float && !app.request_restore {
-                            if window.is_minimized().unwrap_or(false) {
+                        } else if !app.minimized_to_float && !app.request_restore
+                            && window.is_minimized().unwrap_or(false) {
                                 app.minimized_to_float = true;
                                 app.camera_needs_fit = false;
                                 if on_wayland {
@@ -777,7 +762,6 @@ fn main() -> anyhow::Result<()> {
                                     window.set_visible(false);
                                 }
                             }
-                        }
 
                         // Minimize (↓ button)
                         if app.request_minimize {
