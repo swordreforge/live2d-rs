@@ -56,12 +56,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$CUBISM_SDK_DIR"
+          SDK_PARENT=$(dirname "$CUBISM_SDK_DIR")
+          mkdir -p "$SDK_PARENT"
           gh release download sdk-5-r.5 \
             -p "cubism-core-5-r.5.tar.gz" \
             -R ${{ github.repository }} \
-            --output "$CUBISM_SDK_DIR/../cubism-core-5-r.5.tar.gz"
-          tar xzf "$CUBISM_SDK_DIR/../cubism-core-5-r.5.tar.gz" -C "$CUBISM_SDK_DIR/.."
+            --output "$SDK_PARENT/cubism-core-5-r.5.tar.gz"
+          tar xzf "$SDK_PARENT/cubism-core-5-r.5.tar.gz" -C "$SDK_PARENT"
+          # Archive top-level dir is cubism-core-5-r.5/; rename to CubismSdkForNative-5-r.5/
+          mv "$SDK_PARENT/cubism-core-5-r.5" "$CUBISM_SDK_DIR"
 
       - name: Build C++ static libraries (glad + V2 + v2_c_api)
         run: |
