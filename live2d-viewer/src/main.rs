@@ -8,6 +8,7 @@ mod gui;
 mod model_loader;
 pub mod motion;
 mod renderer;
+mod toolbar;
 mod texture;
 mod tray;
 #[cfg(target_os = "linux")]
@@ -1150,6 +1151,32 @@ fn main() -> anyhow::Result<()> {
                             }
                             crate::wayland_pet::PetEvent::CursorMoved { x, y, w, h } => {
                                 app.update_mouse_for_look(x, y, w, h);
+                            }
+                            crate::wayland_pet::PetEvent::ToolbarAction(action) => {
+                                match action {
+                                    crate::toolbar::ToolbarAction::PrevModel => {
+                                        if let Some(idx) = app.current_idx {
+                                            if idx > 0 {
+                                                let _ = app.begin_switch(idx - 1);
+                                            }
+                                        }
+                                    }
+                                    crate::toolbar::ToolbarAction::NextModel => {
+                                        if let Some(idx) = app.current_idx {
+                                            if idx + 1 < app.model_list.len() {
+                                                let _ = app.begin_switch(idx + 1);
+                                            }
+                                        }
+                                    }
+                                    crate::toolbar::ToolbarAction::Minimize => {
+                                        app.request_minimize = true;
+                                    }
+                                    crate::toolbar::ToolbarAction::ExitPet => {
+                                        app.pet_mode = PetMode::Off;
+                                        app.pet_mode_changed = true;
+                                    }
+                                    _ => {} // local actions handled in pet thread
+                                }
                             }
                             crate::wayland_pet::PetEvent::Exited => {
                                 log::info!("[pet/wayland] thread exited");

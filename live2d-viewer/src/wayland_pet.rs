@@ -71,6 +71,8 @@ pub enum PetEvent {
         w: f32,
         h: f32,
     },
+    /// Toolbar action that needs main-thread handling.
+    ToolbarAction(crate::toolbar::ToolbarAction),
     Error(String),
     Exited,
 }
@@ -89,6 +91,7 @@ enum PetModel {
     V2 {
         v2_model: live2d_v2_core::Model,
         v2_vao: glow::NativeVertexArray,
+        v2_scale: f32,
         hit_areas: Vec<crate::model_loader::HitArea>,
         last_hovered_area: Option<String>,
         /// V2 motion sound lookup: group -> Vec<(mtn_filename, Option<absolute_sound_path>)>
@@ -699,6 +702,7 @@ fn setup_pet_surface(
             PetModel::V2 {
                 v2_model: v2,
                 v2_vao,
+                v2_scale: 1.0,
                 hit_areas,
                 last_hovered_area: None,
                 motion_sounds,
@@ -741,6 +745,12 @@ fn run_event_loop(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / 60.0);
     log::info!("[pet/wayland] event loop started (60 fps)");
+
+    // Create overlay toolbar (semi-transparent button column on the right edge).
+    let mut toolbar = unsafe {
+        crate::toolbar::ToolbarOverlay::new(&gl)
+            .map_err(|e| anyhow::anyhow!("toolbar init: {e}"))?
+    };
 
     let mut prev_look_time = std::time::Instant::now();
     // Surface size is pinned: the Configure handler bounces any compositor-
@@ -805,8 +815,21 @@ fn run_event_loop(
             }
         }
 
-        // 3. Render frame
+        // 3. Update & handle overlay toolbar
         let size = state.configured_size.unwrap_or((400, 500));
+
+        // Update fade / hover state based on current pointer position.
+        toolbar.update(state.ptr.pointer_x, state.ptr.pointer_y, size.0, size.1);
+
+        // Check if toolbar consumes a pending click before model interaction.
+        let pending = state.ptr.pending_click.take();
+        let toolbar_action = pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
+        if let Some(action) = toolbar_action {
+            handle_toolbar_action(action, &mut pet_model, &event_tx);
+        } else if let Some(click) = pending {
+            state.ptr.pending_click = Some(click); // restore for model handling
+        }
+
         unsafe {
             gl.viewport(0, 0, size.0 as i32, size.1 as i32);
             gl.clear_color(0.0, 0.0, 0.0, 0.0);
@@ -884,6 +907,7 @@ fn run_event_loop(
             PetModel::V2 {
                 v2_model,
                 v2_vao,
+                v2_scale: _,
                 hit_areas,
                 last_hovered_area,
                 ref motion_sounds,
@@ -964,7 +988,12 @@ fn run_event_loop(
             }
         }
 
-        // 4. Swap buffers
+        // 4. Render overlay toolbar on top of the model
+        unsafe {
+            toolbar.render(&gl, size.0, size.1);
+        }
+
+        // 5. Swap buffers
         egl_surface.swap_buffers(&gl_context)?;
 
         // 5. Frame rate control
@@ -974,7 +1003,8 @@ fn run_event_loop(
         }
     }
 
-    // Drop GL resources in safe order: model resources first, then context
+    // Drop GL resources in safe order: toolbar → model → context
+    unsafe { toolbar.destroy(&gl); }
     match pet_model {
         PetModel::V3 {
             _moc,
@@ -993,6 +1023,62 @@ fn run_event_loop(
     }
     drop((gl, egl_surface, gl_context));
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar action dispatch
+// ---------------------------------------------------------------------------
+
+/// Execute a toolbar action.  Local actions (zoom, reset) are handled
+/// immediately; remote actions (prev/next model, minimize, exit) are
+/// forwarded to the main thread via `PetEvent::ToolbarAction`.
+fn handle_toolbar_action(
+    action: crate::toolbar::ToolbarAction,
+    pet_model: &mut PetModel,
+    event_tx: &mpsc::Sender<PetEvent>,
+) {
+    match action {
+        crate::toolbar::ToolbarAction::PrevModel
+        | crate::toolbar::ToolbarAction::NextModel
+        | crate::toolbar::ToolbarAction::Minimize
+        | crate::toolbar::ToolbarAction::ExitPet => {
+            let _ = event_tx.send(PetEvent::ToolbarAction(action));
+        }
+        crate::toolbar::ToolbarAction::ResetCamera => match pet_model {
+            PetModel::V3 { camera, .. } => {
+                camera.reset_pan();
+            }
+            PetModel::V2 {
+                v2_model, v2_scale, ..
+            } => {
+                *v2_scale = 1.0;
+                v2_model.set_scale(1.0);
+                v2_model.set_offset(0.0, 0.0);
+            }
+        },
+        crate::toolbar::ToolbarAction::ZoomIn => match pet_model {
+            PetModel::V3 { camera, .. } => {
+                camera.zoom_in();
+            }
+            PetModel::V2 {
+                v2_model, v2_scale, ..
+            } => {
+                *v2_scale = (*v2_scale * 1.1).min(10.0);
+                v2_model.set_scale(*v2_scale);
+            }
+        },
+        crate::toolbar::ToolbarAction::ZoomOut => match pet_model {
+            PetModel::V3 { camera, .. } => {
+                camera.zoom_out();
+            }
+            PetModel::V2 {
+                v2_model, v2_scale, ..
+            } => {
+                *v2_scale = (*v2_scale * 0.9).max(0.1);
+                v2_model.set_scale(*v2_scale);
+            }
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
