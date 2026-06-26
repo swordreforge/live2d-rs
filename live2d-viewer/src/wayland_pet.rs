@@ -1092,18 +1092,16 @@ fn handle_toolbar_action(
     match action {
         crate::toolbar::ToolbarAction::PrevModel => {
             if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
-                if idx > 0 {
-                    let (new_dir, _) = &model_list[idx - 1];
-                    respawn_process(new_dir, click_through, true);
-                }
+                let prev = if idx > 0 { idx - 1 } else { model_list.len() - 1 };
+                let (new_dir, _) = &model_list[prev];
+                respawn_process(new_dir, click_through, true);
             }
         }
         crate::toolbar::ToolbarAction::NextModel => {
             if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
-                if idx + 1 < model_list.len() {
-                    let (new_dir, _) = &model_list[idx + 1];
-                    respawn_process(new_dir, click_through, true);
-                }
+                let next = (idx + 1) % model_list.len();
+                let (new_dir, _) = &model_list[next];
+                respawn_process(new_dir, click_through, true);
             }
         }
         crate::toolbar::ToolbarAction::Minimize => {

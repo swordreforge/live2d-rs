@@ -125,6 +125,13 @@ impl Live2dRenderer {
         model: &mut Model,
         camera: &crate::camera::Camera,
     ) {
+        // 2D premultiplied-alpha renderer: depth test must be disabled because
+        // all drawables share Z=0.0 in NDC.  If DEPTH_TEST is left enabled by
+        // a previous GL operation (e.g. toolbar overlay teardown in the pet
+        // thread), only the first sorted drawable survives GL_LESS(0.0, 0.0)
+        // and everything else is discarded.
+        gl.disable(DEPTH_TEST);
+
         // Must reset dynamic flags (csmIsVisible etc.) before Update, as documented in Core API
         model.reset_dynamic_flags();
         model.update();
