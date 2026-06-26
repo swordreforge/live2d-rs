@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+use serde::Deserialize;
 use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
 use smithay_client_toolkit::reexports::client::protocol::wl_compositor;
 use smithay_client_toolkit::reexports::client::protocol::wl_pointer;
@@ -89,6 +90,7 @@ enum PetModel {
         v2_model: live2d_v2_core::Model,
         v2_vao: glow::NativeVertexArray,
         last_size: (i32, i32),
+        hit_areas: Vec<crate::model_loader::HitArea>,
     },
 }
 
@@ -616,20 +618,43 @@ fn setup_pet_surface(
                 .map_err(|e| anyhow::anyhow!("V2 load_json: {e}"))?;
             v2.resize(init_size.0 as i32, init_size.1 as i32);
 
+            // Parse V2 hit_areas for per-part tap handling
+            let hit_areas = {
+                #[derive(Deserialize)]
+                struct V2HitArea {
+                    name: String,
+                    id: String,
+                }
+                #[derive(Deserialize)]
+                struct V2ModelJson {
+                    hit_areas: Option<Vec<V2HitArea>>,
+                }
+                let json_text = std::fs::read_to_string(&model_json_path).unwrap_or_default();
+                serde_json::from_str::<V2ModelJson>(&json_text)
+                    .ok()
+                    .and_then(|p| p.hit_areas)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| crate::model_loader::HitArea {
+                        name: a.name,
+                        id: a.id,
+                    })
+                    .collect::<Vec<_>>()
+            };
+
             let cw = v2.canvas_width();
             let ch = v2.canvas_height();
 
             log::info!(
-                "[pet/wayland] V2 model loaded, canvas=({:.0},{:.0}), configured size: {:?}",
-                cw,
-                ch,
-                state.configured_size
+                "[pet/wayland] V2 model loaded, canvas=({:.0},{:.0}), hit_areas={}, configured size: {:?}",
+                cw, ch, hit_areas.len(), state.configured_size
             );
 
             PetModel::V2 {
                 v2_model: v2,
                 v2_vao,
                 last_size: (init_size.0 as i32, init_size.1 as i32),
+                hit_areas,
             }
         }
     };
@@ -807,14 +832,36 @@ fn run_event_loop(
                 v2_model,
                 v2_vao,
                 last_size,
+                hit_areas,
             } => {
                 // V2 head tracking (drag manager converts screen → scene internally)
                 v2_model.drag(state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
 
-                // V2 tap: handle locally (no parameter sync needed)
+                // V2 tap: iterate hit areas and test each drawable ID
                 if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                    if v2_model.hit_test("TapBody", cx as f32, cy as f32) {
-                        v2_model.start_random_motion("TapBody", 3);
+                    if hit_areas.is_empty() {
+                        // Fallback: whole-body tap via hit_part
+                        let ids = v2_model.hit_part(cx as f32, cy as f32, false);
+                        if !ids.is_empty() {
+                            for group in ["tap_body", "tap_face", "tap_breast",
+                                          "tap_belly", "tap_leg", "flick_head"] {
+                                v2_model.start_random_motion(group, 3);
+                            }
+                        }
+                    } else {
+                        for area in hit_areas {
+                            if v2_model.hit_test(&area.id, cx as f32, cy as f32) {
+                                log::info!(
+                                    "[pet/V2 tap] area={} drawable={}",
+                                    area.name, area.id,
+                                );
+                                v2_model.start_random_motion(&format!("tap_{}", area.name), 3);
+                                if area.name == "head" {
+                                    v2_model.start_random_motion("flick_head", 3);
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
 

@@ -1,4 +1,5 @@
 use live2d_core::{Moc, Model};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -691,6 +692,33 @@ impl AppState {
 
             let name = entry.name.clone();
             let _ = entry; // end borrow
+
+            // Parse V2 model JSON hit_areas for per-part tap handling
+            self.hit_areas.clear();
+            if let Ok(json_text) = std::fs::read_to_string(&model_json) {
+                #[derive(Deserialize)]
+                struct V2HitArea {
+                    name: String,
+                    id: String,
+                }
+                #[derive(Deserialize)]
+                struct V2ModelJson {
+                    hit_areas: Option<Vec<V2HitArea>>,
+                }
+                if let Ok(parsed) = serde_json::from_str::<V2ModelJson>(&json_text) {
+                    if let Some(areas) = parsed.hit_areas {
+                        self.hit_areas = areas
+                            .into_iter()
+                            .map(|a| crate::model_loader::HitArea {
+                                name: a.name,
+                                id: a.id,
+                            })
+                            .collect();
+                        log::info!("Loaded {} V2 hit areas", self.hit_areas.len());
+                    }
+                }
+            }
+
             self.v2_model = Some(m);
             self.current_idx = Some(idx);
             self.model_list[idx].loaded = true;
@@ -1177,20 +1205,38 @@ impl AppState {
         cam_trans_x: f32,
         cam_trans_y: f32,
     ) {
-        if self.is_v2 {
-            // V2: hit test all body parts using full MVP transform (accounts for zoom/pan)
-            let hit = self
-                .v2_model
-                .as_ref()
-                .map(|v2| !v2.hit_part(x as f32, y as f32, false).is_empty())
-                .unwrap_or(false);
-            if hit {
+            if self.is_v2 {
+                // V2: iterate hit areas and test each drawable ID
                 if let Some(ref mut v2) = self.v2_model {
-                    v2.start_random_motion("TapBody", 3);
+                    let (cx, cy) = (x as f32, y as f32);
+                    if self.hit_areas.is_empty() {
+                        // Fallback: whole-body tap via hit_part
+                        let ids = v2.hit_part(cx, cy, false);
+                        if !ids.is_empty() {
+                            for group in ["tap_body", "tap_face", "tap_breast",
+                                          "tap_belly", "tap_leg", "flick_head"] {
+                                v2.start_random_motion(group, 3);
+                            }
+                        }
+                    } else {
+                        // Per-area tap: test each drawable ID
+                        for area in &self.hit_areas {
+                            if v2.hit_test(&area.id, cx, cy) {
+                                eprintln!("[V2 tap] area={} drawable={}", area.name, area.id);
+                                // Convention: area "face" → motion group "tap_face"
+                                let group = format!("tap_{}", area.name);
+                                v2.start_random_motion(&group, 3);
+                                // Some models use "flick_head" instead of "tap_head"
+                                if area.name == "head" {
+                                    v2.start_random_motion("flick_head", 3);
+                                }
+                                break;
+                            }
+                        }
+                    }
                 }
+                return;
             }
-            return;
-        }
 
         let model = match self.current_model {
             Some(ref m) => m,
