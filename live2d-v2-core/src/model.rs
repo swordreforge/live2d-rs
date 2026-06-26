@@ -93,6 +93,24 @@ impl Model {
         unsafe { ffi::v2_model_is_motion_finished(self.raw) != 0 }
     }
 
+    // ──────── Motion info ────────
+
+    /// Returns the motion group selected by the last `start_random_motion` call.
+    pub fn current_group(&self) -> String {
+        let ptr = unsafe { ffi::v2_model_get_current_group(self.raw) };
+        if ptr.is_null() {
+            return String::new();
+        }
+        unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Returns the motion number selected by the last `start_random_motion` call.
+    pub fn current_no(&self) -> i32 {
+        unsafe { ffi::v2_model_get_current_no(self.raw) }
+    }
+
     // ──────── Parameters ────────
 
     pub fn param_count(&self) -> i32 {
