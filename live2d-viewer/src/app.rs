@@ -607,12 +607,21 @@ impl AppState {
 
         // Start idle motion
         if self.auto_play_idle {
-            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
-                if let Some(first) = idle_motions.first() {
-                    self.motion_queue.start_motion(first.clone());
-                    log::info!("Started idle motion");
-                }
-            }
+            self.try_start_idle_motion();
+        }
+    }
+
+    /// Try to start the first idle motion.
+    ///
+    /// Some models (especially from games) store all motions under key `""`
+    /// instead of `"Idle"`. Try `"Idle"` first, then fall back to `""`.
+    fn try_start_idle_motion(&mut self) {
+        let motions = self
+            .loaded_motions
+            .get("Idle")
+            .or_else(|| self.loaded_motions.get(""));
+        if let Some(first) = motions.and_then(|m| m.first()) {
+            self.motion_queue.start_motion(first.clone());
         }
     }
 
@@ -766,12 +775,7 @@ impl AppState {
 
             // Start idle motion
             if self.auto_play_idle {
-                if let Some(idle_motions) = self.loaded_motions.get("Idle") {
-                    if let Some(first) = idle_motions.first() {
-                        self.motion_queue.start_motion(first.clone());
-                        log::info!("Started idle motion");
-                    }
-                }
+                self.try_start_idle_motion();
             }
         }
 
@@ -998,9 +1002,14 @@ impl AppState {
 
     /// Start a motion from a specific category (e.g. "Idle", "TapBody").
     /// If `index` is provided, plays that specific motion; otherwise plays the first one.
+    /// Falls back to `""` if `"Idle"` is not found.
     pub fn start_motion(&mut self, category: &str, index: Option<usize>) -> bool {
         let motions = match self.loaded_motions.get(category) {
             Some(m) => m,
+            None if category == "Idle" => match self.loaded_motions.get("") {
+                Some(m) => m,
+                None => return false,
+            },
             None => return false,
         };
         let idx = index.unwrap_or(0);
@@ -1109,11 +1118,7 @@ impl AppState {
 
         // Auto-restart Idle when all motions have finished
         if self.auto_play_idle && self.motion_queue.entries.is_empty() {
-            if let Some(idle_motions) = self.loaded_motions.get("Idle") {
-                if let Some(first) = idle_motions.first() {
-                    self.motion_queue.start_motion(first.clone());
-                }
-            }
+            self.try_start_idle_motion();
         }
     }
 

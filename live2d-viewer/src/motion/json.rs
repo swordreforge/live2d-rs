@@ -15,9 +15,30 @@
 //! After parsing, each segment stores its FULL set of points (including the base).
 //! So a segment always has at least 2 points (base + end) except Bezier which has 4 (base + c1 + c2 + end).
 
+use serde::de::{self, Deserializer};
 use serde::Deserialize;
 
 use super::curve::MotionPoint;
+
+/// Deserialize `UserData` field leniently.
+///
+/// Official Cubism 3 motion3.json spec:
+///   `"UserData": { "TotalUserDataSize": 0, "UserData": [...] }`
+///
+/// Some non-official models have `"UserData": []` (empty array) instead.
+/// Return `None` for non-object values so the motion still loads.
+fn deserialize_user_data<'de, D>(d: D) -> Result<Option<RawUserData>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    match v {
+        serde_json::Value::Object(_) => {
+            serde_json::from_value(v).map(Some).map_err(de::Error::custom)
+        }
+        _ => Ok(None),
+    }
+}
 
 /// Raw motion3.json structure (serde-friendly).
 #[derive(Debug, Deserialize)]
@@ -26,7 +47,7 @@ pub struct RawMotion3Json {
     pub version: u32,
     pub meta: RawMeta,
     pub curves: Vec<RawCurve>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_user_data")]
     pub user_data: Option<RawUserData>,
 }
 
