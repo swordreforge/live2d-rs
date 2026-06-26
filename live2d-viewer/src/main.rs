@@ -1100,16 +1100,16 @@ fn main() -> anyhow::Result<()> {
                 // Note: tray events are forwarded by a background thread directly
                 // through the EventLoopProxy.  No polling needed here.
 
-                // Check for pet thread events (collect first to avoid borrow conflict)
+                // Check for pet thread events (take scratch buffer to release app borrow)
                 #[cfg(target_os = "linux")]
                 {
-                    let mut pet_events = Vec::new();
+                    let mut pet_events = std::mem::take(&mut app.pet_events_scratch);
                     if let Some(ref rx) = app.pet_wayland_event_rx {
                         while let Ok(event) = rx.try_recv() {
                             pet_events.push(event);
                         }
                     }
-                    for event in pet_events {
+                    for event in pet_events.drain(..) {
                         match event {
                             crate::wayland_pet::PetEvent::Configured { width, height } => {
                                 log::info!(
@@ -1139,6 +1139,8 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
+                    // Return the (now-empty) buffer to app for reuse next frame
+                    app.pet_events_scratch = pet_events;
                 }
 
                 window.request_redraw();
