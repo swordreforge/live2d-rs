@@ -26,7 +26,8 @@ jobs:
             cmake \
             gcc \
             g++ \
-            libgl1-mesa-dev
+            libgl1-mesa-dev \
+            libasound2-dev
 
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
