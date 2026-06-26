@@ -354,7 +354,9 @@ fn evaluate_segment_value(seg: &super::json::ParsedSegment, time: f32) -> f32 {
         }
         SegmentType::Bezier => {
             if pts.len() >= 4 {
-                curve::bezier_evaluate_cardano(pts, time)
+                // Use simple de Casteljau instead of Cardano — avoids
+                // sin/cos/sqrt/cbrt per evaluation with negligible precision loss
+                curve::bezier_evaluate_simple(pts, time)
             } else {
                 pts[0].value
             }
