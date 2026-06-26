@@ -30,6 +30,9 @@ pub struct MotionQueueEntry {
 
     /// Fade weight computed from motion-level fade in/out.
     pub cached_fade_weight: f32,
+
+    /// Maximum number of loops before auto-finish. None = infinite.
+    pub max_loop_count: Option<u32>,
 }
 
 impl MotionQueueEntry {
@@ -49,6 +52,7 @@ impl MotionQueueEntry {
             fade_out_seconds: 0.0,
             is_triggered_fade_out: false,
             cached_fade_weight: 0.0,
+            max_loop_count: None,
         }
     }
 
@@ -113,9 +117,22 @@ impl MotionQueueManager {
         self.user_time_seconds
     }
 
-    /// Start a new motion. Sets existing motions to start fading out.
+    /// Start a new motion. Sets existing motions to start fading out (anti-conflict).
+    /// `max_loops` limits the number of loops for looping motions (None = infinite).
     /// Returns a handle that can be used to track this motion.
-    pub fn start_motion(&mut self, motion: CubismMotion) -> MotionQueueEntryHandle {
+    ///
+    /// Stack safety: silently refuses if total entries ≥ 3 (overflow guard).
+    pub fn start_motion(
+        &mut self,
+        motion: CubismMotion,
+        max_loops: Option<u32>,
+    ) -> MotionQueueEntryHandle {
+        // Safety cap: prevent stack overflow beyond 3 total entries
+        if self.entries.len() >= 3 {
+            return MotionQueueEntryHandle(self.entries.len());
+        }
+
+        // Anti-conflict: fade out all currently playing entries
         for entry in &mut self.entries {
             if entry.is_available() && !entry.is_finished() {
                 entry.set_fadeout(motion.fade_out_seconds);
@@ -126,6 +143,7 @@ impl MotionQueueManager {
         let mut queue_entry = MotionQueueEntry::new(motion);
         queue_entry.set_finished(false);
         queue_entry.set_started(false);
+        queue_entry.max_loop_count = max_loops;
         self.entries.push(queue_entry);
 
         handle
@@ -221,6 +239,14 @@ impl MotionQueueManager {
             } else if entry.is_triggered_fade_out() && entry_end_time < user_time {
                 entry.set_finished(true);
                 finished_indices.push(i);
+            } else if is_loop && duration > 0.0 {
+                // Enforce max loop count for looping motions
+                if let Some(max_loops) = entry.max_loop_count {
+                    if (time_offset / duration) as u32 >= max_loops {
+                        entry.set_finished(true);
+                        finished_indices.push(i);
+                    }
+                }
             }
 
             entry.last_event_check_seconds = user_time;

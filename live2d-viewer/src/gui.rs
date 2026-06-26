@@ -228,27 +228,21 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             .show(ctx, |ui| {
                 ui.label(format!("Parameters: {}", app.parameter_names.len()));
 
-                // Motion status — aggregate entries from all per-group queues
-                let total_entries: usize =
-                    app.motion_queues.values().map(|q| q.entries.len()).sum();
+                // Motion status — single queue
+                let total_entries = app.motion_queue.entries.len();
                 if total_entries > 0 {
                     ui.label(format!("Motions: {}", total_entries));
-                    let mut sorted_groups: Vec<&String> = app.motion_queues.keys().collect();
-                    sorted_groups.sort();
-                    for group_name in sorted_groups {
-                        let queue = &app.motion_queues[group_name];
-                        for (i, entry) in queue.entries.iter().enumerate() {
-                            let loop_str = if entry.motion.is_loop {
-                                "循环"
-                            } else {
-                                "一次"
-                            };
-                            let fw = entry.cached_fade_weight;
-                            ui.label(format!(
-                                "  [{}:{}] ({:.1}s, {}, fade={:.2})",
-                                group_name, i, entry.motion.data.duration, loop_str, fw,
-                            ));
-                        }
+                    for (i, entry) in app.motion_queue.entries.iter().enumerate() {
+                        let loop_str = if entry.motion.is_loop {
+                            "循环"
+                        } else {
+                            "一次"
+                        };
+                        let fw = entry.cached_fade_weight;
+                        ui.label(format!(
+                            "  [{}:{}] ({:.1}s, {}, fade={:.2})",
+                            i, i, entry.motion.data.duration, loop_str, fw,
+                        ));
                     }
                     ui.separator();
                 }
@@ -265,9 +259,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.start_motion("Idle", Some(0));
                     }
                     if ui.button("全部停止").clicked() {
-                        for q in app.motion_queues.values_mut() {
-                            q.stop_all_motions();
-                        }
+                        app.motion_queue.stop_all_motions();
                     }
                 });
 
@@ -278,11 +270,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     .or_else(|| app.loaded_motions.get(""))
                     .is_some_and(|m| !m.is_empty());
                 if has_tap_motion && ui.button("点击身体").clicked() {
-                    let user_time = app
-                        .motion_queues
-                        .values()
-                        .next()
-                        .map_or(0.0, |q| q.user_time_seconds);
+                    let user_time = app.motion_queue.user_time_seconds;
                     // start_motion already handles the "" fallback
                     let motions = app.loaded_motions.get("TapBody")
                         .or_else(|| app.loaded_motions.get(""))
