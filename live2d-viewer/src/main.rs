@@ -659,7 +659,11 @@ fn main() -> anyhow::Result<()> {
                                     unsafe {
                                         // Reset GL state V2 left dirty, drain stale errors
                                         gl.bind_vertex_array(None);
-                                        while gl.get_error() != glow::NO_ERROR {}
+                                        for _ in 0..8 {
+                                            if gl.get_error() == glow::NO_ERROR {
+                                                break;
+                                            }
+                                        }
                                         gl.use_program(None);
                                         gl.active_texture(glow::TEXTURE0);
                                         gl.front_face(glow::CCW);
