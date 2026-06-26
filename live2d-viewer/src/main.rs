@@ -503,6 +503,17 @@ fn main() -> anyhow::Result<()> {
                                                 },
                                             );
                                         }
+                                        // Send model list so the pet thread can cycle
+                                        // Prev/Next by respawn (bypassing the minimized
+                                        // main window's event loop on Wayland).
+                                        let model_list: Vec<_> = app.model_list.iter()
+                                            .filter_map(|entry| {
+                                                entry.format.map(|fmt| (entry.dir.clone(), fmt))
+                                            })
+                                            .collect();
+                                        let _ = cmd_tx.send(
+                                            crate::wayland_pet::PetCommand::SetModelList(model_list)
+                                        );
 
                                         app.pet_wayland_cmd_tx = Some(cmd_tx);
                                         app.pet_wayland_event_rx = Some(event_rx);

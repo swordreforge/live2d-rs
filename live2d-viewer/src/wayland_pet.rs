@@ -36,6 +36,8 @@ pub enum PetCommand {
         /// Initial click-through state (input passthrough) from main window
         click_through: bool,
     },
+    /// Full model list for Prev/Next cycling.
+    SetModelList(Vec<(PathBuf, crate::app::ModelFormat)>),
     /// Toggle click-through state at runtime
     SetClickThrough(bool),
     /// Overwrite model parameter values (synced from main thread each frame)
@@ -756,6 +758,7 @@ fn run_event_loop(
             .map_err(|e| anyhow::anyhow!("toolbar init: {e}"))?
     };
 
+    let mut model_list: Vec<(PathBuf, crate::app::ModelFormat)> = Vec::new();
     let mut prev_look_time = std::time::Instant::now();
     // Surface size is pinned: the Configure handler bounces any compositor-
     // initiated resize back to the original configured size.  No EGL buffer /
@@ -783,6 +786,9 @@ fn run_event_loop(
                 }
                 PetCommand::Enter { .. } => {
                     // Already in pet mode, ignore
+                }
+                PetCommand::SetModelList(list) => {
+                    model_list = list;
                 }
                 PetCommand::SetClickThrough(enabled) => {
                     click_through = enabled;
@@ -830,7 +836,7 @@ fn run_event_loop(
         let pending = state.ptr.pending_click.take();
         let toolbar_action = pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
         if let Some(action) = toolbar_action {
-            handle_toolbar_action(action, &mut pet_model, &event_tx, model_dir, click_through);
+            handle_toolbar_action(action, &mut pet_model, &event_tx, model_dir, click_through, &model_list);
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
         }
@@ -1034,44 +1040,77 @@ fn run_event_loop(
 // Toolbar action dispatch
 // ---------------------------------------------------------------------------
 
-/// Execute a toolbar action.  Local actions (zoom, reset) are handled
-/// immediately; remote actions (prev/next model, minimize) are forwarded
-/// to the main thread via `PetEvent::ToolbarAction`.
+/// Spawn a new process and exit the current one.
 ///
-/// `ExitPet` is handled by respawning the process (same as the tray thread)
-/// because on Wayland the main window may be minimized during AlwaysOnTop
-/// mode — the winit event loop may not fire `RedrawRequested`, so the
-/// main thread would never drain our `PetEvent::ToolbarAction` event.
+/// When `alwaysontop` is true the new process starts with
+/// `--pet-mode=alwaysontop` (model cycling).  When false it starts
+/// without any `--pet-mode` flag, which defaults to Off (exit pet).
+fn respawn_process(model_dir: &std::path::Path, click_through: bool, alwaysontop: bool) {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut args: Vec<String> = std::env::args()
+            .skip(1)
+            .filter(|a| {
+                !a.starts_with("--click-through")
+                    && !a.starts_with("--pet-mode=")
+                    && !a.starts_with("--overlay")
+            })
+            .collect();
+        // Drop all positional (non-flag) args from the original invocation,
+        // then push the single model dir we want — avoids accumulating stale
+        // positional args across successive respawns (matching tray thread).
+        args.retain(|a| a.starts_with("--"));
+        // Push the model dir as the sole positional arg (the binary to load).
+        args.push(model_dir.to_string_lossy().into_owned());
+        if click_through {
+            args.push("--click-through".into());
+        }
+        if alwaysontop {
+            args.push("--pet-mode=alwaysontop".into());
+        }
+        let _ = std::process::Command::new(&exe).args(&args).spawn();
+    }
+    std::process::exit(0);
+}
+
+/// Execute a toolbar action.
+///
+/// Local actions (zoom, reset) are handled immediately.
+/// Prev/Next model and ExitPet respawn the process (same pattern as the
+/// tray thread) because on Wayland the main window is minimized during
+/// AlwaysOnTop mode — the winit event loop may not fire
+/// `RedrawRequested`, so the main thread would never drain our events.
+/// `Minimize` is the only remote action that still goes through the main
+/// thread (it sets `request_minimize` on the main window, not the pet).
 fn handle_toolbar_action(
     action: crate::toolbar::ToolbarAction,
     pet_model: &mut PetModel,
     event_tx: &mpsc::Sender<PetEvent>,
     model_dir: &std::path::PathBuf,
     click_through: bool,
+    model_list: &[(std::path::PathBuf, crate::app::ModelFormat)],
 ) {
     match action {
-        crate::toolbar::ToolbarAction::PrevModel
-        | crate::toolbar::ToolbarAction::NextModel
-        | crate::toolbar::ToolbarAction::Minimize => {
+        crate::toolbar::ToolbarAction::PrevModel => {
+            if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
+                if idx > 0 {
+                    let (new_dir, _) = &model_list[idx - 1];
+                    respawn_process(new_dir, click_through, true);
+                }
+            }
+        }
+        crate::toolbar::ToolbarAction::NextModel => {
+            if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
+                if idx + 1 < model_list.len() {
+                    let (new_dir, _) = &model_list[idx + 1];
+                    respawn_process(new_dir, click_through, true);
+                }
+            }
+        }
+        crate::toolbar::ToolbarAction::Minimize => {
             let _ = event_tx.send(PetEvent::ToolbarAction(action));
         }
         crate::toolbar::ToolbarAction::ExitPet => {
-            if let Ok(exe) = std::env::current_exe() {
-                let mut args: Vec<String> = std::env::args()
-                    .skip(1)
-                    .filter(|a| {
-                        !a.starts_with("--click-through")
-                            && !a.starts_with("--pet-mode=")
-                            && !a.starts_with("--overlay")
-                    })
-                    .collect();
-                args.push(model_dir.to_string_lossy().into_owned());
-                if click_through {
-                    args.push("--click-through".into());
-                }
-                let _ = std::process::Command::new(&exe).args(&args).spawn();
-            }
-            std::process::exit(0);
+            respawn_process(model_dir, click_through, false);
         }
         crate::toolbar::ToolbarAction::ResetCamera => match pet_model {
             PetModel::V3 { camera, .. } => {
