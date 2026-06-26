@@ -1231,15 +1231,24 @@ impl AppState {
         let idxs = drawables.indices();
         let icounts = drawables.index_counts();
 
-        for hit_area in &self.hit_areas {
-            let di = match drawable_ids
+        // Determine which drawables to hit-test:
+        // - Official models define HitAreas in model3.json → test only those drawables
+        // - Non-official models often have no HitAreas → test all drawables as fallback
+        let hit_drawable_indices: Vec<usize> = if self.hit_areas.is_empty() {
+            // Fallback: test all drawables (whole-body tap)
+            (0..drawable_ids.len()).collect()
+        } else {
+            self.hit_areas
                 .iter()
-                .position(|id| id.to_string_lossy() == hit_area.id)
-            {
-                Some(i) => i,
-                None => continue,
-            };
+                .filter_map(|area| {
+                    drawable_ids
+                        .iter()
+                        .position(|id| id.to_string_lossy() == area.id)
+                })
+                .collect()
+        };
 
+        for di in hit_drawable_indices {
             let verts = unsafe { std::slice::from_raw_parts(vpos[di], vcounts[di] as usize) };
             let idx = unsafe { std::slice::from_raw_parts(idxs[di], icounts[di] as usize) };
 
