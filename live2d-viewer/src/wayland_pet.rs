@@ -92,6 +92,10 @@ enum PetModel {
         last_size: (i32, i32),
         hit_areas: Vec<crate::model_loader::HitArea>,
         last_hovered_area: Option<String>,
+        /// V2 motion sound lookup: group -> Vec<(mtn_filename, Option<absolute_sound_path>)>
+        motion_sounds: std::collections::HashMap<String, Vec<(String, Option<std::path::PathBuf>)>>,
+        /// Audio player
+        audio_player: Option<crate::audio::AudioPlayer>,
     },
 }
 
@@ -651,8 +655,27 @@ fn setup_pet_surface(
                 cw, ch, hit_areas.len(), state.configured_size
             );
 
+            // Parse V2 model JSON motion sound paths
+            let motion_sounds = {
+                let json_text = std::fs::read_to_string(&model_json_path).unwrap_or_default();
+                crate::v2_motion_sound::parse_v2_motions(
+                    &json_text,
+                    model_json_path.parent().unwrap_or(&model_json_path),
+                )
+            };
+            let audio_player = crate::audio::AudioPlayer::new().ok();
+
             // Opening animation: play a random motion on model load
             v2.start_random_motion("", 3);
+            if let Some(ref player) = audio_player {
+                let group = v2.current_group();
+                let no = v2.current_no() as usize;
+                if let Some(entries) = motion_sounds.get(&group) {
+                    if let Some((_, Some(path))) = entries.get(no) {
+                        player.play(path);
+                    }
+                }
+            }
 
             PetModel::V2 {
                 v2_model: v2,
@@ -660,6 +683,8 @@ fn setup_pet_surface(
                 last_size: (init_size.0 as i32, init_size.1 as i32),
                 hit_areas,
                 last_hovered_area: None,
+                motion_sounds,
+                audio_player,
             }
         }
     };
@@ -839,7 +864,22 @@ fn run_event_loop(
                 last_size,
                 hit_areas,
                 last_hovered_area,
+                ref motion_sounds,
+                ref audio_player,
             } => {
+                // Helper: play sound for the motion that just started
+                let play_sound = |v2: &live2d_v2_core::Model| {
+                    if let Some(ref player) = audio_player {
+                        let group = v2.current_group();
+                        let no = v2.current_no() as usize;
+                        if let Some(entries) = motion_sounds.get(&group) {
+                            if let Some((_, Some(path))) = entries.get(no) {
+                                player.play(path);
+                            }
+                        }
+                    }
+                };
+
                 // V2 head tracking (drag manager converts screen → scene internally)
                 v2_model.drag(state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
 
@@ -857,8 +897,10 @@ fn run_event_loop(
                     if found != *last_hovered_area {
                         if let Some(ref name) = found {
                             v2_model.start_random_motion(&format!("tap_{}", name), 3);
+                            play_sound(&v2_model);
                             if name == "head" {
                                 v2_model.start_random_motion("flick_head", 3);
+                                play_sound(&v2_model);
                             }
                         }
                         *last_hovered_area = found;
@@ -868,6 +910,7 @@ fn run_event_loop(
                 // V2 tap: Python convention — random motion on click
                 if state.ptr.pending_click.take().is_some() {
                     v2_model.start_random_motion("", 3);
+                    play_sound(&v2_model);
                 }
 
                 let (vw, vh) = (size.0 as i32, size.1 as i32);
