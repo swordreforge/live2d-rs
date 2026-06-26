@@ -85,6 +85,7 @@ enum PetModel {
         camera: crate::camera::Camera,
         look: crate::motion::look::Look,
         param_lookup: std::collections::HashMap<String, usize>,
+        last_size: (u32, u32),
     },
     V2 {
         v2_model: live2d_v2_core::Model,
@@ -595,6 +596,7 @@ fn setup_pet_surface(
                 camera,
                 look: crate::motion::look::Look::new(),
                 param_lookup,
+                last_size: init_size,
             }
         }
         crate::app::ModelFormat::V2 => {
@@ -799,8 +801,23 @@ fn run_event_loop(
                 camera,
                 look,
                 param_lookup,
+                last_size,
                 ..
             } => {
+                // Re-fit camera if window size changed (e.g. compositor re-configures
+                // the overlay surface when dragged to a screen edge on niri, river, etc.)
+                if (size.0, size.1) != *last_size {
+                    let canvas = model.canvas_info();
+                    camera.fit_to_canvas(
+                        canvas.size_in_pixels.X,
+                        canvas.size_in_pixels.Y,
+                        canvas.pixels_per_unit,
+                        size.0 as f32,
+                        size.1 as f32,
+                    );
+                    *last_size = (size.0, size.1);
+                }
+
                 // V3 local look: self-contained like V2's drag() — no main-thread dependency
                 let (px, py) = (state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
                 let (cw, ch) = (size.0 as f32, size.1 as f32);
