@@ -216,6 +216,10 @@ pub struct AppState {
     pub last_v2_size: (i32, i32),
     /// Last hovered V2 hit area name (tracked for per-area hover motion)
     pub v2_last_hovered_area: Option<String>,
+    /// V2 motion sound lookup: group -> Vec<(mtn_filename, Option<absolute_sound_path>)>
+    pub v2_motion_sounds: HashMap<String, Vec<(String, Option<PathBuf>)>>,
+    /// Audio player instance
+    pub audio_player: Option<crate::audio::AudioPlayer>,
     /// Pending async model switch (V3 loads files on background thread)
     pub pending_load: PendingLoad,
     /// Optional database for model history and settings persistence
@@ -293,6 +297,8 @@ impl AppState {
             v2_scale: 1.0,
             v2_last_hovered_area: None,
             last_v2_size: (0, 0),
+            v2_motion_sounds: HashMap::new(),
+            audio_player: crate::audio::AudioPlayer::new().ok(),
             pending_load: PendingLoad::None,
             db,
             renaming_idx: None,
@@ -719,6 +725,17 @@ impl AppState {
                 }
             }
 
+            // Parse V2 model JSON motion sound paths
+            if let Ok(json_text) = std::fs::read_to_string(&model_json) {
+                let base_dir = model_json.parent().unwrap_or(&model_json).to_path_buf();
+                self.v2_motion_sounds =
+                    crate::v2_motion_sound::parse_v2_motions(&json_text, &base_dir);
+                log::info!(
+                    "Parsed {} V2 motion groups for sound",
+                    self.v2_motion_sounds.len()
+                );
+            }
+
             self.v2_model = Some(m);
             self.current_idx = Some(idx);
             self.model_list[idx].loaded = true;
@@ -741,6 +758,7 @@ impl AppState {
             // Opening animation: play a random motion on model load
             if let Some(ref mut v2) = self.v2_model {
                 v2.start_random_motion("", 3);
+                self.play_v2_motion_sound();
             }
         } else {
             // ── V3 model path (existing code) ──
@@ -1052,6 +1070,7 @@ impl AppState {
             if let Some(ref mut v2) = self.v2_model {
                 let idx = index.unwrap_or(0) as i32;
                 v2.start_motion(category, idx, 3);
+                self.play_v2_motion_sound();
             }
             return true;
         }
@@ -1214,6 +1233,7 @@ impl AppState {
                 // Python convention: click triggers random motion from any group
                 if let Some(ref mut v2) = self.v2_model {
                     v2.start_random_motion("", 3);
+                    self.play_v2_motion_sound();
                 }
                 return;
             }
@@ -1287,12 +1307,44 @@ impl AppState {
         }
     }
 
+    /// After starting a V2 motion, look up the sound file from the parsed
+    /// model.json motions and play it. Queries current_group/current_no from
+    /// the C++ wrapper to know what was chosen (especially for random motions).
+    fn play_v2_motion_sound(&mut self) {
+        let group = self
+            .v2_model
+            .as_ref()
+            .map(|v2| v2.current_group())
+            .unwrap_or_default();
+        let no = self
+            .v2_model
+            .as_ref()
+            .map(|v2| v2.current_no() as usize)
+            .unwrap_or(0);
+        let Some(ref player) = self.audio_player else {
+            return;
+        };
+        let Some(entries) = self.v2_motion_sounds.get(&group) else {
+            return;
+        };
+        let Some((_file, Some(sound_path))) = entries.get(no) else {
+            return;
+        };
+        player.play(sound_path);
+    }
+
     /// Handle V2 hover: detect hit area transitions and play per-area motion.
     pub fn handle_v2_hover(&mut self, x: f64, y: f64) {
         if !self.is_v2 || self.hit_areas.is_empty() {
             return;
         }
-        if let Some(ref mut v2) = self.v2_model {
+        // Determine which hover area we're over (if any) — done in its own block
+        // so the mutable v2 borrow is dropped before play_v2_motion_sound calls.
+        let area_name: Option<String> = {
+            let v2 = match self.v2_model.as_mut() {
+                Some(v2) => v2,
+                None => return,
+            };
             let cx = x as f32;
             let cy = y as f32;
             let mut current: Option<String> = None;
@@ -1302,15 +1354,23 @@ impl AppState {
                     break;
                 }
             }
-            if current != self.v2_last_hovered_area {
-                if let Some(ref name) = current {
+            current
+        };
+
+        if area_name != self.v2_last_hovered_area {
+            if let Some(ref name) = area_name {
+                if let Some(ref mut v2) = self.v2_model {
                     v2.start_random_motion(&format!("tap_{}", name), 3);
-                    if name == "head" {
+                }
+                self.play_v2_motion_sound();
+                if name == "head" {
+                    if let Some(ref mut v2) = self.v2_model {
                         v2.start_random_motion("flick_head", 3);
                     }
+                    self.play_v2_motion_sound();
                 }
-                self.v2_last_hovered_area = current;
             }
+            self.v2_last_hovered_area = area_name;
         }
     }
 }
