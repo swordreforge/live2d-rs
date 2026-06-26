@@ -1014,6 +1014,15 @@ impl AppState {
     /// - Idle motions: max 1 entry, infinite loops
     /// - Action motions (e.g. tap): max 2 entries, max 2 loops per entry
     pub fn start_motion(&mut self, category: &str, index: Option<usize>) -> bool {
+        // V2 model: motions are internal to the C++ wrapper (loaded via model.json)
+        if self.is_v2 {
+            if let Some(ref mut v2) = self.v2_model {
+                let idx = index.unwrap_or(0) as i32;
+                v2.start_motion(category, idx, 3);
+            }
+            return true;
+        }
+
         let motion = {
             let motions = match self.loaded_motions.get(category) {
                 Some(m) => m,

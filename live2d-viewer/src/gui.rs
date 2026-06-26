@@ -263,20 +263,27 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                 });
 
-                // Try "TapBody" first, then fall back to "" (some models use flat keys)
-                let has_tap_motion = app
-                    .loaded_motions
-                    .get("TapBody")
-                    .or_else(|| app.loaded_motions.get(""))
-                    .is_some_and(|m| !m.is_empty());
-                if has_tap_motion && ui.button("点击身体").clicked() {
-                    let user_time = app.motion_queue.user_time_seconds;
-                    // start_motion already handles the "" fallback
-                    let motions = app.loaded_motions.get("TapBody")
+                // V2 models have motions loaded internally by the C++ wrapper.
+                // V3 models: try "TapBody" first, then fall back to "".
+                let has_tap_motion = app.is_v2
+                    || app
+                        .loaded_motions
+                        .get("TapBody")
                         .or_else(|| app.loaded_motions.get(""))
-                        .unwrap();
-                    let idx = (user_time as usize) % motions.len();
-                    app.start_motion("TapBody", Some(idx));
+                        .is_some_and(|m| !m.is_empty());
+                if has_tap_motion && ui.button("点击身体").clicked() {
+                    if app.is_v2 {
+                        // V2: motions are internal to C++ wrapper; cycle through indices
+                        let idx = (app.motion_queue.user_time_seconds as usize) % 3;
+                        app.start_motion("TapBody", Some(idx));
+                    } else {
+                        let user_time = app.motion_queue.user_time_seconds;
+                        let motions = app.loaded_motions.get("TapBody")
+                            .or_else(|| app.loaded_motions.get(""))
+                            .unwrap();
+                        let idx = (user_time as usize) % motions.len();
+                        app.start_motion("TapBody", Some(idx));
+                    }
                 }
 
                 ui.separator();
