@@ -1240,14 +1240,14 @@ impl AppState {
         cam_trans_x: f32,
         cam_trans_y: f32,
     ) {
-            if self.is_v2 {
-                // Python convention: click triggers random motion from any group
-                if let Some(ref mut v2) = self.v2_model {
-                    v2.start_random_motion("", 3);
-                    self.play_v2_motion_sound();
-                }
-                return;
+        if self.is_v2 {
+            // Python convention: click triggers random motion from any group
+            if let Some(ref mut v2) = self.v2_model {
+                v2.start_random_motion("", 3);
+                self.play_v2_motion_sound();
             }
+            return;
+        }
 
         let model = match self.current_model {
             Some(ref m) => m,
@@ -1308,8 +1308,7 @@ impl AppState {
                             // Clone motion (owned) to release the immutable reference on loaded_motions
                             let mut motion = motions[idx].clone();
                             motion.is_loop = false;
-                            self.motion_queue
-                                .start_motion(motion, Some(2));
+                            self.motion_queue.start_motion(motion, Some(2));
                         }
                     }
                     return;

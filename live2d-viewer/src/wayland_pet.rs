@@ -834,9 +834,16 @@ fn run_event_loop(
 
         // Check if toolbar consumes a pending click before model interaction.
         let pending = state.ptr.pending_click.take();
-        let toolbar_action = pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
+        let toolbar_action =
+            pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
         if let Some(action) = toolbar_action {
-            handle_toolbar_action(action, &mut pet_model, &event_tx, model_dir, click_through, &model_list);
+            handle_toolbar_action(
+                action,
+                &mut pet_model,
+                model_dir,
+                click_through,
+                &model_list,
+            );
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
         }
@@ -1015,7 +1022,9 @@ fn run_event_loop(
     }
 
     // Drop GL resources in safe order: toolbar → model → context
-    unsafe { toolbar.destroy(&gl); }
+    unsafe {
+        toolbar.destroy(&gl);
+    }
     match pet_model {
         PetModel::V3 {
             _moc,
@@ -1079,12 +1088,9 @@ fn respawn_process(model_dir: &std::path::Path, click_through: bool, alwaysontop
 /// tray thread) because on Wayland the main window is minimized during
 /// AlwaysOnTop mode — the winit event loop may not fire
 /// `RedrawRequested`, so the main thread would never drain our events.
-/// `Minimize` is the only remote action that still goes through the main
-/// thread (it sets `request_minimize` on the main window, not the pet).
 fn handle_toolbar_action(
     action: crate::toolbar::ToolbarAction,
     pet_model: &mut PetModel,
-    event_tx: &mpsc::Sender<PetEvent>,
     model_dir: &std::path::PathBuf,
     click_through: bool,
     model_list: &[(std::path::PathBuf, crate::app::ModelFormat)],
@@ -1092,7 +1098,11 @@ fn handle_toolbar_action(
     match action {
         crate::toolbar::ToolbarAction::PrevModel => {
             if let Some(idx) = model_list.iter().position(|(d, _)| d == model_dir) {
-                let prev = if idx > 0 { idx - 1 } else { model_list.len() - 1 };
+                let prev = if idx > 0 {
+                    idx - 1
+                } else {
+                    model_list.len() - 1
+                };
                 let (new_dir, _) = &model_list[prev];
                 respawn_process(new_dir, click_through, true);
             }
@@ -1103,9 +1113,6 @@ fn handle_toolbar_action(
                 let (new_dir, _) = &model_list[next];
                 respawn_process(new_dir, click_through, true);
             }
-        }
-        crate::toolbar::ToolbarAction::Minimize => {
-            let _ = event_tx.send(PetEvent::ToolbarAction(action));
         }
         crate::toolbar::ToolbarAction::ExitPet => {
             respawn_process(model_dir, click_through, false);

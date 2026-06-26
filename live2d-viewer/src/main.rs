@@ -1,16 +1,16 @@
 mod app;
+mod audio;
 mod camera;
 mod data_dir;
 mod db;
-mod audio;
-mod v2_motion_sound;
 mod gui;
 mod model_loader;
 pub mod motion;
 mod renderer;
-mod toolbar;
 mod texture;
+mod toolbar;
 mod tray;
+mod v2_motion_sound;
 #[cfg(target_os = "linux")]
 pub mod wayland_pet;
 
@@ -105,8 +105,20 @@ fn main() -> anyhow::Result<()> {
                     let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
                     let new_ct = if id == "clickthrough" { !ct } else { ct };
                     let new_pm = match id.as_str() {
-                        "windowed_pet" => if pm == 1 { 0u8 } else { 1u8 },
-                        "alwaysontop_pet" => if pm == 2 { 0u8 } else { 2u8 },
+                        "windowed_pet" => {
+                            if pm == 1 {
+                                0u8
+                            } else {
+                                1u8
+                            }
+                        }
+                        "alwaysontop_pet" => {
+                            if pm == 2 {
+                                0u8
+                            } else {
+                                2u8
+                            }
+                        }
                         _ => pm,
                     };
                     if let Ok(exe) = std::env::current_exe() {
@@ -1178,9 +1190,6 @@ fn main() -> anyhow::Result<()> {
                                                 let _ = app.begin_switch(idx + 1);
                                             }
                                         }
-                                    }
-                                    crate::toolbar::ToolbarAction::Minimize => {
-                                        app.request_minimize = true;
                                     }
                                     crate::toolbar::ToolbarAction::ExitPet => {
                                         app.pet_mode = PetMode::Off;

@@ -17,7 +17,6 @@ pub enum ToolbarAction {
     ResetCamera,
     ZoomIn,
     ZoomOut,
-    Minimize,
     ExitPet,
 }
 
@@ -82,8 +81,7 @@ impl ToolbarOverlay {
 
     /// Update fade state and hover detection.  Call once per frame.
     pub fn update(&mut self, pointer_x: f64, pointer_y: f64, vp_w: u32, vp_h: u32) {
-        let near_right =
-            pointer_x >= (vp_w as f64 - HOVER_ZONE as f64) && pointer_x <= vp_w as f64;
+        let near_right = pointer_x >= (vp_w as f64 - HOVER_ZONE as f64) && pointer_x <= vp_w as f64;
         self.target_alpha = if near_right { 1.0 } else { 0.0 };
 
         // Smooth transition toward target
@@ -102,7 +100,13 @@ impl ToolbarOverlay {
 
     /// Returns the `ToolbarAction` if the pointer is on a visible button,
     /// or `None` if it missed or the toolbar is faded out.
-    pub fn handle_click(&self, pointer_x: f64, pointer_y: f64, vp_w: u32, vp_h: u32) -> Option<ToolbarAction> {
+    pub fn handle_click(
+        &self,
+        pointer_x: f64,
+        pointer_y: f64,
+        vp_w: u32,
+        vp_h: u32,
+    ) -> Option<ToolbarAction> {
         // Allow clicks as soon as the toolbar is rendered at all (alpha >= 0.01
         // matches the render cull check).  A higher threshold (0.5) caused
         // missed clicks during the 3–4 frame fade-in window (~50-67ms).
@@ -133,7 +137,7 @@ impl ToolbarOverlay {
 
     /// Returns `(start_y, Vec<(top, bottom)>)` for all buttons.
     fn button_layout(vp_h: f32) -> (f32, Vec<(f32, f32)>) {
-        let n = 7u32;
+        let n = 6u32;
         let total = n as f32 * BTN_H + (n - 1) as f32 * BTN_SPACING + 2.0 * SEP_GAP;
         let start_y = (vp_h - total) / 2.0;
         let mut ys = Vec::with_capacity(n as usize);
@@ -155,7 +159,6 @@ impl ToolbarOverlay {
             ToolbarAction::ResetCamera,
             ToolbarAction::ZoomIn,
             ToolbarAction::ZoomOut,
-            ToolbarAction::Minimize,
             ToolbarAction::ExitPet,
         ]
     }
@@ -203,7 +206,17 @@ impl ToolbarOverlay {
 
             // hover highlight
             if self.hover_idx == Some(i) {
-                Self::push_rect(&mut verts, btn_x, y0, btn_w, y1 - y0, 0.3, 0.3, 0.3, 0.7 * self.alpha);
+                Self::push_rect(
+                    &mut verts,
+                    btn_x,
+                    y0,
+                    btn_w,
+                    y1 - y0,
+                    0.3,
+                    0.3,
+                    0.3,
+                    0.7 * self.alpha,
+                );
             }
 
             let ic = [1.0, 1.0, 1.0, 0.85 * self.alpha]; // icon colour
@@ -213,9 +226,12 @@ impl ToolbarOverlay {
                     // ◀ left-pointing triangle
                     Self::push_tri(
                         &mut verts,
-                        icon_cx - ih, icon_cy,
-                        icon_cx + ih, icon_cy - ih,
-                        icon_cx + ih, icon_cy + ih,
+                        icon_cx - ih,
+                        icon_cy,
+                        icon_cx + ih,
+                        icon_cy - ih,
+                        icon_cx + ih,
+                        icon_cy + ih,
                         ic,
                     );
                 }
@@ -223,9 +239,12 @@ impl ToolbarOverlay {
                     // ▶ right-pointing triangle
                     Self::push_tri(
                         &mut verts,
-                        icon_cx + ih, icon_cy,
-                        icon_cx - ih, icon_cy - ih,
-                        icon_cx - ih, icon_cy + ih,
+                        icon_cx + ih,
+                        icon_cy,
+                        icon_cx - ih,
+                        icon_cy - ih,
+                        icon_cx - ih,
+                        icon_cy + ih,
                         ic,
                     );
                 }
@@ -238,9 +257,12 @@ impl ToolbarOverlay {
                         let a2 = (j + 1) as f32 * std::f32::consts::TAU / segments as f32;
                         Self::push_tri(
                             &mut verts,
-                            icon_cx, icon_cy,
-                            icon_cx + a1.cos() * r, icon_cy + a1.sin() * r,
-                            icon_cx + a2.cos() * r, icon_cy + a2.sin() * r,
+                            icon_cx,
+                            icon_cy,
+                            icon_cx + a1.cos() * r,
+                            icon_cy + a1.sin() * r,
+                            icon_cx + a2.cos() * r,
+                            icon_cy + a2.sin() * r,
                             ic,
                         );
                     }
@@ -249,41 +271,75 @@ impl ToolbarOverlay {
                     // + horizontal + vertical bar (each as a thin rect)
                     let bw = 2.0; // bar width
                     let bl = ih * 1.3; // bar length
-                    Self::push_rect(&mut verts, icon_cx - bl, icon_cy - bw / 2.0, bl * 2.0, bw, ic[0], ic[1], ic[2], ic[3]);
-                    Self::push_rect(&mut verts, icon_cx - bw / 2.0, icon_cy - bl, bw, bl * 2.0, ic[0], ic[1], ic[2], ic[3]);
+                    Self::push_rect(
+                        &mut verts,
+                        icon_cx - bl,
+                        icon_cy - bw / 2.0,
+                        bl * 2.0,
+                        bw,
+                        ic[0],
+                        ic[1],
+                        ic[2],
+                        ic[3],
+                    );
+                    Self::push_rect(
+                        &mut verts,
+                        icon_cx - bw / 2.0,
+                        icon_cy - bl,
+                        bw,
+                        bl * 2.0,
+                        ic[0],
+                        ic[1],
+                        ic[2],
+                        ic[3],
+                    );
                 }
                 ToolbarAction::ZoomOut => {
                     // - single horizontal bar
                     let bw = 2.0;
                     let bl = ih * 1.3;
-                    Self::push_rect(&mut verts, icon_cx - bl, icon_cy - bw / 2.0, bl * 2.0, bw, ic[0], ic[1], ic[2], ic[3]);
-                }
-                ToolbarAction::Minimize => {
-                    // ↓ downward triangle
-                    Self::push_tri(
+                    Self::push_rect(
                         &mut verts,
-                        icon_cx, icon_cy + ih,
-                        icon_cx - ih, icon_cy - ih,
-                        icon_cx + ih, icon_cy - ih,
-                        ic,
+                        icon_cx - bl,
+                        icon_cy - bw / 2.0,
+                        bl * 2.0,
+                        bw,
+                        ic[0],
+                        ic[1],
+                        ic[2],
+                        ic[3],
                     );
                 }
                 ToolbarAction::ExitPet => {
                     // ✖ two crossing thin rects at 45°
                     let half_len = ih * 0.8;
-                    let hw = 1.2;       // half-width (perpendicular)
+                    let hw = 1.2; // half-width (perpendicular)
                     let (cx, cy) = (icon_cx, icon_cy);
                     let (p1x, p1y) = (cx - half_len - hw, cy - half_len + hw);
                     let (p2x, p2y) = (cx - half_len + hw, cy - half_len - hw);
                     let (p3x, p3y) = (cx + half_len + hw, cy + half_len - hw);
                     let (p4x, p4y) = (cx + half_len - hw, cy + half_len + hw);
-                    Self::push_quad(&mut verts, (p1x, p1y), (p4x, p4y), (p3x, p3y), (p2x, p2y), ic);
+                    Self::push_quad(
+                        &mut verts,
+                        (p1x, p1y),
+                        (p4x, p4y),
+                        (p3x, p3y),
+                        (p2x, p2y),
+                        ic,
+                    );
                     // Bar /
                     let (q1x, q1y) = (cx + half_len + hw, cy - half_len + hw);
                     let (q2x, q2y) = (cx + half_len - hw, cy - half_len - hw);
                     let (q3x, q3y) = (cx - half_len - hw, cy + half_len - hw);
                     let (q4x, q4y) = (cx - half_len + hw, cy + half_len + hw);
-                    Self::push_quad(&mut verts, (q1x, q1y), (q4x, q4y), (q3x, q3y), (q2x, q2y), ic);
+                    Self::push_quad(
+                        &mut verts,
+                        (q1x, q1y),
+                        (q4x, q4y),
+                        (q3x, q3y),
+                        (q2x, q2y),
+                        ic,
+                    );
                 }
             }
         }
@@ -335,14 +391,33 @@ impl ToolbarOverlay {
         buf.push(a);
     }
 
-    fn push_tri(buf: &mut Vec<f32>, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, c: [f32; 4]) {
+    fn push_tri(
+        buf: &mut Vec<f32>,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        x3: f32,
+        y3: f32,
+        c: [f32; 4],
+    ) {
         Self::push_vert(buf, x1, y1, c[0], c[1], c[2], c[3]);
         Self::push_vert(buf, x2, y2, c[0], c[1], c[2], c[3]);
         Self::push_vert(buf, x3, y3, c[0], c[1], c[2], c[3]);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_rect(buf: &mut Vec<f32>, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
+    fn push_rect(
+        buf: &mut Vec<f32>,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) {
         // Two triangles: (x,y) → (x+w,y) → (x,y+h) and (x+w,y) → (x+w,y+h) → (x,y+h)
         Self::push_vert(buf, x, y, r, g, b, a);
         Self::push_vert(buf, x + w, y, r, g, b, a);
@@ -356,7 +431,10 @@ impl ToolbarOverlay {
     /// Quad from 4 corner points (ordered CCW or CW, two triangles).
     fn push_quad(
         buf: &mut Vec<f32>,
-        p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), p4: (f32, f32),
+        p1: (f32, f32),
+        p2: (f32, f32),
+        p3: (f32, f32),
+        p4: (f32, f32),
         c: [f32; 4],
     ) {
         Self::push_vert(buf, p1.0, p1.1, c[0], c[1], c[2], c[3]);
@@ -388,16 +466,22 @@ void main() {
     FragColor = vColor;
 }"#;
 
-    let program = gl.create_program().map_err(|e| format!("create program: {e}"))?;
+    let program = gl
+        .create_program()
+        .map_err(|e| format!("create program: {e}"))?;
 
-    let vs = gl.create_shader(VERTEX_SHADER).map_err(|e| format!("create vs: {e}"))?;
+    let vs = gl
+        .create_shader(VERTEX_SHADER)
+        .map_err(|e| format!("create vs: {e}"))?;
     gl.shader_source(vs, vs_src);
     gl.compile_shader(vs);
     if !gl.get_shader_compile_status(vs) {
         return Err(format!("vs compile: {}", gl.get_shader_info_log(vs)));
     }
 
-    let fs = gl.create_shader(FRAGMENT_SHADER).map_err(|e| format!("create fs: {e}"))?;
+    let fs = gl
+        .create_shader(FRAGMENT_SHADER)
+        .map_err(|e| format!("create fs: {e}"))?;
     gl.shader_source(fs, fs_src);
     gl.compile_shader(fs);
     if !gl.get_shader_compile_status(fs) {

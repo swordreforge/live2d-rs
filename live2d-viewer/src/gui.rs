@@ -278,7 +278,9 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.start_motion("TapBody", Some(idx));
                     } else {
                         let user_time = app.motion_queue.user_time_seconds;
-                        let motions = app.loaded_motions.get("TapBody")
+                        let motions = app
+                            .loaded_motions
+                            .get("TapBody")
                             .or_else(|| app.loaded_motions.get(""))
                             .unwrap();
                         let idx = (user_time as usize) % motions.len();
