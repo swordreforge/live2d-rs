@@ -727,6 +727,11 @@ fn run_event_loop(
     log::info!("[pet/wayland] event loop started (60 fps)");
 
     let mut prev_look_time = std::time::Instant::now();
+    // Track the EGL backbuffer size so we can resize it when the compositor
+    // re-configures the layer surface (e.g. niri shrinks an overlay pushed to
+    // a screen edge). Without this the compositor receives a stale-sized
+    // buffer and scales it to the new surface geometry, squishing the model.
+    let mut egl_surface_size = state.configured_size.unwrap_or((400, 500));
     'frame: loop {
         let frame_start = std::time::Instant::now();
 
@@ -739,6 +744,21 @@ fn run_event_loop(
 
         // 1. Dispatch pending Wayland events (configure, closed, etc.)
         event_queue.dispatch_pending(state)?;
+
+        // Resize the EGL backbuffer to match the compositor-configured surface
+        // geometry. On Wayland the compositor displays whatever buffer size we
+        // attach; if the buffer lags the configured size, it gets scaled to fit
+        // → model distortion.
+        if let Some((w, h)) = state.configured_size {
+            if (w, h) != egl_surface_size && w > 0 && h > 0 {
+                if let (Some(nw), Some(nh)) =
+                    (NonZeroU32::new(w), NonZeroU32::new(h))
+                {
+                    egl_surface.resize(&gl_context, nw, nh);
+                    egl_surface_size = (w, h);
+                }
+            }
+        }
 
         // 2. Check for commands from main thread (non-blocking)
         while let Ok(cmd) = cmd_rx.try_recv() {
