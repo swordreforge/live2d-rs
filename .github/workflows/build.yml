@@ -40,11 +40,15 @@ jobs:
           path: ~/.cargo/registry
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Export Cubism SDK path
+        run: |
+          echo "CUBISM_SDK_DIR=${{ github.workspace }}/.cubism-sdk/CubismSdkForNative-5-r.5" >> $GITHUB_ENV
+
       - name: Cache Cubism Core SDK
         id: cache-sdk
         uses: actions/cache@v4
         with:
-          path: ~/.cubism-sdk/CubismSdkForNative-5-r.5
+          path: .cubism-sdk/CubismSdkForNative-5-r.5
           key: cubism-core-5-r.5
 
       - name: Download Cubism Core SDK
@@ -52,12 +56,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p ~/.cubism-sdk
+          mkdir -p "$CUBISM_SDK_DIR"
           gh release download sdk-5-r.5 \
             -p "cubism-core-5-r.5.tar.gz" \
             -R ${{ github.repository }} \
-            --output ~/.cubism-sdk/cubism-core-5-r.5.tar.gz
-          tar xzf ~/.cubism-sdk/cubism-core-5-r.5.tar.gz -C ~/.cubism-sdk
+            --output "$CUBISM_SDK_DIR/../cubism-core-5-r.5.tar.gz"
+          tar xzf "$CUBISM_SDK_DIR/../cubism-core-5-r.5.tar.gz" -C "$CUBISM_SDK_DIR/.."
 
       - name: Build C++ static libraries (glad + V2 + v2_c_api)
         run: |
@@ -69,7 +73,7 @@ jobs:
       - name: Build Rust binary
         run: cargo build --release
         env:
-          LIVE2D_SDK_ROOT: ~/.cubism-sdk/CubismSdkForNative-5-r.5
+          LIVE2D_SDK_ROOT: ${{ env.CUBISM_SDK_DIR }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
