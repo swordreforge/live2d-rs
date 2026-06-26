@@ -640,10 +640,11 @@ impl AppState {
             return Err("index out of range".into());
         }
 
-        // Clear V3 state
+        // Clear state
         self.current_model = None;
         self.current_moc = None;
         self.v2_model = None;
+        self.last_v2_size = (0, 0); // force v2.resize() on next frame
         self.parameter_values.clear();
         self.parameter_names.clear();
         self.parameter_mins.clear();
