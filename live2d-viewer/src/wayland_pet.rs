@@ -897,10 +897,10 @@ fn run_event_loop(
                     if found != *last_hovered_area {
                         if let Some(ref name) = found {
                             v2_model.start_random_motion(&format!("tap_{}", name), 3);
-                            play_sound(&v2_model);
+                            play_sound(v2_model);
                             if name == "head" {
                                 v2_model.start_random_motion("flick_head", 3);
-                                play_sound(&v2_model);
+                                play_sound(v2_model);
                             }
                         }
                         *last_hovered_area = found;
@@ -910,7 +910,7 @@ fn run_event_loop(
                 // V2 tap: Python convention — random motion on click
                 if state.ptr.pending_click.take().is_some() {
                     v2_model.start_random_motion("", 3);
-                    play_sound(&v2_model);
+                    play_sound(v2_model);
                 }
 
                 let (vw, vh) = (size.0 as i32, size.1 as i32);
