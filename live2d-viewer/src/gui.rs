@@ -228,21 +228,27 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             .show(ctx, |ui| {
                 ui.label(format!("Parameters: {}", app.parameter_names.len()));
 
-                // Motion status
-                let motion_count = app.motion_queue.entries.len();
-                if motion_count > 0 {
-                    ui.label(format!("Motions: {}", motion_count));
-                    for (i, entry) in app.motion_queue.entries.iter().enumerate() {
-                        let loop_str = if entry.motion.is_loop {
-                            "循环"
-                        } else {
-                            "一次"
-                        };
-                        let fw = entry.cached_fade_weight;
-                        ui.label(format!(
-                            "  [{}] {} ({:.1}s, {}, fade={:.2})",
-                            i, entry.motion.data.duration, entry.motion.data.duration, loop_str, fw,
-                        ));
+                // Motion status — aggregate entries from all per-group queues
+                let total_entries: usize =
+                    app.motion_queues.values().map(|q| q.entries.len()).sum();
+                if total_entries > 0 {
+                    ui.label(format!("Motions: {}", total_entries));
+                    let mut sorted_groups: Vec<&String> = app.motion_queues.keys().collect();
+                    sorted_groups.sort();
+                    for group_name in sorted_groups {
+                        let queue = &app.motion_queues[group_name];
+                        for (i, entry) in queue.entries.iter().enumerate() {
+                            let loop_str = if entry.motion.is_loop {
+                                "循环"
+                            } else {
+                                "一次"
+                            };
+                            let fw = entry.cached_fade_weight;
+                            ui.label(format!(
+                                "  [{}:{}] ({:.1}s, {}, fade={:.2})",
+                                group_name, i, entry.motion.data.duration, loop_str, fw,
+                            ));
+                        }
                     }
                     ui.separator();
                 }
@@ -259,15 +265,30 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.start_motion("Idle", Some(0));
                     }
                     if ui.button("全部停止").clicked() {
-                        app.motion_queue.stop_all_motions();
+                        for q in app.motion_queues.values_mut() {
+                            q.stop_all_motions();
+                        }
                     }
                 });
 
-                if let Some(tap_motions) = app.loaded_motions.get("TapBody") {
-                    if !tap_motions.is_empty() && ui.button("点击身体").clicked() {
-                        let idx = (app.motion_queue.user_time_seconds as usize) % tap_motions.len();
-                        app.start_motion("TapBody", Some(idx));
-                    }
+                // Try "TapBody" first, then fall back to "" (some models use flat keys)
+                let has_tap_motion = app
+                    .loaded_motions
+                    .get("TapBody")
+                    .or_else(|| app.loaded_motions.get(""))
+                    .is_some_and(|m| !m.is_empty());
+                if has_tap_motion && ui.button("点击身体").clicked() {
+                    let user_time = app
+                        .motion_queues
+                        .values()
+                        .next()
+                        .map_or(0.0, |q| q.user_time_seconds);
+                    // start_motion already handles the "" fallback
+                    let motions = app.loaded_motions.get("TapBody")
+                        .or_else(|| app.loaded_motions.get(""))
+                        .unwrap();
+                    let idx = (user_time as usize) % motions.len();
+                    app.start_motion("TapBody", Some(idx));
                 }
 
                 ui.separator();

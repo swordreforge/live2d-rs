@@ -166,9 +166,7 @@ mod tray_imp {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    pub fn create_tray(
-        _pet_state: PetModeState,
-    ) -> (tray_icon::TrayIcon, MenuEventReceiver) {
+    pub fn create_tray(_pet_state: PetModeState) -> (tray_icon::TrayIcon, MenuEventReceiver) {
         let menu = Menu::new();
         let show_item = MenuItem::with_id("show", "Show Window", true, None);
         let clickthrough_item =

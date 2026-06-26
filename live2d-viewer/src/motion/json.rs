@@ -33,9 +33,9 @@ where
 {
     let v = serde_json::Value::deserialize(d)?;
     match v {
-        serde_json::Value::Object(_) => {
-            serde_json::from_value(v).map(Some).map_err(de::Error::custom)
-        }
+        serde_json::Value::Object(_) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(de::Error::custom),
         _ => Ok(None),
     }
 }

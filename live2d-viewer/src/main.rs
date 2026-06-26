@@ -103,15 +103,30 @@ fn main() -> anyhow::Result<()> {
                         let ct = tray_ct_state.load(std::sync::atomic::Ordering::Relaxed);
                         let new_ct = if id == "clickthrough" { !ct } else { ct };
                         let new_pm = match id.as_str() {
-                            "windowed_pet" => if pm == 1 { 0u8 } else { 1u8 },
-                            "alwaysontop_pet" => if pm == 2 { 0u8 } else { 2u8 },
+                            "windowed_pet" => {
+                                if pm == 1 {
+                                    0u8
+                                } else {
+                                    1u8
+                                }
+                            }
+                            "alwaysontop_pet" => {
+                                if pm == 2 {
+                                    0u8
+                                } else {
+                                    2u8
+                                }
+                            }
                             _ => pm,
                         };
                         if let Ok(exe) = std::env::current_exe() {
                             let mut args: Vec<String> = std::env::args()
                                 .skip(1)
-                                .filter(|a| !a.starts_with("--click-through") && !a.starts_with("--pet-mode=")
-                                    && !a.starts_with("--overlay"))
+                                .filter(|a| {
+                                    !a.starts_with("--click-through")
+                                        && !a.starts_with("--pet-mode=")
+                                        && !a.starts_with("--overlay")
+                                })
                                 .collect();
                             // Use the currently displayed model dir, not the original CLI arg
                             if let Ok(guard) = tray_model_dir.lock() {
@@ -120,7 +135,9 @@ fn main() -> anyhow::Result<()> {
                                     args.push(dir.clone());
                                 }
                             }
-                            if new_ct { args.push("--click-through".into()); }
+                            if new_ct {
+                                args.push("--click-through".into());
+                            }
                             match new_pm {
                                 1 => args.push("--pet-mode=windowed".into()),
                                 2 => args.push("--pet-mode=alwaysontop".into()),

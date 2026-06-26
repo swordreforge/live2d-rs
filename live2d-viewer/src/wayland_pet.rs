@@ -11,19 +11,18 @@ use smithay_client_toolkit::reexports::client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
 use smithay_client_toolkit::reexports::protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1,
-    zwlr_layer_surface_v1,
+    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 
 use std::ffi::c_void;
 use std::num::NonZeroU32;
 
+use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::ContextAttributesBuilder;
 use glutin::display::{Display, DisplayApiPreference};
 use glutin::prelude::*;
 use glutin::surface::{SurfaceAttributesBuilder, WindowSurface};
-use glow::HasContext;
 use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
@@ -48,7 +47,10 @@ pub enum PetCommand {
 
 /// Pet thread → Main thread events
 pub enum PetEvent {
-    Configured { width: u32, height: u32 },
+    Configured {
+        width: u32,
+        height: u32,
+    },
     /// Raw tap (click without drag) with coordinates + viewport + camera.
     /// Main thread does the full hit test (V2/V3 dispatch, drawable hit, motion).
     Tap {
@@ -285,14 +287,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.ptr.pointer_x = surface_x;
                 state.ptr.pointer_y = surface_y;
             }
             wl_pointer::Event::Leave { .. } => {
                 state.ptr.dragging = false;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 if state.ptr.dragging {
                     let offset_x = surface_x - state.ptr.drag_start_x;
                     let offset_y = surface_y - state.ptr.drag_start_y;
@@ -307,10 +317,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                     //   - intra-frame: multiple Motion events corrupting margin updates
                     //   - inter-frame: surface_x reset after commit → offset_x under-reports
                     //     total drag movement (surface_x is surface-local, not absolute)
-                    let new_mr =
-                        (state.ptr.frame_margin_right as f64 - offset_x).round() as i32;
-                    let new_mb =
-                        (state.ptr.frame_margin_bottom as f64 - offset_y).round() as i32;
+                    let new_mr = (state.ptr.frame_margin_right as f64 - offset_x).round() as i32;
+                    let new_mb = (state.ptr.frame_margin_bottom as f64 - offset_y).round() as i32;
                     state.ptr.margin_right = new_mr.max(0);
                     state.ptr.margin_bottom = new_mb.max(0);
                     state.layer_surface.set_margin(
@@ -342,7 +350,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                     }
                 }
             }
-            wl_pointer::Event::Button { button, state: btn_state, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
                 const BTN_LEFT: u32 = 0x110;
                 if button == BTN_LEFT {
                     let btn = match btn_state {
@@ -357,8 +369,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                             state.ptr.had_motion = false;
                         }
                         wl_pointer::ButtonState::Released => {
-                            let was_click =
-                                state.ptr.dragging && !state.ptr.had_motion;
+                            let was_click = state.ptr.dragging && !state.ptr.had_motion;
                             state.ptr.dragging = false;
                             if was_click {
                                 state.ptr.pending_click =
@@ -393,8 +404,7 @@ fn setup_pet_surface(
     let (globals, _) = registry_queue_init::<PetState>(&conn)?;
 
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
-    let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 =
-        globals.bind(&qh, 1..=4, ())?;
+    let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ())?;
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ())?;
 
     let surface = compositor.create_surface(&qh, ());
@@ -407,12 +417,9 @@ fn setup_pet_surface(
         (),
     );
     layer_surface.set_size(400, 500);
-    layer_surface.set_anchor(
-        zwlr_layer_surface_v1::Anchor::Bottom | zwlr_layer_surface_v1::Anchor::Right,
-    );
-    layer_surface.set_keyboard_interactivity(
-        zwlr_layer_surface_v1::KeyboardInteractivity::None,
-    );
+    layer_surface
+        .set_anchor(zwlr_layer_surface_v1::Anchor::Bottom | zwlr_layer_surface_v1::Anchor::Right);
+    layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
     layer_surface.set_margin(0, 20, 20, 0);
 
     // Apply initial click-through state (empty input region → passthrough)
@@ -438,7 +445,10 @@ fn setup_pet_surface(
     event_queue.roundtrip(&mut state)?;
 
     if let Some((w, h)) = state.configured_size {
-        let _ = event_tx.send(PetEvent::Configured { width: w, height: h });
+        let _ = event_tx.send(PetEvent::Configured {
+            width: w,
+            height: h,
+        });
     }
 
     // === GL context creation ===
@@ -463,10 +473,10 @@ fn setup_pet_surface(
     let not_current = unsafe { gl_display.create_context(&gl_config, &context_attrs)? };
 
     let (init_w, init_h) = state.configured_size.unwrap_or((400, 500));
-    let phys_w = NonZeroU32::new(init_w.max(1))
-        .ok_or_else(|| std::io::Error::other("zero width"))?;
-    let phys_h = NonZeroU32::new(init_h.max(1))
-        .ok_or_else(|| std::io::Error::other("zero height"))?;
+    let phys_w =
+        NonZeroU32::new(init_w.max(1)).ok_or_else(|| std::io::Error::other("zero width"))?;
+    let phys_h =
+        NonZeroU32::new(init_h.max(1)).ok_or_else(|| std::io::Error::other("zero height"))?;
     let surf_attrs =
         SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window, phys_w, phys_h);
     let egl_surface = unsafe { gl_display.create_window_surface(&gl_config, &surf_attrs)? };
@@ -501,20 +511,16 @@ fn setup_pet_surface(
     let pet_model = match model_format {
         crate::app::ModelFormat::V3 => {
             // Find model3.json by scanning directory (supports any filename)
-            let model3_path =
-                crate::model_loader::find_model3_json(model_dir)
-                    .map_err(|e| anyhow::anyhow!("find model3.json: {e}"))?;
+            let model3_path = crate::model_loader::find_model3_json(model_dir)
+                .map_err(|e| anyhow::anyhow!("find model3.json: {e}"))?;
             // Base dir for resolving relative paths (moc, textures)
-            let base_dir = model3_path
-                .parent()
-                .unwrap_or(model_dir)
-                .to_path_buf();
+            let base_dir = model3_path.parent().unwrap_or(model_dir).to_path_buf();
             let model3_json = crate::model_loader::Model3Json::from_file(&model3_path)
                 .map_err(|e| anyhow::anyhow!("parse model3.json: {e}"))?;
 
             let moc_path = base_dir.join(&model3_json.file_references.moc);
-            let moc_data = std::fs::read(&moc_path)
-                .map_err(|e| anyhow::anyhow!("read moc3: {e}"))?;
+            let moc_data =
+                std::fs::read(&moc_path).map_err(|e| anyhow::anyhow!("read moc3: {e}"))?;
 
             let moc = live2d_core::Moc::revive(&moc_data)
                 .map_err(|e| anyhow::anyhow!("Moc::revive: {e}"))?;
@@ -701,7 +707,10 @@ fn run_event_loop(
                         if enabled { "on" } else { "off" }
                     );
                 }
-                PetCommand::SetParameters { values, part_opacities } => {
+                PetCommand::SetParameters {
+                    values,
+                    part_opacities,
+                } => {
                     if let PetModel::V3 { ref mut model, .. } = &mut pet_model {
                         let mut params = model.parameters();
                         let mut param_slice = params.values_mut();
@@ -890,13 +899,9 @@ pub fn spawn_pet_surface(
                 click_through,
             }) => {
                 log::info!("[pet/wayland] enter: {:?}", model_dir);
-                if let Err(e) = setup_pet_surface(
-                    &model_dir,
-                    model_format,
-                    click_through,
-                    &cmd_rx,
-                    &event_tx,
-                ) {
+                if let Err(e) =
+                    setup_pet_surface(&model_dir, model_format, click_through, &cmd_rx, &event_tx)
+                {
                     log::error!("[pet/wayland] setup error: {:?}", e);
                     let _ = event_tx.send(PetEvent::Error(format!("{:#}", e)));
                 }

@@ -153,8 +153,8 @@ pub struct AppState {
     pub mouse_down: bool,
     pub last_mouse_x: f64,
     pub last_mouse_y: f64,
-    // Motion system
-    pub motion_queue: motion::MotionQueueManager,
+    // Motion system — per-group queues so independent groups play concurrently
+    pub motion_queues: HashMap<String, motion::MotionQueueManager>,
     pub expression_manager: motion::ExpressionManager,
     pub eye_blink: motion::eye_blink::EyeBlink,
     pub breath: motion::breath::Breath,
@@ -183,6 +183,9 @@ pub struct AppState {
     pub click_through: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
     pub pet_mode_changed: bool,
+    /// Seconds until next random idle motion switch.
+    /// Recharged each time a new idle motion starts.
+    pub idle_switch_timer: f32,
     /// True when camera needs recalculation (after pet mode window resize)
     pub camera_needs_fit: bool,
     /// Frame delay before showing pet toolbar (let window resize settle)
@@ -255,7 +258,7 @@ impl AppState {
             mouse_down: false,
             last_mouse_x: 0.0,
             last_mouse_y: 0.0,
-            motion_queue: motion::MotionQueueManager::new(),
+            motion_queues: HashMap::new(),
             expression_manager: motion::ExpressionManager::new(),
             eye_blink: motion::eye_blink::EyeBlink::new(),
             breath: motion::breath::Breath::new(),
@@ -265,6 +268,7 @@ impl AppState {
             eye_blink_param_ids: Vec::new(),
             lip_sync_param_ids: Vec::new(),
             auto_play_idle: true,
+            idle_switch_timer: 0.0,
             base_dir: None,
             hit_areas: Vec::new(),
             tap_count: 0,
@@ -445,7 +449,10 @@ impl AppState {
         self.pose_data = None;
         self.physics = None;
         self.part_ids.clear();
-        self.motion_queue.stop_all_motions();
+        for q in self.motion_queues.values_mut() {
+            q.stop_all_motions();
+        }
+        self.motion_queues.clear();
     }
 
     /// Process V3 raw data on main thread (Moc::revive, Model::initialize, parse JSONs).
@@ -611,17 +618,29 @@ impl AppState {
         }
     }
 
+    /// Lazy-init or retrieve the queue for a given motion category.
+    fn queue_for(&mut self, category: &str) -> &mut motion::MotionQueueManager {
+        self.motion_queues.entry(category.to_string()).or_default()
+    }
+
     /// Try to start the first idle motion.
     ///
     /// Some models (especially from games) store all motions under key `""`
     /// instead of `"Idle"`. Try `"Idle"` first, then fall back to `""`.
     fn try_start_idle_motion(&mut self) {
-        let motions = self
+        // Clone the motion first to release the immutable borrow on loaded_motions
+        let motion = self
             .loaded_motions
             .get("Idle")
-            .or_else(|| self.loaded_motions.get(""));
-        if let Some(first) = motions.and_then(|m| m.first()) {
-            self.motion_queue.start_motion(first.clone());
+            .or_else(|| self.loaded_motions.get(""))
+            .and_then(|m| m.first().cloned());
+        let key = if self.loaded_motions.contains_key("Idle") {
+            "Idle"
+        } else {
+            ""
+        };
+        if let Some(m) = motion {
+            self.queue_for(key).start_motion(m);
         }
     }
 
@@ -645,7 +664,10 @@ impl AppState {
         self.hit_areas.clear();
         self.pose_data = None;
         self.physics = None;
-        self.motion_queue.stop_all_motions();
+        for q in self.motion_queues.values_mut() {
+            q.stop_all_motions();
+        }
+        self.motion_queues.clear();
 
         let entry = &self.model_list[idx];
         let fmt = entry
@@ -1002,21 +1024,30 @@ impl AppState {
 
     /// Start a motion from a specific category (e.g. "Idle", "TapBody").
     /// If `index` is provided, plays that specific motion; otherwise plays the first one.
-    /// Falls back to `""` if `"Idle"` is not found.
+    /// Falls back to `""` if the specific category is not found (some models store all
+    /// motions under an empty-string key instead of using named categories).
     pub fn start_motion(&mut self, category: &str, index: Option<usize>) -> bool {
-        let motions = match self.loaded_motions.get(category) {
-            Some(m) => m,
-            None if category == "Idle" => match self.loaded_motions.get("") {
+        let (motion, cat_key) = {
+            let motions = match self.loaded_motions.get(category) {
                 Some(m) => m,
-                None => return false,
-            },
-            None => return false,
+                None => match self.loaded_motions.get("") {
+                    Some(m) => m,
+                    None => return false,
+                },
+            };
+            let idx = index.unwrap_or(0);
+            if idx >= motions.len() {
+                return false;
+            }
+            // Determine the queue key before the mutable borrow
+            let cat_key = if self.loaded_motions.contains_key(category) {
+                category.to_string()
+            } else {
+                String::new()
+            };
+            (motions[idx].clone(), cat_key)
         };
-        let idx = index.unwrap_or(0);
-        if idx >= motions.len() {
-            return false;
-        }
-        self.motion_queue.start_motion(motions[idx].clone());
+        self.queue_for(&cat_key).start_motion(motion);
         true
     }
 
@@ -1033,7 +1064,10 @@ impl AppState {
     /// Advance the motion system and apply to parameter values.
     /// Call this each frame before `update_parameters`.
     pub fn advance_motion(&mut self, delta_time: f32) {
-        self.motion_queue.advance_time(delta_time);
+        // Advance time on all per-group queues
+        for q in self.motion_queues.values_mut() {
+            q.advance_time(delta_time);
+        }
 
         // Read current part opacities from model for PartOpacity curve evaluation
         let mut motion_part_opacities: Vec<f32> = if let Some(ref model) = self.current_model {
@@ -1042,16 +1076,20 @@ impl AppState {
             Vec::new()
         };
 
-        // Evaluate motion curves (parameters + part opacities)
-        self.motion_queue.do_update_motion(
-            &self.parameter_names,
-            &self.param_lookup,
-            &mut self.parameter_values,
-            &self.eye_blink_param_ids,
-            &self.lip_sync_param_ids,
-            &self.part_ids,
-            &mut motion_part_opacities,
-        );
+        // Evaluate motion curves from all per-group queues.
+        // Each queue targets a different parameter set (from its motion group),
+        // so they collectively write to independent regions of param_values.
+        for q in self.motion_queues.values_mut() {
+            q.do_update_motion(
+                &self.parameter_names,
+                &self.param_lookup,
+                &mut self.parameter_values,
+                &self.eye_blink_param_ids,
+                &self.lip_sync_param_ids,
+                &self.part_ids,
+                &mut motion_part_opacities,
+            );
+        }
 
         // Write motion-updated part opacities to model (pose system will override
         // specific pose-group parts in update_pose, which runs after this)
@@ -1064,12 +1102,14 @@ impl AppState {
             }
         }
 
-        // Apply expression (if active)
-        self.expression_manager.apply(
-            &self.parameter_names,
-            &mut self.parameter_values,
-            self.motion_queue.user_time_seconds,
-        );
+        // Apply expression (if active) — use time from any queue (all synced)
+        let user_time = self
+            .motion_queues
+            .values()
+            .next()
+            .map_or(0.0, |q| q.user_time_seconds);
+        self.expression_manager
+            .apply(&self.parameter_names, &mut self.parameter_values, user_time);
 
         // Apply EyeBlink controller — overrides motion for eye blink parameters
         if !self.eye_blink_param_ids.is_empty() {
@@ -1116,9 +1156,19 @@ impl AppState {
             engine.evaluate(&mut params, delta_time);
         }
 
-        // Auto-restart Idle when all motions have finished
-        if self.auto_play_idle && self.motion_queue.entries.is_empty() {
-            self.try_start_idle_motion();
+        // Auto-restart Idle when its queue is empty (other groups may still be active)
+        if self.auto_play_idle {
+            let idle_done = self
+                .motion_queues
+                .get("Idle")
+                .map_or(true, |q| q.entries.is_empty());
+            let fallback_done = self
+                .motion_queues
+                .get("")
+                .map_or(true, |q| q.entries.is_empty());
+            if idle_done && fallback_done {
+                self.try_start_idle_motion();
+            }
         }
     }
 
@@ -1202,14 +1252,20 @@ impl AppState {
                 let c = &verts[tri[2] as usize];
 
                 if point_in_triangle(model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y) {
-                    if let Some(motions) = self.loaded_motions.get("TapBody") {
+                    // Try "TapBody" first, then fall back to "" (some models use flat keys)
+                    let motions = self
+                        .loaded_motions
+                        .get("TapBody")
+                        .or_else(|| self.loaded_motions.get(""));
+                    if let Some(motions) = motions {
                         if !motions.is_empty() {
                             let idx = self.tap_count % motions.len();
                             self.tap_count += 1;
-                            self.motion_queue.stop_all_motions();
+                            // Clone motion (owned) to release the immutable reference on loaded_motions
                             let mut motion = motions[idx].clone();
                             motion.is_loop = false;
-                            self.motion_queue.start_motion(motion);
+                            // Use "TapBody" queue to keep concurrent with idle on "" queue
+                            self.queue_for("TapBody").start_motion(motion);
                         }
                     }
                     return;
