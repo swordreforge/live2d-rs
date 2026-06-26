@@ -14,8 +14,10 @@
 # macOS
 .DS_Store
 
-# External dependency (separate git repo: EasyLive2D/live2d-py)
-live2d-py/
+# Build artifacts in live2d-py (source files tracked)
+live2d-py/build/
+live2d-py/package/
+live2d-py/cmake-build-*/
 
 # Build artifacts
 *.o
