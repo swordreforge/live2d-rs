@@ -198,6 +198,9 @@ pub struct AppState {
     pub request_restore: bool,
     /// True when window is minimized to a floating overlay
     pub minimized_to_float: bool,
+    /// Frame counter for throttling Wayland pet sync when minimized
+    /// (sync every 4th frame → ~15 Hz instead of 60 Hz, reducing alloc churn)
+    pub pet_sync_counter: u8,
     /// Saved pet mode window size (logical pixels) for restore
     pub saved_window_pet_size: (f64, f64),
     /// Pre-built parameter name → index lookup (built once at model load)
@@ -294,6 +297,7 @@ impl AppState {
             request_minimize: false,
             request_restore: false,
             minimized_to_float: false,
+            pet_sync_counter: 0,
             saved_window_pet_size: (0.0, 0.0),
             param_lookup: HashMap::new(),
             camera: Camera::new(),

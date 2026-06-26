@@ -579,20 +579,33 @@ fn main() -> anyhow::Result<()> {
                         }
 
                         // Sync parameters to AlwaysOnTop overlay thread
+                        // Guard: V3 only (V2 models never need pet overlay sync).
+                        // When minimized, throttle to ~15 Hz (every 4th frame)
+                        // to reduce Vec allocation & copy churn on idle frames.
                         #[cfg(target_os = "linux")]
-                        if let Some(ref tx) = app.pet_wayland_cmd_tx {
-                            let values = app.parameter_values.clone();
-                            let part_opacities = app
-                                .current_model
-                                .as_ref()
-                                .map(|m| m.parts().opacities().to_vec())
-                                .unwrap_or_default();
-                            let _ = tx.send(
-                                crate::wayland_pet::PetCommand::SetParameters {
-                                    values,
-                                    part_opacities,
-                                },
-                            );
+                        if !app.is_v2 {
+                            if let Some(ref tx) = app.pet_wayland_cmd_tx {
+                                let need_sync = if app.minimized_to_float {
+                                    app.pet_sync_counter = (app.pet_sync_counter + 1) & 3;
+                                    app.pet_sync_counter == 0
+                                } else {
+                                    true
+                                };
+                                if need_sync {
+                                    let values = app.parameter_values.clone();
+                                    let part_opacities = app
+                                        .current_model
+                                        .as_ref()
+                                        .map(|m| m.parts().opacities().to_vec())
+                                        .unwrap_or_default();
+                                    let _ = tx.send(
+                                        crate::wayland_pet::PetCommand::SetParameters {
+                                            values,
+                                            part_opacities,
+                                        },
+                                    );
+                                }
+                            }
                         }
 
                         let size = window.inner_size();
