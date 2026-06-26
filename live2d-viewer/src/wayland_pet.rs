@@ -85,12 +85,10 @@ enum PetModel {
         camera: crate::camera::Camera,
         look: crate::motion::look::Look,
         param_lookup: std::collections::HashMap<String, usize>,
-        last_size: (u32, u32),
     },
     V2 {
         v2_model: live2d_v2_core::Model,
         v2_vao: glow::NativeVertexArray,
-        last_size: (i32, i32),
         hit_areas: Vec<crate::model_loader::HitArea>,
         last_hovered_area: Option<String>,
         /// V2 motion sound lookup: group -> Vec<(mtn_filename, Option<absolute_sound_path>)>
@@ -231,8 +229,28 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for PetState {
                 width,
                 height,
             } => {
-                if width > 0 && height > 0 {
-                    state.configured_size = Some((width, height));
+                match state.configured_size {
+                    None => {
+                        // First Configure: accept the compositor-given size as our
+                        // one-and-only surface size.  We keep this forever.
+                        if width > 0 && height > 0 {
+                            state.configured_size = Some((width, height));
+                        }
+                    }
+                    Some((ow, oh)) => {
+                        // Compositor is trying to resize us (e.g. niri shrinks an
+                        // overlay dragged to a screen edge).  Bounce back to the
+                        // original size so the surface geometry never changes and
+                        // neither V2 nor V3 model rendering is distorted.
+                        if width != ow || height != oh {
+                            state.layer_surface.set_size(ow, oh);
+                            state.surface.commit();
+                            log::debug!(
+                                "[pet/wayland] compositor tried to resize to \
+                                 ({width},{height}), bouncing to ({ow},{oh})"
+                            );
+                        }
+                    }
                 }
                 state.layer_surface.ack_configure(serial);
             }
@@ -596,7 +614,6 @@ fn setup_pet_surface(
                 camera,
                 look: crate::motion::look::Look::new(),
                 param_lookup,
-                last_size: init_size,
             }
         }
         crate::app::ModelFormat::V2 => {
@@ -682,7 +699,6 @@ fn setup_pet_surface(
             PetModel::V2 {
                 v2_model: v2,
                 v2_vao,
-                last_size: (init_size.0 as i32, init_size.1 as i32),
                 hit_areas,
                 last_hovered_area: None,
                 motion_sounds,
@@ -727,11 +743,9 @@ fn run_event_loop(
     log::info!("[pet/wayland] event loop started (60 fps)");
 
     let mut prev_look_time = std::time::Instant::now();
-    // Track the EGL backbuffer size so we can resize it when the compositor
-    // re-configures the layer surface (e.g. niri shrinks an overlay pushed to
-    // a screen edge). Without this the compositor receives a stale-sized
-    // buffer and scales it to the new surface geometry, squishing the model.
-    let mut egl_surface_size = state.configured_size.unwrap_or((400, 500));
+    // Surface size is pinned: the Configure handler bounces any compositor-
+    // initiated resize back to the original configured size.  No EGL buffer /
+    // camera / model resize is needed after initial setup.
     'frame: loop {
         let frame_start = std::time::Instant::now();
 
@@ -744,21 +758,6 @@ fn run_event_loop(
 
         // 1. Dispatch pending Wayland events (configure, closed, etc.)
         event_queue.dispatch_pending(state)?;
-
-        // Resize the EGL backbuffer to match the compositor-configured surface
-        // geometry. On Wayland the compositor displays whatever buffer size we
-        // attach; if the buffer lags the configured size, it gets scaled to fit
-        // → model distortion.
-        if let Some((w, h)) = state.configured_size {
-            if (w, h) != egl_surface_size && w > 0 && h > 0 {
-                if let (Some(nw), Some(nh)) =
-                    (NonZeroU32::new(w), NonZeroU32::new(h))
-                {
-                    egl_surface.resize(&gl_context, nw, nh);
-                    egl_surface_size = (w, h);
-                }
-            }
-        }
 
         // 2. Check for commands from main thread (non-blocking)
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -821,23 +820,10 @@ fn run_event_loop(
                 camera,
                 look,
                 param_lookup,
-                last_size,
                 ..
             } => {
-                // Re-fit camera if window size changed (e.g. compositor re-configures
-                // the overlay surface when dragged to a screen edge on niri, river, etc.)
-                if (size.0, size.1) != *last_size {
-                    let canvas = model.canvas_info();
-                    camera.fit_to_canvas(
-                        canvas.size_in_pixels.X,
-                        canvas.size_in_pixels.Y,
-                        canvas.pixels_per_unit,
-                        size.0 as f32,
-                        size.1 as f32,
-                    );
-                    *last_size = (size.0, size.1);
-                }
-
+                // Surface size is pinned (Configure handler bounces resizes), so
+                // the camera only needs its initial fit_to_canvas at model load.
                 // V3 local look: self-contained like V2's drag() — no main-thread dependency
                 let (px, py) = (state.ptr.pointer_x as f32, state.ptr.pointer_y as f32);
                 let (cw, ch) = (size.0 as f32, size.1 as f32);
@@ -898,7 +884,6 @@ fn run_event_loop(
             PetModel::V2 {
                 v2_model,
                 v2_vao,
-                last_size,
                 hit_areas,
                 last_hovered_area,
                 ref motion_sounds,
@@ -950,11 +935,8 @@ fn run_event_loop(
                     play_sound(v2_model);
                 }
 
-                let (vw, vh) = (size.0 as i32, size.1 as i32);
-                if (vw, vh) != *last_size {
-                    v2_model.resize(vw, vh);
-                    *last_size = (vw, vh);
-                }
+                // Surface size is pinned (Configure handler bounces resizes), so
+                // the V2 model only needs its initial resize() call at model load.
                 unsafe {
                     gl.bind_vertex_array(Some(*v2_vao));
                 }
