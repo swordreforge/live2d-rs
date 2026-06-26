@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake \
+            gcc \
+            g++ \
+            libgl1-mesa-dev
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cubism Core SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cubism-sdk/CubismSdkForNative-5-r.5
+          key: cubism-core-5-r.5
+
+      - name: Download Cubism Core SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ~/.cubism-sdk
+          gh release download sdk-5-r.5 \
+            -p "cubism-core-5-r.5.tar.gz" \
+            -R ${{ github.repository }} \
+            --output ~/.cubism-sdk/cubism-core-5-r.5.tar.gz
+          tar xzf ~/.cubism-sdk/cubism-core-5-r.5.tar.gz -C ~/.cubism-sdk
+
+      - name: Build C++ static libraries (glad + V2 + v2_c_api)
+        run: |
+          cd live2d-py
+          ln -sf CMakeLists.core.txt CMakeLists.txt
+          cmake -B build
+          cmake --build build --target v2_c_api -j$(nproc)
+
+      - name: Build Rust binary
+        run: cargo build --release
+        env:
+          LIVE2D_SDK_ROOT: ~/.cubism-sdk/CubismSdkForNative-5-r.5
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: live2d-viewer-x86_64-linux
+          path: target/release/live2d-viewer
