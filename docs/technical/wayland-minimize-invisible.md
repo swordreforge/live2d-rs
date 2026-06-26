@@ -145,14 +145,14 @@ The working approach doesn't actually "hide" the window. Instead, it renders not
 
 ```
 ┌─────────────────────────────────────────────┐
-│  request_minimize → 1×1 (niri → 400×500)    │
-│  minimized_to_float = true                   │
-│                                              │
-│  clear_color = transparent (rgba 0,0,0,0)   │
-│  model = skip (!minimized_to_float guard)    │
-│  egui frame = skip (AlwaysOnTop guard)       │
-│  play button = skip (AlwaysOnTop guard)      │
-│  swap_buffers → nothing visible              │
+│  request_minimize → 1×1 (niri → 400×500)    		 │
+│  minimized_to_float = true                  		 │
+│                                                    │
+│  clear_color = transparent (rgba 0,0,0,0)          │
+│  model = skip (!minimized_to_float guard)          │
+│  egui frame = skip (AlwaysOnTop guard)             │
+│  play button = skip (AlwaysOnTop guard)            │
+│  swap_buffers → nothing visible                    │
 └─────────────────────────────────────────────┘
 ```
 

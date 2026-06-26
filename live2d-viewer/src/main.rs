@@ -433,29 +433,35 @@ fn main() -> anyhow::Result<()> {
                         if app.pet_mode_changed {
                             match app.pet_mode {
                                 PetMode::Windowed => {
-                                    // ── Windowed pet: main window → transparent, always-on-top ──
-                                    pet_state.store(tray::PET_WINDOWED, Ordering::Release);
-                                    // First kill any active always-on-top pet thread
-                                    #[cfg(target_os = "linux")]
-                                    detach_always_on_top(&mut app);
-
-                                    window.set_decorations(false);
-                                    window.set_window_level(WindowLevel::AlwaysOnTop);
-                                    if let Some(ref model) = app.current_model {
-                                        let canvas = model.canvas_info();
-                                        request_model_window(
-                                            &window,
-                                            canvas.size_in_pixels.X,
-                                            canvas.size_in_pixels.Y,
+                                    if app::is_gnome() {
+                                        app.error_message = Some(
+                                            "GNOME 不支持 Live2D 宠物模式。\n推荐使用以下替代应用：\n• ppet3\n• live2d-kanban-desktop-bin\n• 或搜索可用的 Flatpak 看板/桌宠应用".into()
                                         );
+                                        app.pet_mode = PetMode::Off;
+                                    } else {
+                                        // ── Windowed pet: main window → transparent, always-on-top ──
+                                        pet_state.store(tray::PET_WINDOWED, Ordering::Release);
+                                        #[cfg(target_os = "linux")]
+                                        detach_always_on_top(&mut app);
+
+                                        window.set_decorations(false);
+                                        window.set_window_level(WindowLevel::AlwaysOnTop);
+                                        if let Some(ref model) = app.current_model {
+                                            let canvas = model.canvas_info();
+                                            request_model_window(
+                                                &window,
+                                                canvas.size_in_pixels.X,
+                                                canvas.size_in_pixels.Y,
+                                            );
+                                        }
+                                        log::info!(
+                                            "[pet/windowed] enter: canvas=({:.0},{:.0})",
+                                            app.canvas_pixel_size.0,
+                                            app.canvas_pixel_size.1
+                                        );
+                                        app.camera_needs_fit = true;
+                                        app.pet_mode_delay = 2;
                                     }
-                                    log::info!(
-                                        "[pet/windowed] enter: canvas=({:.0},{:.0})",
-                                        app.canvas_pixel_size.0,
-                                        app.canvas_pixel_size.1
-                                    );
-                                    app.camera_needs_fit = true;
-                                    app.pet_mode_delay = 2;
                                 }
                                 PetMode::AlwaysOnTop => {
                                     // ── Always on Top pet: spawn sctk layer-shell thread ──
@@ -503,6 +509,11 @@ fn main() -> anyhow::Result<()> {
                                         log::warn!(
                                             "[pet/always-on-top] not supported on this platform"
                                         );
+                                        if app::is_gnome() {
+                                            app.error_message = Some(
+                                                "GNOME 不支持 Live2D 宠物模式。\n推荐使用以下替代应用：\n• ppet3\n• live2d-kanban-desktop-bin\n• 或搜索可用的 Flatpak 看板/桌宠应用".into()
+                                            );
+                                        }
                                         app.pet_mode = PetMode::Off;
                                     }
                                 }
