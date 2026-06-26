@@ -103,7 +103,10 @@ impl ToolbarOverlay {
     /// Returns the `ToolbarAction` if the pointer is on a visible button,
     /// or `None` if it missed or the toolbar is faded out.
     pub fn handle_click(&self, pointer_x: f64, pointer_y: f64, vp_w: u32, vp_h: u32) -> Option<ToolbarAction> {
-        if self.alpha < 0.5 {
+        // Allow clicks as soon as the toolbar is rendered at all (alpha >= 0.01
+        // matches the render cull check).  A higher threshold (0.5) caused
+        // missed clicks during the 3–4 frame fade-in window (~50-67ms).
+        if self.alpha < 0.01 {
             return None;
         }
         let idx = Self::hit_test_impl(pointer_x as f32, pointer_y as f32, vp_w, vp_h)?;

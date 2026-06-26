@@ -722,6 +722,8 @@ fn setup_pet_surface(
         pet_model,
         cmd_rx,
         event_tx,
+        model_dir,
+        click_through,
     )?;
 
     Ok(())
@@ -742,6 +744,8 @@ fn run_event_loop(
     mut pet_model: PetModel,
     cmd_rx: &mpsc::Receiver<PetCommand>,
     event_tx: &mpsc::Sender<PetEvent>,
+    model_dir: &std::path::PathBuf,
+    mut click_through: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / 60.0);
     log::info!("[pet/wayland] event loop started (60 fps)");
@@ -781,6 +785,7 @@ fn run_event_loop(
                     // Already in pet mode, ignore
                 }
                 PetCommand::SetClickThrough(enabled) => {
+                    click_through = enabled;
                     if enabled {
                         let empty_region = state.compositor.create_region(qh, ());
                         state.surface.set_input_region(Some(&empty_region));
@@ -825,7 +830,7 @@ fn run_event_loop(
         let pending = state.ptr.pending_click.take();
         let toolbar_action = pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
         if let Some(action) = toolbar_action {
-            handle_toolbar_action(action, &mut pet_model, &event_tx);
+            handle_toolbar_action(action, &mut pet_model, &event_tx, model_dir, click_through);
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
         }
@@ -1030,19 +1035,43 @@ fn run_event_loop(
 // ---------------------------------------------------------------------------
 
 /// Execute a toolbar action.  Local actions (zoom, reset) are handled
-/// immediately; remote actions (prev/next model, minimize, exit) are
-/// forwarded to the main thread via `PetEvent::ToolbarAction`.
+/// immediately; remote actions (prev/next model, minimize) are forwarded
+/// to the main thread via `PetEvent::ToolbarAction`.
+///
+/// `ExitPet` is handled by respawning the process (same as the tray thread)
+/// because on Wayland the main window may be minimized during AlwaysOnTop
+/// mode — the winit event loop may not fire `RedrawRequested`, so the
+/// main thread would never drain our `PetEvent::ToolbarAction` event.
 fn handle_toolbar_action(
     action: crate::toolbar::ToolbarAction,
     pet_model: &mut PetModel,
     event_tx: &mpsc::Sender<PetEvent>,
+    model_dir: &std::path::PathBuf,
+    click_through: bool,
 ) {
     match action {
         crate::toolbar::ToolbarAction::PrevModel
         | crate::toolbar::ToolbarAction::NextModel
-        | crate::toolbar::ToolbarAction::Minimize
-        | crate::toolbar::ToolbarAction::ExitPet => {
+        | crate::toolbar::ToolbarAction::Minimize => {
             let _ = event_tx.send(PetEvent::ToolbarAction(action));
+        }
+        crate::toolbar::ToolbarAction::ExitPet => {
+            if let Ok(exe) = std::env::current_exe() {
+                let mut args: Vec<String> = std::env::args()
+                    .skip(1)
+                    .filter(|a| {
+                        !a.starts_with("--click-through")
+                            && !a.starts_with("--pet-mode=")
+                            && !a.starts_with("--overlay")
+                    })
+                    .collect();
+                args.push(model_dir.to_string_lossy().into_owned());
+                if click_through {
+                    args.push("--click-through".into());
+                }
+                let _ = std::process::Command::new(&exe).args(&args).spawn();
+            }
+            std::process::exit(0);
         }
         crate::toolbar::ToolbarAction::ResetCamera => match pet_model {
             PetModel::V3 { camera, .. } => {
