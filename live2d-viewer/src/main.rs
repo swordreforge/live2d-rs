@@ -3,6 +3,7 @@ mod camera;
 mod data_dir;
 mod db;
 mod audio;
+mod v2_motion_sound;
 mod gui;
 mod model_loader;
 pub mod motion;
