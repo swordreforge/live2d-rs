@@ -90,6 +90,8 @@ pub struct Live2dRenderer {
     prog_u: ProgramUniforms,
     mask_u: MaskUniforms,
     masked_u: MaskedUniforms,
+    /// Scratch buffer reused each frame to avoid allocating a new sort Vec.
+    sorted_scratch: Vec<(i32, usize)>,
 }
 
 impl Live2dRenderer {
@@ -113,6 +115,7 @@ impl Live2dRenderer {
             prog_u,
             mask_u,
             masked_u,
+            sorted_scratch: Vec::new(),
         })
     }
 
@@ -197,16 +200,18 @@ impl Live2dRenderer {
         // Then iterates _sortedObjectsIndexList[0..totalCount] in order.
         // The first drawableCount entries are drawables; the rest are offscreens.
         //
-        // We build an equivalent sorted iteration:
-        let mut sorted: Vec<(i32, usize)> = render_orders
-            .iter()
-            .enumerate()
-            .filter(|(src_idx, _)| *src_idx < n) // drawable entries only
-            .map(|(drawable_idx, &sort_pos)| (sort_pos, drawable_idx))
-            .collect();
-        sorted.sort_by_key(|(sort_pos, _)| *sort_pos);
+        // We build an equivalent sorted iteration by reusing the scratch buffer
+        self.sorted_scratch.clear();
+        self.sorted_scratch.extend(
+            render_orders
+                .iter()
+                .enumerate()
+                .filter(|(src_idx, _)| *src_idx < n) // drawable entries only
+                .map(|(drawable_idx, &sort_pos)| (sort_pos, drawable_idx)),
+        );
+        self.sorted_scratch.sort_by_key(|(sort_pos, _)| *sort_pos);
 
-        for &(_sort_pos, i) in &sorted {
+        for &(_sort_pos, i) in &self.sorted_scratch {
             let opacity = opacities[i];
             if opacity < 0.001 {
                 continue;
@@ -299,7 +304,13 @@ impl Live2dRenderer {
                         std::slice::from_raw_parts(m_pos.as_ptr() as *const f32, m_vc * 2);
                     let m_uv_f32 =
                         std::slice::from_raw_parts(m_uv.as_ptr() as *const f32, m_vc * 2);
-                    self.draw_mesh.upload(gl, m_pos_f32, m_uv_f32, m_idx);
+
+                    // SDK: mask drawables check VertexPositionsDidChange, not csmIsVisible
+                    let m_vp_changed =
+                        dynamic_flags[mi] & ffi::csmVertexPositionsDidChange as u8 != 0;
+                    if m_vp_changed || self.draw_mesh.vertex_count == 0 {
+                        self.draw_mesh.upload(gl, m_pos_f32, m_uv_f32, m_idx);
+                    }
                     self.draw_mesh.draw(gl);
                 }
 
@@ -362,7 +373,10 @@ impl Live2dRenderer {
                 gl.uniform_4_f32(m_scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
                 gl.uniform_1_f32(m_opacity_loc.as_ref(), opacity);
 
-                self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
+                let vp_changed = dynamic_flags[i] & ffi::csmVertexPositionsDidChange as u8 != 0;
+                if vp_changed || self.draw_mesh.vertex_count == 0 {
+                    self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
+                }
                 self.draw_mesh.draw(gl);
 
                 gl.active_texture(TEXTURE1);
@@ -409,7 +423,10 @@ impl Live2dRenderer {
                 gl.uniform_4_f32(scr_loc.as_ref(), sc.X, sc.Y, sc.Z, sc.W);
                 gl.uniform_1_f32(opacity_loc.as_ref(), opacity);
 
-                self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
+                let vp_changed = dynamic_flags[i] & ffi::csmVertexPositionsDidChange as u8 != 0;
+                if vp_changed || self.draw_mesh.vertex_count == 0 {
+                    self.draw_mesh.upload(gl, pos_f32, uv_f32, idx_slice);
+                }
                 self.draw_mesh.draw(gl);
             }
         }
