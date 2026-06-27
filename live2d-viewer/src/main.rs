@@ -173,6 +173,8 @@ fn main() -> anyhow::Result<()> {
             .with_transparent(true)
             .build(&event_loop)?,
     );
+    // Enable IME (fcitx5 / ibus) for CJK text input in egui text fields
+    window.set_ime_allowed(true);
 
     // Overlay mode: small window always-on-top at bottom-right corner
     if overlay_mode {
