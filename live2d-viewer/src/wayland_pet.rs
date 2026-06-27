@@ -1030,7 +1030,7 @@ fn run_event_loop(
             let pad = 0.1;
             let px = vpw * pad;
             let py = vph * pad;
-            let pw = vpw * (1.0 - 2.0 * pad);
+            let pw = (vpw - px - 56.0).max(120.0); // leave room for toolbar + 12px gap
             let ph = vph * (1.0 - 2.0 * pad);
 
             unsafe {
