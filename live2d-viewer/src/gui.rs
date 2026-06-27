@@ -82,10 +82,12 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             let mut deleted_idx = None;
             let mut switched_idx = None;
 
+            let row_h = 24.0;
             egui::ScrollArea::vertical()
                 .max_height(400.0)
-                .show(ui, |ui| {
-                    for (i, name) in model_names.iter().enumerate() {
+                .show_rows(ui, row_h, model_names.len(), |ui, range| {
+                    for i in range {
+                        let name = &model_names[i];
                 let selected = current_idx == Some(i);
                 let is_renaming = app.renaming_idx == Some(i);
 
@@ -362,10 +364,12 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             }
 
             let mut switch_idx: Option<usize> = None;
+            let results_clone = app.search_results.clone();
             egui::ScrollArea::vertical()
                 .max_height(350.0)
-                .show(ui, |ui| {
-            for result in &app.search_results {
+                .show_rows(ui, 24.0, results_clone.len(), |ui, range| {
+                    for i in range {
+                        let result = &results_clone[i];
                 let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
                 let label = format!(
                     "{}  ({:.0}%)",
@@ -567,11 +571,12 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                     ui.separator();
 
                     if !app.search_results.is_empty() {
+                        let results = app.search_results.clone();
                         egui::ScrollArea::vertical()
                             .max_height(300.0)
-                            .show(ui, |ui| {
-                        let results = app.search_results.clone();
-                        for result in &results {
+                            .show_rows(ui, 24.0, results.len(), |ui, range| {
+                                for i in range {
+                                    let result = &results[i];
                             let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
                             let label = format!("{}  ({:.0}%)", result.name, pct);
                             if ui
