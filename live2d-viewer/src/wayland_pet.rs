@@ -1055,13 +1055,13 @@ fn run_event_loop(
                 // Search query label
                 text_renderer.draw_text(
                     &gl, "Search:", px + 8.0, py + 6.0,
-                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
+                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0, 2.5,
                 );
                 // Query text (with cursor)
                 let display_q = format!("{}{}", state.search_query, "_");
                 text_renderer.draw_text(
                     &gl, &display_q, px + 8.0 + 70.0, py + 6.0,
-                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
+                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0, 2.5,
                 );
 
                 // Separator line — rebind toolbar program/vao (text_renderer unbound them)
@@ -1108,12 +1108,12 @@ fn run_event_loop(
                 if search_entries.is_empty() {
                     text_renderer.draw_text(
                         &gl, "(loading...)", px + 8.0, list_y,
-                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
+                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0, 2.5,
                     );
                 } else if filtered.is_empty() && !q_lower.is_empty() {
                     text_renderer.draw_text(
                         &gl, "(no matches)", px + 8.0, list_y,
-                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
+                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0, 2.5,
                     );
                 } else {
                     let max_visible = ((ph - 50.0) / entry_h) as usize;
@@ -1125,7 +1125,7 @@ fn run_event_loop(
                             text_renderer.draw_text(
                                 &gl, &filtered[i].1,
                                 px + 8.0, ey + 2.0,
-                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
+                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0, 2.5,
                             );
                         }
                     }
@@ -1134,7 +1134,7 @@ fn run_event_loop(
                 // Close button hint
                 text_renderer.draw_text(
                     &gl, "[Close]", px + 8.0, py + ph - 20.0,
-                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
+                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0, 2.5,
                 );
 
                 gl.disable(glow::BLEND);

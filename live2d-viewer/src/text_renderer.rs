@@ -378,6 +378,7 @@ impl TextRenderer {
         vp_w: u32,
         vp_h: u32,
         alpha_mult: f32,
+        glyph_scale: f32,
     ) {
         let vpw = vp_w as f32;
         let vph = vp_h as f32;
@@ -390,16 +391,18 @@ impl TextRenderer {
         let mut verts: Vec<f32> = Vec::new();
         let a = color[3] * alpha_mult;
         let start_x = x;
+        let gw = GLYPH_W as f32 * glyph_scale;
+        let gh = GLYPH_H as f32 * glyph_scale;
 
         for ch in text.chars() {
             if ch == '\n' {
                 x = start_x;
-                y += cell_h as f32;
+                y += cell_h as f32 * glyph_scale;
                 continue;
             }
             let code = ch as u32;
             if code < FIRST_CHAR || code >= FIRST_CHAR + TOTAL_CHARS as u32 {
-                x += cell_w as f32 * 0.6; // narrow placeholder
+                x += cell_w as f32 * glyph_scale * 0.6;
                 continue;
             }
             let idx = (code - FIRST_CHAR) as u32;
@@ -411,8 +414,8 @@ impl TextRenderer {
             let u1 = (col * cell_w + GLYPH_W) as f32 / atlas_w;
             let v1 = (row * cell_h + GLYPH_H) as f32 / atlas_h;
 
-            let x1 = x + GLYPH_W as f32;
-            let y1 = y + GLYPH_H as f32;
+            let x1 = x + gw;
+            let y1 = y + gh;
 
             // TL=(x,y), TR=(x1,y), BL=(x,y1), BR=(x1,y1)
             // UV: TL=(u0,v0), TR=(u1,v0), BL=(u0,v1), BR=(u1,v1)
@@ -434,7 +437,7 @@ impl TextRenderer {
                 blx, bly, u0, v1, color[0], color[1], color[2], a,
             ]);
 
-            x += cell_w as f32;
+            x += cell_w as f32 * glyph_scale;
         }
 
         if verts.is_empty() { return; }
