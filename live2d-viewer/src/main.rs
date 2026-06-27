@@ -516,9 +516,15 @@ fn main() -> anyhow::Result<()> {
                                         {
                                             let zoom = match format {
                                                 crate::app::ModelFormat::V2 => Some(app.v2_scale),
-                                                crate::app::ModelFormat::V3 => {
-                                                    Some((app.camera.scale_x + app.camera.scale_y) / 2.0)
-                                                }
+                                                // V3: no zoom_scale — fit_to_canvas in the pet thread
+                                                // correctly computes camera with Y-flip and aspect ratio.
+                                                // Passing zoom_scale here is fundamentally broken:
+                                                //   (1) scale_y is negative (Y-flip), so (scale_x+scale_y)/2
+                                                //       gives a near-zero value, and
+                                                //   (2) overwriting both axes with the same positive value
+                                                //       loses the Y-flip, rendering the model upside down.
+                                                // The user can adjust zoom via toolbar buttons in the pet.
+                                                crate::app::ModelFormat::V3 => None,
                                             };
                                             let _ = cmd_tx.send(
                                                 crate::wayland_pet::PetCommand::Enter {

@@ -767,8 +767,17 @@ fn setup_pet_surface(
                 init_size.1 as f32,
             );
             if let Some(z) = zoom_scale {
-                camera.scale_x = z;
-                camera.scale_y = z;
+                // Apply saved zoom as a multiplicative factor relative to the
+                // fit_to_canvas baseline.  This preserves the Y-flip sign and
+                // aspect ratio — unlike the old absolute override which set
+                // both axes to the same positive value (losing the Y-flip,
+                // rendering the model upside down).
+                let avg = (camera.scale_x.abs() + camera.scale_y.abs()) / 2.0;
+                if avg > 0.0 {
+                    let factor = z / avg;
+                    camera.scale_x *= factor;
+                    camera.scale_y *= factor;
+                }
                 camera.translate_x = 0.0;
                 camera.translate_y = 0.0;
             }

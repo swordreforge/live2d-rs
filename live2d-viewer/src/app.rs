@@ -597,7 +597,9 @@ impl AppState {
         let zoom = if self.is_v2 {
             Some(self.v2_scale)
         } else {
-            Some((self.camera.scale_x + self.camera.scale_y) / 2.0)
+            // Use average absolute scale — scale_y is negative (Y-flip from fit_to_canvas),
+            // so (scale_x + scale_y) / 2.0 produces a near-zero/incorrect value.
+            Some((self.camera.scale_x.abs() + self.camera.scale_y.abs()) / 2.0)
         };
         if let Some(ref db) = self.db {
             let _ = db.set_zoom(&path, zoom);
