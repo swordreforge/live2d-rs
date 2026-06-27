@@ -304,8 +304,9 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.update_parameters();
                     }
                 }
-            });
-    }
+        }); // close Window::show
+
+    } // close if app.current_model.is_some()
 
     // ── Search window ──
     let has_query = !app.search_query.is_empty();
@@ -377,7 +378,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
     // Position toolbar at model's right edge, vertically centered.
     // Clamp to window bounds so wide-aspect models don't push the panel off-screen.
-    let (toolbar_x, toolbar_y) = {
+    let (toolbar_x, toolbar_y): (f32, f32) = {
         let (cw, ch) = app.canvas_pixel_size;
         let (ww, wh) = app.window_size;
         let logical_w = screen_rect.width();
@@ -476,6 +477,16 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
                     ui.add_space(3.0);
 
+                    if small_btn(ui, "\u{1f50d}").clicked() {
+                        app.pet_search_open = !app.pet_search_open;
+                        if app.pet_search_open {
+                            app.search_query.clear();
+                            app.search_results.clear();
+                        }
+                    }
+
+                    ui.add_space(3.0);
+
                     if ui
                         .add(egui::Button::new("\u{2193}").min_size(egui::vec2(30.0, 22.0)))
                         .on_hover_text("Minimize to tray")
@@ -493,6 +504,67 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                 });
             });
         });
+
+    // ── Pet toolbar search popup ──
+    if app.pet_search_open {
+        egui::Area::new("pet_search".into())
+            .fixed_pos(egui::pos2((toolbar_x - 260.0).max(2.0), toolbar_y))
+            .order(egui::Order::Foreground)
+            .movable(false)
+            .show(ctx, |ui| {
+                let mut frame = egui::Frame::none();
+                frame.fill = egui::Color32::from_black_alpha(180);
+                frame.rounding = egui::Rounding::same(6.0);
+                frame.inner_margin = egui::Margin::symmetric(6.0, 4.0);
+                frame.show(ui, |ui| {
+                    ui.set_min_width(240.0);
+                    let prev = app.search_query.clone();
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.search_query)
+                            .hint_text("搜索模型...")
+                            .desired_width(228.0),
+                    );
+
+                    // Trigger search when query changes
+                    let query_changed = app.search_query != prev;
+                    if query_changed {
+                        if app.search_query.is_empty() {
+                            app.search_results.clear();
+                        } else if let Some(ref db) = app.db {
+                            let q = app.search_query.trim().to_string();
+                            if !q.is_empty() {
+                                app.search_results = db.search_models(&q, 20).unwrap_or_default();
+                            }
+                        }
+                    }
+
+                    ui.separator();
+
+                    if !app.search_results.is_empty() {
+                        let results = app.search_results.clone();
+                        for result in &results {
+                            let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
+                            let label = format!("{}  ({:.0}%)", result.name, pct);
+                            if ui
+                                .add(egui::Button::new(&label).min_size(egui::vec2(228.0, 22.0)))
+                                .clicked()
+                            {
+                                if let Some(idx) = app.model_list.iter().position(|e| {
+                                    e.dir.to_string_lossy() == result.file_path
+                                }) {
+                                    app.pet_search_open = false;
+                                    if let Err(e) = app.begin_switch(idx) {
+                                        app.error_message = Some(e);
+                                    }
+                                }
+                            }
+                        }
+                    } else if !app.search_query.is_empty() {
+                        ui.label("无匹配结果");
+                    }
+                });
+            });
+    }
 }
 
 fn small_btn(ui: &mut egui::Ui, label: &str) -> egui::Response {

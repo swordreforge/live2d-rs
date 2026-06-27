@@ -255,6 +255,8 @@ pub struct AppState {
     /// Search tab state
     pub search_query: String,
     pub search_results: Vec<db::SearchResult>,
+    /// Pet toolbar search popup visibility
+    pub pet_search_open: bool,
 }
 
 impl AppState {
@@ -337,6 +339,7 @@ impl AppState {
             pet_events_scratch: Vec::new(),
             search_query: String::new(),
             search_results: Vec::new(),
+            pet_search_open: false,
         }
     }
 
