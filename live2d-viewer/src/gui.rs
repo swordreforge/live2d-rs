@@ -79,6 +79,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
     Window::new("Model List")
         .default_width(280.0)
         .show(ctx, |ui| {
+            ui.set_max_width(260.0);
             let mut deleted_idx = None;
             let mut switched_idx = None;
 
@@ -92,6 +93,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 let is_renaming = app.renaming_idx == Some(i);
 
                 ui.horizontal(|ui| {
+                    ui.set_max_width(250.0);
                     ui.set_min_height(22.0);
 
                     if is_renaming {
