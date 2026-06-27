@@ -883,9 +883,15 @@ fn run_event_loop(
     };
 
     // Create text renderer for the search panel overlay
-    let mut text_renderer = unsafe {
-        crate::text_renderer::TextRenderer::new(&gl, 22.0)
-            .map_err(|e| anyhow::anyhow!("text renderer: {e}"))?
+    let mut text_renderer: Option<crate::text_renderer::TextRenderer> = unsafe {
+        match crate::text_renderer::TextRenderer::new(&gl, 22.0) {
+            Ok(tr) => Some(tr),
+            Err(e) => {
+                log::warn!("[pet/wayland] text renderer init failed: {e}");
+                log::warn!("[pet/wayland] search panel text disabled — install DejaVu/Noto fonts");
+                None
+            }
+        }
     };
 
     // Search panel state
@@ -1052,18 +1058,19 @@ fn run_event_loop(
                 gl.bind_vertex_array(None);
                 gl.use_program(None);
 
-                // Search query label (baseline-aligned)
-                text_renderer.draw_text(
-                    &gl, "Search:", px + 8.0, py + 24.0,
-                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
-                );
-                let qx = px + 8.0 + 120.0;
-                // Query text (with cursor)
-                let display_q = format!("{}{}", "_", state.search_query);
-                text_renderer.draw_text(
-                    &gl, &display_q, qx, py + 24.0,
-                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
-                );
+                 // Search query label (baseline-aligned)
+                if let Some(ref mut tr) = text_renderer {
+                    tr.draw_text(
+                        &gl, "Search:", px + 8.0, py + 24.0,
+                        [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
+                    );
+                    let qx = px + 8.0 + 120.0;
+                    let display_q = format!("{}{}", "_", state.search_query);
+                    tr.draw_text(
+                        &gl, &display_q, qx, py + 24.0,
+                        [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
+                    );
+                }
 
                 // Separator line — rebind toolbar program/vao (text_renderer unbound them)
                 let sep_y = py + 32.0;
@@ -1097,7 +1104,9 @@ fn run_event_loop(
                 gl.use_program(None);
 
                 // Result entries
-                let entry_h = text_renderer.line_height() + 4.0;
+                let entry_h = text_renderer
+                    .as_ref()
+                    .map_or(26.0, |tr| tr.line_height() + 4.0);
                 let list_y = py + 42.0;
                 let q_lower = state.search_query.to_lowercase();
                 let filtered: Vec<&(String, String)> = search_entries
@@ -1106,38 +1115,40 @@ fn run_event_loop(
                         q_lower.is_empty() || name.to_lowercase().contains(&q_lower)
                     })
                     .collect();
-                if search_entries.is_empty() {
-                    text_renderer.draw_text(
-                        &gl, "(loading...)", px + 8.0, list_y,
-                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
-                    );
-                } else if filtered.is_empty() && !q_lower.is_empty() {
-                    text_renderer.draw_text(
-                        &gl, "(no matches)", px + 8.0, list_y,
-                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
-                    );
-                } else {
-                    let max_visible = ((ph - 50.0) / entry_h) as usize;
-                    let total = filtered.len();
-                    let visible = max_visible.min(total);
-                    for i in 0..visible {
-                        let ey = list_y + i as f32 * entry_h - search_scroll;
-                        if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
-                            let baseline = ey + text_renderer.line_height() * 0.75;
-                            text_renderer.draw_text(
-                                &gl, &filtered[i].1,
-                                px + 8.0, baseline,
-                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
-                            );
+                if let Some(ref mut tr) = text_renderer {
+                    if search_entries.is_empty() {
+                        tr.draw_text(
+                            &gl, "(loading...)", px + 8.0, list_y,
+                            [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
+                        );
+                    } else if filtered.is_empty() && !q_lower.is_empty() {
+                        tr.draw_text(
+                            &gl, "(no matches)", px + 8.0, list_y,
+                            [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
+                        );
+                    } else {
+                        let max_visible = ((ph - 50.0) / entry_h) as usize;
+                        let total = filtered.len();
+                        let visible = max_visible.min(total);
+                        for i in 0..visible {
+                            let ey = list_y + i as f32 * entry_h - search_scroll;
+                            if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
+                                let baseline = ey + tr.line_height() * 0.75;
+                                tr.draw_text(
+                                    &gl, &filtered[i].1,
+                                    px + 8.0, baseline,
+                                    [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
+                                );
+                            }
                         }
                     }
-                }
 
-                // Close button hint
-                text_renderer.draw_text(
-                    &gl, "[Close]", px + 8.0, py + ph - 20.0,
-                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
-                );
+                    // Close button hint
+                    tr.draw_text(
+                        &gl, "[Close]", px + 8.0, py + ph - 20.0,
+                        [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
+                    );
+                }
 
                 gl.disable(glow::BLEND);
                 gl.bind_texture(glow::TEXTURE_2D, None);
@@ -1147,7 +1158,9 @@ fn run_event_loop(
 
             // Handle click on search results
             if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                let entry_h = text_renderer.line_height() + 4.0;
+                let entry_h = text_renderer
+                    .as_ref()
+                    .map_or(26.0, |tr| tr.line_height() + 4.0);
                 let list_y = py + 42.0;
                 let max_visible = ((ph - 50.0) / entry_h) as usize;
                 let filtered_clone: Vec<(String, String)> = search_entries
