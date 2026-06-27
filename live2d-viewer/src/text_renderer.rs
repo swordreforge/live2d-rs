@@ -126,6 +126,7 @@ pub struct TextRenderer {
     vbo: NativeBuffer,
     font_tex: NativeTexture,
     font: FontVec,
+    font_size: f32,
     cache: HashMap<char, GlyphSlot>,
     cursor_x: u32,
     cursor_y: u32,
@@ -199,6 +200,7 @@ impl TextRenderer {
             vbo,
             font_tex,
             font,
+            font_size: px_size,
             cache: HashMap::new(),
             cursor_x: 0,
             cursor_y: 0,
@@ -214,7 +216,7 @@ impl TextRenderer {
             return Some(s);
         }
 
-        let scale = PxScale::from(self.line_h / 1.2); // font size ≈ line_h / 1.2
+        let scale = PxScale::from(self.font_size);
         let glyph_id = self.font.glyph_id(ch);
         let outlined = self.font.outline_glyph(glyph_id.with_scale(scale))?;
         let bounds = outlined.px_bounds();
