@@ -21,12 +21,12 @@ pub enum ToolbarAction {
     ExitPet,
 }
 
-const TOOLBAR_W: f32 = 44.0; // px
-const BTN_H: f32 = 26.0;
-const BTN_SPACING: f32 = 4.0;
-const SEP_GAP: f32 = 8.0;
+const TOOLBAR_W: f32 = 56.0; // px
+const BTN_H: f32 = 34.0;
+const BTN_SPACING: f32 = 6.0;
+const SEP_GAP: f32 = 10.0;
 const FADE_SPEED: f32 = 0.15;
-const HOVER_ZONE: f32 = 50.0; // px from right edge to show toolbar
+const HOVER_ZONE: f32 = 65.0; // px from right edge to show toolbar
 
 fn ndc(sx: f32, sy: f32, w: f32, h: f32) -> [f32; 2] {
     [
@@ -208,7 +208,7 @@ impl ToolbarOverlay {
             let (y0, y1) = button_ys[i];
             let icon_cx = btn_x + btn_w / 2.0;
             let icon_cy = (y0 + y1) / 2.0;
-            let ih = 4.5; // icon half-size
+            let ih = 6.0; // icon half-size
 
             // hover highlight
             if self.hover_idx == Some(i) {
@@ -275,7 +275,7 @@ impl ToolbarOverlay {
                 }
                 ToolbarAction::ZoomIn => {
                     // + horizontal + vertical bar (each as a thin rect)
-                    let bw = 2.0; // bar width
+                    let bw = 2.5; // bar width
                     let bl = ih * 1.3; // bar length
                     Self::push_rect(
                         &mut verts,
@@ -335,7 +335,7 @@ impl ToolbarOverlay {
                     // handle: 45° line from bottom-right of lens outward
                     let hcx = cx + 0.707 * r;
                     let hcy = cy + 0.707 * r;
-                    let hw = 1.0;
+                    let hw = 1.5;
                     let hlen = ih * 1.0;
                     Self::push_quad(
                         &mut verts,
@@ -357,7 +357,7 @@ impl ToolbarOverlay {
                 ToolbarAction::ExitPet => {
                     // ✖ two crossing thin rects at 45°
                     let half_len = ih * 0.8;
-                    let hw = 1.2; // half-width (perpendicular)
+                    let hw = 1.6; // half-width (perpendicular)
                     let (cx, cy) = (icon_cx, icon_cy);
                     let (p1x, p1y) = (cx - half_len - hw, cy - half_len + hw);
                     let (p2x, p2y) = (cx - half_len + hw, cy - half_len - hw);

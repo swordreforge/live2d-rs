@@ -937,7 +937,7 @@ fn run_event_loop(
 
     // Create text renderer for the search panel overlay
     let mut text_renderer: Option<crate::text_renderer::TextRenderer> = unsafe {
-        match crate::text_renderer::TextRenderer::new(&gl, 22.0) {
+        match crate::text_renderer::TextRenderer::new(&gl, 28.0) {
             Ok(tr) => Some(tr),
             Err(e) => {
                 log::warn!("[pet/wayland] text renderer init failed: {e}");
@@ -1118,19 +1118,19 @@ fn run_event_loop(
                  // Search query label (baseline-aligned)
                 if let Some(ref mut tr) = text_renderer {
                     tr.draw_text(
-                        &gl, "Search:", px + 8.0, py + 24.0,
+                        &gl, "Search:", px + 8.0, py + 30.0,
                         [0.5, 0.5, 0.6, 1.0], phys_size.0, phys_size.1, 1.0,
                     );
                     let qx = px + 8.0 + 120.0;
                     let display_q = format!("{}{}", "_", state.search_query);
                     tr.draw_text(
-                        &gl, &display_q, qx, py + 24.0,
+                        &gl, &display_q, qx, py + 30.0,
                         [1.0, 1.0, 0.8, 1.0], phys_size.0, phys_size.1, 1.0,
                     );
                 }
 
                 // Separator line — rebind toolbar program/vao (text_renderer unbound them)
-                let sep_y = py + 32.0;
+                let sep_y = py + 40.0;
                 let mut sep_v: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
                     &mut sep_v, px + 6.0, sep_y, pw - 12.0, 1.0,
@@ -1163,8 +1163,8 @@ fn run_event_loop(
                 // Result entries
                 let entry_h = text_renderer
                     .as_ref()
-                    .map_or(26.0, |tr| tr.line_height() + 4.0);
-                let list_y = py + 42.0;
+                    .map_or(32.0, |tr| tr.line_height() + 4.0);
+                let list_y = py + 50.0;
                 let q_lower = state.search_query.to_lowercase();
                 let filtered: Vec<&(String, String)> = search_entries
                     .iter()
@@ -1185,7 +1185,7 @@ fn run_event_loop(
                         );
                     } else {
                         let total = filtered.len();
-                        let max_visible = ((ph - 50.0) / entry_h) as usize;
+                        let max_visible = ((ph - 60.0) / entry_h) as usize;
                         let visible = max_visible.min(total);
                         // Clamp scroll to valid range
                         let max_scroll = ((total as f32) - visible as f32).max(0.0) * entry_h;
@@ -1223,9 +1223,9 @@ fn run_event_loop(
             if let Some((cx, cy)) = state.ptr.pending_click.take() {
                 let entry_h = text_renderer
                     .as_ref()
-                    .map_or(26.0, |tr| tr.line_height() + 4.0);
-                let list_y = py + 42.0;
-                let max_visible = ((ph - 50.0) / entry_h) as usize;
+                    .map_or(32.0, |tr| tr.line_height() + 4.0);
+                let list_y = py + 50.0;
+                let max_visible = ((ph - 60.0) / entry_h) as usize;
                 let filtered_clone: Vec<(String, String)> = search_entries
                     .iter()
                     .filter(|(_, name)| {
@@ -1254,10 +1254,10 @@ fn run_event_loop(
                         }
                     }
                 }
-                // Close button area (text rendered at baseline py+ph-20, top ≈ py+ph-38)
-                let close_y = py + ph - 42.0;
+                // Close button area (text rendered at baseline py+ph-20, top ≈ py+ph-48)
+                let close_y = py + ph - 48.0;
                 if cx >= (px + 6.0) as f64 && cx <= (px + pw - 6.0) as f64
-                    && cy >= close_y as f64 && cy <= (close_y + 26.0) as f64
+                    && cy >= close_y as f64 && cy <= (close_y + 34.0) as f64
                 {
                     state.search_open = false;
                     state.search_query.clear();
