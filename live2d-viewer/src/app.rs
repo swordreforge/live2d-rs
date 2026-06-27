@@ -25,7 +25,7 @@ fn is_v2_model_json(name: &str) -> bool {
 }
 
 /// Find the V2 model JSON file in a directory (e.g. model.json, model0.json).
-fn find_v2_model_json(dir: &Path) -> Option<PathBuf> {
+pub fn find_v2_model_json(dir: &Path) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();

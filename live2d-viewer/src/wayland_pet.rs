@@ -761,24 +761,10 @@ fn setup_pet_surface(
             }
         }
         crate::app::ModelFormat::V2 => {
-            // Try common V2 model JSON filenames
-            let model_json_path = {
-                let mj = model_dir.join("model.json");
-                if mj.exists() {
-                    mj
-                } else {
-                    let m0 = model_dir.join("model0.json");
-                    if m0.exists() {
-                        m0
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "no V2 model JSON (model.json/model0.json) found in {:?}",
-                            model_dir
-                        )
-                        .into());
-                    }
-                }
-            };
+            let model_json_path = crate::app::find_v2_model_json(&model_dir)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "no V2 model JSON found in {:?}", model_dir
+                ))?;
 
             let mut v2 = live2d_v2_core::Model::new()
                 .map_err(|e| anyhow::anyhow!("create V2 model: {e}"))?;
