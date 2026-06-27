@@ -357,7 +357,7 @@ impl TextRenderer {
 
             // Quad position (pixel-accurate, anchored at bearing baseline)
             let qx = x + slot.bearing_x;
-            let qy = y - slot.bearing_y - slot.height as f32;
+            let qy = y + slot.bearing_y;
             let qw = slot.width as f32;
             let qh = slot.height as f32;
 
