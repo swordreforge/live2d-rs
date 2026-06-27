@@ -205,6 +205,8 @@ pub struct AppState {
     pub saved_window_pet_size: (f64, f64),
     /// Pre-built parameter name → index lookup (built once at model load)
     pub param_lookup: HashMap<String, usize>,
+    /// Pre-built part ID → index lookup (built once at model load)
+    pub part_lookup: HashMap<String, usize>,
 
     /// Scratch buffer for pet thread events, avoiding per-frame Vec allocation.
     #[cfg(target_os = "linux")]
@@ -300,6 +302,7 @@ impl AppState {
             pet_sync_counter: 0,
             saved_window_pet_size: (0.0, 0.0),
             param_lookup: HashMap::new(),
+            part_lookup: HashMap::new(),
             camera: Camera::new(),
             window_size: (800.0, 600.0),
             canvas_pixel_size: (0.0, 0.0),
@@ -469,6 +472,7 @@ impl AppState {
         self.pose_data = None;
         self.physics = None;
         self.part_ids.clear();
+        self.part_lookup.clear();
         self.motion_queue.stop_all_motions();
     }
 
@@ -517,6 +521,11 @@ impl AppState {
             .iter()
             .map(|id| id.to_string_lossy().into_owned())
             .collect();
+        self.part_lookup.clear();
+        self.part_lookup.reserve(self.part_ids.len());
+        for (i, id) in self.part_ids.iter().enumerate() {
+            self.part_lookup.insert(id.clone(), i);
+        }
 
         // Canvas info
         let canvas = model.canvas_info();
@@ -809,6 +818,11 @@ impl AppState {
                 .iter()
                 .map(|id| id.to_string_lossy().into_owned())
                 .collect();
+            self.part_lookup.clear();
+            self.part_lookup.reserve(self.part_ids.len());
+            for (i, id) in self.part_ids.iter().enumerate() {
+                self.part_lookup.insert(id.clone(), i);
+            }
 
             // Read canvas info
             let canvas = model.canvas_info();
@@ -1009,17 +1023,12 @@ impl AppState {
             None => return,
         };
         let mut parts = model.parts();
-        let pids: Vec<String> = parts
-            .ids()
-            .iter()
-            .map(|id| id.to_string_lossy().into_owned())
-            .collect();
         let popac = parts.opacities_mut();
 
         for group in &pose.groups {
             let mut first_found = false;
             for entry in group {
-                if let Some(part_idx) = pids.iter().position(|id| id == &entry.id) {
+                if let Some(&part_idx) = self.part_lookup.get(&entry.id) {
                     if !first_found {
                         popac[part_idx] = 1.0;
                         first_found = true;
@@ -1046,11 +1055,6 @@ impl AppState {
             None => return,
         };
         let mut parts = model.parts();
-        let pids: Vec<String> = parts
-            .ids()
-            .iter()
-            .map(|id| id.to_string_lossy().into_owned())
-            .collect();
         let popac = parts.opacities_mut();
 
         // CopyPartOpacities: for any entry with links, copy main opacity to linked parts
@@ -1059,10 +1063,10 @@ impl AppState {
                 if entry.links.is_empty() {
                     continue;
                 }
-                if let Some(main_idx) = pids.iter().position(|id| id == &entry.id) {
+                if let Some(&main_idx) = self.part_lookup.get(&entry.id) {
                     let opacity = popac[main_idx];
                     for link_id in &entry.links {
-                        if let Some(link_idx) = pids.iter().position(|id| id == link_id) {
+                        if let Some(&link_idx) = self.part_lookup.get(link_id) {
                             popac[link_idx] = opacity;
                         }
                     }
@@ -1141,7 +1145,7 @@ impl AppState {
                 &mut self.parameter_values,
                 &self.eye_blink_param_ids,
                 &self.lip_sync_param_ids,
-                &self.part_ids,
+                &self.part_lookup,
                 opacities,
             );
         } else {
@@ -1150,14 +1154,14 @@ impl AppState {
                 &mut self.parameter_values,
                 &self.eye_blink_param_ids,
                 &self.lip_sync_param_ids,
-                &self.part_ids,
+                &self.part_lookup,
                 &mut [],
             );
         }
 
         // Apply expression (if active)
         self.expression_manager.apply(
-            &self.parameter_names,
+            &self.param_lookup,
             &mut self.parameter_values,
             self.motion_queue.user_time_seconds,
         );

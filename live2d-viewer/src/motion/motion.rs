@@ -96,7 +96,7 @@ impl CubismMotion {
         entry_end_time: f32,
         eye_blink_param_ids: &[String],
         lip_sync_param_ids: &[String],
-        part_ids: &[String],
+        part_lookup: &HashMap<String, usize>,
         part_opacities: &mut [f32],
         eye_blink_indices: &[usize],
         lip_sync_indices: &[usize],
@@ -140,22 +140,11 @@ impl CubismMotion {
         let mut eye_blink_flags: u64 = 0;
         let mut lip_sync_flags: u64 = 0;
 
-        // Separate curves by type
-        let mut model_curves: Vec<&ParsedCurve> = Vec::new();
-        let mut param_curves: Vec<&ParsedCurve> = Vec::new();
-        let mut part_curves: Vec<&ParsedCurve> = Vec::new();
-
-        for curve in &self.data.curves {
-            match curve.target.as_str() {
-                TARGET_NAME_MODEL => model_curves.push(curve),
-                TARGET_NAME_PARAMETER => param_curves.push(curve),
-                TARGET_NAME_PART_OPACITY => part_curves.push(curve),
-                _ => {}
-            }
-        }
-
         // 1. Evaluate Model curves
-        for curve in &model_curves {
+        for curve in &self.data.curves {
+            if curve.target != TARGET_NAME_MODEL {
+                continue;
+            }
             let value = evaluate_curve(curve, time, is_correction, duration);
 
             match curve.id.as_str() {
@@ -174,7 +163,10 @@ impl CubismMotion {
         }
 
         // 2. Evaluate Parameter curves
-        for curve in &param_curves {
+        for curve in &self.data.curves {
+            if curve.target != TARGET_NAME_PARAMETER {
+                continue;
+            }
             let param_idx = match param_lookup.get(&curve.id) {
                 Some(&idx) => idx,
                 None => continue,
@@ -267,9 +259,12 @@ impl CubismMotion {
         }
 
         // 3. Evaluate PartOpacity curves
-        for curve in &part_curves {
-            let part_idx = match part_ids.iter().position(|id| id == &curve.id) {
-                Some(idx) => idx,
+        for curve in &self.data.curves {
+            if curve.target != TARGET_NAME_PART_OPACITY {
+                continue;
+            }
+            let part_idx = match part_lookup.get(&curve.id) {
+                Some(&idx) => idx,
                 None => continue,
             };
             let target = evaluate_curve(curve, time, is_correction, duration);
@@ -401,7 +396,7 @@ mod tests {
         let eye_blink: Vec<String> = vec![];
         let lip_sync: Vec<String> = vec![];
 
-        let empty_parts: Vec<String> = vec![];
+        let part_lookup: HashMap<String, usize> = HashMap::new();
         let mut part_opacities: Vec<f32> = vec![];
 
         let empty_indices: &[usize] = &[];
@@ -416,7 +411,7 @@ mod tests {
             2.0,
             &eye_blink,
             &lip_sync,
-            &empty_parts,
+            &part_lookup,
             &mut part_opacities,
             empty_indices,
             empty_indices,
@@ -439,7 +434,7 @@ mod tests {
             2.0,
             &eye_blink,
             &lip_sync,
-            &empty_parts,
+            &part_lookup,
             &mut part_opacities,
             empty_indices,
             empty_indices,
@@ -462,7 +457,7 @@ mod tests {
             2.0,
             &eye_blink,
             &lip_sync,
-            &empty_parts,
+            &part_lookup,
             &mut part_opacities,
             empty_indices,
             empty_indices,

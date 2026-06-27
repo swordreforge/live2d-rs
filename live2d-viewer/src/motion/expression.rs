@@ -5,6 +5,7 @@
 //! no timing — they are a static set of parameter overrides.
 
 use super::json::{ExpressionBlendMode, ParsedExpression};
+use std::collections::HashMap;
 
 /// An expression instance. Applies a set of parameter overrides.
 #[derive(Debug, Clone)]
@@ -28,14 +29,18 @@ impl ExpressionMotion {
 
     /// Apply expression parameters.
     ///
-    /// * `param_names` — all parameter IDs from the model
+    /// * `param_lookup` — parameter ID -> index map
     /// * `param_values` — mutable parameter value buffer (modified in place)
     /// * `fade_weight` — combined fade weight (easing sine)
-    pub fn apply(&self, param_names: &[String], param_values: &mut [f32], fade_weight: f32) {
+    pub fn apply(
+        &self,
+        param_lookup: &HashMap<String, usize>,
+        param_values: &mut [f32],
+        fade_weight: f32,
+    ) {
         for param in &self.data.parameters {
-            // Find the parameter index by name
-            let idx = match param_names.iter().position(|n| n == &param.id) {
-                Some(i) => i,
+            let idx = match param_lookup.get(&param.id) {
+                Some(&i) => i,
                 None => continue,
             };
 
@@ -90,7 +95,12 @@ impl ExpressionManager {
     }
 
     /// Apply the expression with current time.
-    pub fn apply(&mut self, param_names: &[String], param_values: &mut [f32], user_time: f32) {
+    pub fn apply(
+        &mut self,
+        param_lookup: &HashMap<String, usize>,
+        param_values: &mut [f32],
+        user_time: f32,
+    ) {
         if !self.is_active {
             return;
         }
@@ -113,6 +123,6 @@ impl ExpressionManager {
             1.0
         };
 
-        expression.apply(param_names, param_values, fade_weight * expression.weight);
+        expression.apply(param_lookup, param_values, fade_weight * expression.weight);
     }
 }

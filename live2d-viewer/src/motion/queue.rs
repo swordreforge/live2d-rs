@@ -157,7 +157,7 @@ impl MotionQueueManager {
         param_values: &mut [f32],
         eye_blink_param_ids: &[String],
         lip_sync_param_ids: &[String],
-        part_ids: &[String],
+        part_lookup: &HashMap<String, usize>,
         part_opacities: &mut [f32],
     ) -> bool {
         let mut updated = false;
@@ -231,7 +231,7 @@ impl MotionQueueManager {
                 entry_end_time,
                 eye_blink_param_ids,
                 lip_sync_param_ids,
-                part_ids,
+                part_lookup,
                 part_opacities,
                 &eye_blink_indices,
                 &lip_sync_indices,
