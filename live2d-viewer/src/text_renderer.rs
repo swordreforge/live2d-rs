@@ -418,6 +418,7 @@ impl TextRenderer {
 
     /// Estimated pixel width of a string (cached glyphs only; falls back
     /// to average advance for uncached characters).
+    #[allow(dead_code)]
     pub fn text_width(&mut self, gl: &Context, text: &str) -> f32 {
         let mut w = 0.0f32;
         for ch in text.chars() {
@@ -435,6 +436,7 @@ impl TextRenderer {
     /// # Safety
     ///
     /// Requires an active GL context.
+    #[allow(dead_code)]
     pub unsafe fn destroy(self, gl: &Context) {
         gl.delete_program(self.program);
         gl.delete_vertex_array(self.vao);
