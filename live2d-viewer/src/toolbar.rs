@@ -390,7 +390,7 @@ impl ToolbarOverlay {
         buf.push(b);
         buf.push(a);
     }
-
+    #[allow(clippy::too_many_arguments)]
     fn push_tri(
         buf: &mut Vec<f32>,
         x1: f32,

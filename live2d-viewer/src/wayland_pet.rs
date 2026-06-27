@@ -744,7 +744,7 @@ fn run_event_loop(
     mut pet_model: PetModel,
     cmd_rx: &mpsc::Receiver<PetCommand>,
     event_tx: &mpsc::Sender<PetEvent>,
-    model_dir: &std::path::PathBuf,
+    model_dir: &std::path::Path,
     mut click_through: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / 60.0);
