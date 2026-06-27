@@ -1061,7 +1061,7 @@ fn run_event_loop(
                     [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
                 );
 
-                // Separator line
+                // Separator line — rebind toolbar program/vao (text_renderer unbound them)
                 let sep_y = py + 22.0;
                 let mut sep_v: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
@@ -1075,13 +1075,22 @@ fn run_event_loop(
                     ndc_s.push(ny);
                     ndc_s.extend_from_slice(&chunk[2..6]);
                 }
+                gl.use_program(Some(toolbar.program_id()));
+                gl.bind_vertex_array(Some(toolbar.vao_id()));
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(toolbar.vbo_id()));
                 gl.buffer_data_u8_slice(
                     glow::ARRAY_BUFFER,
                     std::slice::from_raw_parts(ndc_s.as_ptr() as *const u8, ndc_s.len() * 4),
                     glow::STREAM_DRAW,
                 );
+                gl.enable(glow::BLEND);
+                gl.blend_func_separate(
+                    glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                );
                 gl.draw_arrays(glow::TRIANGLES, 0, ndc_s.len() as i32 / 6);
+                gl.bind_vertex_array(None);
+                gl.use_program(None);
 
                 // Result entries
                 let entry_h = 22.0;
