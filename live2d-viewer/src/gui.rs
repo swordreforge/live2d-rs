@@ -114,10 +114,16 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                             app.renaming_idx = None;
                         }
                     } else {
+                        let short_name = if name.chars().count() > 24 {
+                            let truncated: String = name.chars().take(23).collect();
+                            format!("{truncated}…")
+                        } else {
+                            name.clone()
+                        };
                         let label = format!(
                             "{} {}",
                             if selected { "\u{25cf}" } else { "\u{25cb}" },
-                            name,
+                            short_name,
                         );
                         let resp = ui.selectable_label(selected, &label);
                         if resp.clicked() {
