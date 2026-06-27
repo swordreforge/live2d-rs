@@ -48,6 +48,13 @@ pub fn detect_model_format(dir: &Path) -> Option<ModelFormat> {
     find_v2_model_json(dir).map(|_| ModelFormat::V2)
 }
 
+fn fallback_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
 pub struct ModelEntry {
     pub name: String,
     pub dir: PathBuf,
@@ -362,12 +369,28 @@ impl AppState {
     }
 
     pub fn add_model_dir(&mut self, path: PathBuf) {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
         let format = detect_model_format(&path);
+        let name = match format {
+            Some(ModelFormat::V3) => {
+                // Use model3.json filename stem as display name
+                if let Ok(entries) = std::fs::read_dir(&path) {
+                    entries
+                        .flatten()
+                        .find_map(|e| {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if n.ends_with(".model3.json") {
+                                Some(n.trim_end_matches(".model3.json").to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| fallback_name(&path))
+                } else {
+                    fallback_name(&path)
+                }
+            }
+            _ => fallback_name(&path),
+        };
         let dir_string = path.to_string_lossy().to_string();
         let name_for_db = name.clone();
         self.model_list.push(ModelEntry {
