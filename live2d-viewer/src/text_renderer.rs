@@ -352,6 +352,8 @@ impl TextRenderer {
         gl.vertex_attrib_pointer_f32(2, 4, FLOAT, false, stride, 16);
         gl.enable_vertex_attrib_array(2);
         gl.bind_vertex_array(None);
+        gl.bind_texture(TEXTURE_2D, None);
+        gl.use_program(None);
 
         Ok(Self { program, vao, vbo, font_tex })
     }

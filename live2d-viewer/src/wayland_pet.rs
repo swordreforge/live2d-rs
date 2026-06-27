@@ -1014,7 +1014,10 @@ fn run_event_loop(
             let ph = vph * (1.0 - 2.0 * pad);
 
             unsafe {
-                // Background panel
+                // ── Set up 2D overlay state ──
+                gl.disable(glow::DEPTH_TEST);
+                gl.disable(glow::CULL_FACE);
+                // ── Background panel ──
                 let mut overlay_verts: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
                     &mut overlay_verts, px, py, pw, ph,
@@ -1134,6 +1137,8 @@ fn run_event_loop(
                     [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
                 );
 
+                gl.disable(glow::BLEND);
+                gl.bind_texture(glow::TEXTURE_2D, None);
                 gl.bind_vertex_array(None);
                 gl.use_program(None);
             }
