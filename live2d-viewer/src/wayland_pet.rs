@@ -1060,12 +1060,12 @@ fn run_event_loop(
                 // Query text (with cursor)
                 let display_q = format!("{}{}", state.search_query, "_");
                 text_renderer.draw_text(
-                    &gl, &display_q, px + 8.0 + 70.0, py + 6.0,
+                    &gl, &display_q, px + 8.0 + 130.0, py + 6.0,
                     [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0, 2.5,
                 );
 
                 // Separator line — rebind toolbar program/vao (text_renderer unbound them)
-                let sep_y = py + 22.0;
+                let sep_y = py + 28.0;
                 let mut sep_v: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
                     &mut sep_v, px + 6.0, sep_y, pw - 12.0, 1.0,
@@ -1096,8 +1096,8 @@ fn run_event_loop(
                 gl.use_program(None);
 
                 // Result entries
-                let entry_h = 22.0;
-                let list_y = py + 28.0;
+                let entry_h = 26.0;
+                let list_y = py + 34.0;
                 let q_lower = state.search_query.to_lowercase();
                 let filtered: Vec<&(String, String)> = search_entries
                     .iter()
@@ -1145,8 +1145,8 @@ fn run_event_loop(
 
             // Handle click on search results
             if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                let entry_h = 22.0;
-                let list_y = py + 28.0;
+                let entry_h = 26.0;
+                let list_y = py + 34.0;
                 let max_visible = ((ph - 50.0) / entry_h) as usize;
                 let filtered_clone: Vec<(String, String)> = search_entries
                     .iter()
