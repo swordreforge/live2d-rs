@@ -35,6 +35,7 @@ pub enum PetCommand {
         model_dir: PathBuf,
         model_format: crate::app::ModelFormat,
         click_through: bool,
+        zoom_scale: Option<f32>,
     },
     SetClickThrough(bool),
     SetParameters {
@@ -561,6 +562,7 @@ fn setup_pet_surface(
     model_dir: &PathBuf,
     model_format: crate::app::ModelFormat,
     click_through: bool,
+    zoom_scale: Option<f32>,
     cmd_rx: &mpsc::Receiver<PetCommand>,
     event_tx: &mpsc::Sender<PetEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -735,6 +737,12 @@ fn setup_pet_surface(
                 init_size.0 as f32,
                 init_size.1 as f32,
             );
+            if let Some(z) = zoom_scale {
+                camera.scale_x = z;
+                camera.scale_y = z;
+                camera.translate_x = 0.0;
+                camera.translate_y = 0.0;
+            }
 
             log::info!(
                 "[pet/wayland] V3 model loaded, canvas=({:.0},{:.0}), configured size: {:?}",
@@ -826,10 +834,16 @@ fn setup_pet_surface(
                 }
             }
 
+            let default_zoom = 1.0f32;
+            let zoom = zoom_scale.unwrap_or(default_zoom);
+            if (zoom - default_zoom).abs() > f32::EPSILON {
+                v2.set_scale(zoom);
+            }
+
             PetModel::V2 {
                 v2_model: v2,
                 v2_vao,
-                v2_scale: 1.0,
+                v2_scale: zoom,
                 hit_areas,
                 last_hovered_area: None,
                 motion_sounds,
@@ -1540,10 +1554,11 @@ pub fn spawn_pet_surface(
                 model_dir,
                 model_format,
                 click_through,
+                zoom_scale,
             }) => {
                 log::info!("[pet/wayland] enter: {:?}", model_dir);
                 if let Err(e) =
-                    setup_pet_surface(&model_dir, model_format, click_through, &cmd_rx, &event_tx)
+                    setup_pet_surface(&model_dir, model_format, click_through, zoom_scale, &cmd_rx, &event_tx)
                 {
                     log::error!("[pet/wayland] setup error: {:?}", e);
                     let _ = event_tx.send(PetEvent::Error(format!("{:#}", e)));

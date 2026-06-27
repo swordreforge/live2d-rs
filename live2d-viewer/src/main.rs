@@ -514,11 +514,18 @@ fn main() -> anyhow::Result<()> {
                                         if let (Some(dir), Some(format)) =
                                             (app.current_model_dir(), app.current_model_format())
                                         {
+                                            let zoom = match format {
+                                                crate::app::ModelFormat::V2 => Some(app.v2_scale),
+                                                crate::app::ModelFormat::V3 => {
+                                                    Some((app.camera.scale_x + app.camera.scale_y) / 2.0)
+                                                }
+                                            };
                                             let _ = cmd_tx.send(
                                                 crate::wayland_pet::PetCommand::Enter {
                                                     model_dir: dir,
                                                     model_format: format,
                                                     click_through: app.click_through,
+                                                    zoom_scale: zoom,
                                                 },
                                             );
                                         }
