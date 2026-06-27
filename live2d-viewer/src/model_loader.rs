@@ -123,6 +123,16 @@ pub fn find_model3_json(dir: &Path) -> anyhow::Result<PathBuf> {
     anyhow::bail!("No *.model3.json found in {:?}", dir)
 }
 
+/// Find a specific model3.json file by filename within a directory.
+pub fn find_model3_file(dir: &Path, filename: &str) -> anyhow::Result<PathBuf> {
+    let path = dir.join(filename);
+    if path.exists() {
+        Ok(path)
+    } else {
+        anyhow::bail!("{} not found in {:?}", filename, dir)
+    }
+}
+
 /// A single entry in a pose group: maps to a part, with optional linked parts
 #[derive(Debug, Clone)]
 pub struct PoseEntry {

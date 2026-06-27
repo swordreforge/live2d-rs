@@ -297,6 +297,7 @@ fn main() -> anyhow::Result<()> {
                 dir: model_dir,
                 loaded: false,
                 format: cli_format,
+                model3_file: None,
             });
             // Record CLI model in DB
             if let Some(ref db) = app.db {
@@ -350,6 +351,7 @@ fn main() -> anyhow::Result<()> {
                     dir: p,
                     loaded: false,
                     format: fmt,
+                    model3_file: None,
                 });
             }
         }

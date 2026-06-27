@@ -58,6 +58,17 @@ fn fallback_name(path: &Path) -> String {
 /// Validate a model directory before adding to DB.
 /// V3: parse model3.json + verify .moc3 exists.
 /// V2: verify model JSON is parseable.
+/// Validate a specific model3.json file within a directory.
+fn validate_model_dir_from_file(model3_path: &Path, base_dir: &Path) -> Result<(), String> {
+    let model3 = crate::model_loader::Model3Json::from_file(model3_path)
+        .map_err(|e| format!("parse model3.json: {e}"))?;
+    let moc_path = base_dir.join(&model3.file_references.moc);
+    if !moc_path.exists() {
+        return Err(format!("moc3 not found: {}", moc_path.display()));
+    }
+    Ok(())
+}
+
 fn validate_model_dir(dir: &Path, format: ModelFormat) -> Result<(), String> {
     match format {
         ModelFormat::V3 => {
@@ -89,6 +100,9 @@ pub struct ModelEntry {
     pub dir: PathBuf,
     pub loaded: bool,
     pub format: Option<ModelFormat>,
+    /// Specific model3.json filename (e.g. "akira_st01_rw.model3.json")
+    /// when a directory contains multiple model variants.
+    pub model3_file: Option<String>,
 }
 
 /// Raw V3 model data loaded from background thread (all I/O done off main thread).
@@ -398,25 +412,24 @@ impl AppState {
     }
 
     pub fn add_model_dir(&mut self, path: PathBuf) {
+        self.add_model_dir_inner(path, None);
+    }
+
+    fn add_model_dir_inner(&mut self, path: PathBuf, model3_file: Option<String>) {
         let format = detect_model_format(&path);
-        let name = match format {
-            Some(ModelFormat::V3) => {
-                // Use model3.json filename stem as display name
+        let name = match (&format, &model3_file) {
+            (Some(ModelFormat::V3), Some(f)) => f.trim_end_matches(".model3.json").to_string(),
+            (Some(ModelFormat::V3), None) => {
                 if let Ok(entries) = std::fs::read_dir(&path) {
-                    entries
-                        .flatten()
+                    entries.flatten()
                         .find_map(|e| {
                             let n = e.file_name().to_string_lossy().to_string();
                             if n.ends_with(".model3.json") {
                                 Some(n.trim_end_matches(".model3.json").to_string())
-                            } else {
-                                None
-                            }
+                            } else { None }
                         })
                         .unwrap_or_else(|| fallback_name(&path))
-                } else {
-                    fallback_name(&path)
-                }
+                } else { fallback_name(&path) }
             }
             _ => fallback_name(&path),
         };
@@ -427,8 +440,8 @@ impl AppState {
             dir: path,
             loaded: false,
             format,
+            model3_file,
         });
-        // Record in database
         if let Some(ref db) = self.db {
             let model_version = match format {
                 Some(ModelFormat::V3) => "V3",
@@ -450,29 +463,67 @@ impl AppState {
             let mut to_visit: Vec<PathBuf> = vec![scan_dir.clone()];
             while let Some(dir) = to_visit.pop() {
                 if let Ok(entries) = std::fs::read_dir(&dir) {
+                    let mut model3_files: Vec<String> = Vec::new();
+                    let mut has_v2 = false;
+                    let mut subdirs: Vec<PathBuf> = Vec::new();
+
                     for entry in entries.flatten() {
                         let path = entry.path();
+                        let fname = entry.file_name().to_string_lossy().to_string();
                         if path.is_dir() {
-                            if let Some(fmt) = detect_model_format(&path) {
-                                let dir_str = path.to_string_lossy().to_string();
-                                let already = self.model_list.iter().any(|e| e.dir == path)
-                                    || self.db.as_ref().map_or(false, |d| {
-                                        d.get_model(&dir_str).ok().flatten().is_some()
-                                    });
-                                if already {
-                                    skipped += 1;
-                                } else if let Err(e) = validate_model_dir(&path, fmt) {
-                                    log::warn!("[scan] {dir_str}: {e}");
-                                    invalid += 1;
-                                } else {
-                                    self.add_model_dir(path);
-                                    added += 1;
-                                }
-                            } else {
-                                to_visit.push(path);
+                            subdirs.push(path);
+                        } else if fname.ends_with(".model3.json") {
+                            model3_files.push(fname);
+                        } else if fname.ends_with(".json") {
+                            if is_v2_model_json(&fname) {
+                                has_v2 = true;
                             }
                         }
                     }
+
+                    // V3: one entry per .model3.json file
+                    if !model3_files.is_empty() {
+                        for mf in &model3_files {
+                            let fp = dir.join(mf);
+                            let dir_str = dir.to_string_lossy().to_string();
+                            let key = format!("{dir_str}|{mf}");
+                            let already = self.model_list.iter().any(|e| {
+                                let existing_key = format!(
+                                    "{}|{}",
+                                    e.dir.to_string_lossy(),
+                                    e.model3_file.as_deref().unwrap_or("")
+                                );
+                                existing_key == key
+                            });
+                            if already {
+                                skipped += 1;
+                            } else if let Err(e) = validate_model_dir_from_file(&fp, &dir) {
+                                log::warn!("[scan] {dir_str}/{mf}: {e}");
+                                invalid += 1;
+                            } else {
+                                self.add_model_dir_inner(dir.clone(), Some(mf.clone()));
+                                added += 1;
+                            }
+                        }
+                    } else if has_v2 {
+                        // V2: one entry per directory (V2 has no sub-model concept)
+                        let dir_str = dir.to_string_lossy().to_string();
+                        let already = self.model_list.iter().any(|e| e.dir == dir)
+                            || self.db.as_ref().map_or(false, |d| {
+                                d.get_model(&dir_str).ok().flatten().is_some()
+                            });
+                        if already {
+                            skipped += 1;
+                        } else if let Err(e) = validate_model_dir(&dir, ModelFormat::V2) {
+                            log::warn!("[scan] {dir_str}: {e}");
+                            invalid += 1;
+                        } else {
+                            self.add_model_dir_inner(dir.clone(), None);
+                            added += 1;
+                        }
+                    }
+
+                    to_visit.extend(subdirs);
                 }
             }
         }
@@ -539,14 +590,15 @@ impl AppState {
             return self.switch_to(idx);
         }
 
-        // V3: clear current model state immediately, spawn background thread
-        let dir = entry.dir.clone();
-        let _ = entry;
-        self.clear_model_state();
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            tx.send(load_v3_background(&dir, idx)).ok();
-        });
+    // V3: clear current model state immediately, spawn background thread
+    let dir = entry.dir.clone();
+    let model3_file = entry.model3_file.clone();
+    let _ = entry;
+    self.clear_model_state();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        tx.send(load_v3_background(&dir, idx, model3_file.as_deref())).ok();
+    });
         self.pending_load = PendingLoad::V3Loading(rx);
         log::info!("Started background load for idx={idx}");
         Ok(())
@@ -1537,11 +1589,15 @@ fn point_in_triangle(
 }
 
 /// Background thread: read all V3 model files from disk.
-fn load_v3_background(dir: &Path, idx: usize) -> Result<V3RawData, String> {
+fn load_v3_background(dir: &Path, idx: usize, model3_file: Option<&str>) -> Result<V3RawData, String> {
     use crate::model_loader;
 
-    let model3_path =
-        model_loader::find_model3_json(dir).map_err(|e| format!("find model3.json: {e}"))?;
+    let model3_path = if let Some(f) = model3_file {
+        model_loader::find_model3_file(dir, f)
+    } else {
+        model_loader::find_model3_json(dir)
+    }
+    .map_err(|e| format!("find model3.json: {e}"))?;
     let base_dir = model3_path.parent().unwrap_or(dir).to_path_buf();
 
     let json_str =
