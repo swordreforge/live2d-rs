@@ -257,6 +257,9 @@ pub struct AppState {
     pub search_results: Vec<db::SearchResult>,
     /// Pet toolbar search popup visibility
     pub pet_search_open: bool,
+    pub scan_dirs: Vec<PathBuf>,
+    pub settings_open: bool,
+    pub scan_result: String,
 }
 
 impl AppState {
@@ -340,6 +343,9 @@ impl AppState {
             search_query: String::new(),
             search_results: Vec::new(),
             pet_search_open: false,
+            scan_dirs: Vec::new(),
+            settings_open: false,
+            scan_result: String::new(),
         }
     }
 
@@ -381,7 +387,67 @@ impl AppState {
         }
     }
 
-    /// Save current zoom/scale for the active model to the database.
+    /// Scan all configured directories recursively for V2/V3 models.
+    /// Returns (added_count, skipped_count) of newly discovered model dirs.
+    pub fn scan_and_add_models(&mut self) -> (usize, usize) {
+        let dirs: Vec<PathBuf> = self.scan_dirs.clone();
+        let mut added = 0;
+        let mut skipped = 0;
+        for scan_dir in &dirs {
+            let mut to_visit: Vec<PathBuf> = vec![scan_dir.clone()];
+            while let Some(dir) = to_visit.pop() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if detect_model_format(&path).is_some() {
+                                // Check if already in model_list or DB
+                                let dir_str = path.to_string_lossy().to_string();
+                                let already = self.model_list.iter().any(|e| e.dir == path)
+                                    || self.db.as_ref().map_or(false, |d| {
+                                        d.get_model(&dir_str).ok().flatten().is_some()
+                                    });
+                                if already {
+                                    skipped += 1;
+                                } else {
+                                    self.add_model_dir(path);
+                                    added += 1;
+                                }
+                            } else {
+                                // Not a model dir — scan subdirectories
+                                to_visit.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (added, skipped)
+    }
+
+    /// Load scan directories from DB into scan_dirs field.
+    pub fn load_scan_dirs(&mut self) {
+        if let Some(ref db) = self.db {
+            self.scan_dirs = db
+                .get_scan_dirs()
+                .into_iter()
+                .map(PathBuf::from)
+                .collect();
+        }
+    }
+
+    /// Save scan directories to DB.
+    pub fn save_scan_dirs(&self) {
+        if let Some(ref db) = self.db {
+            let dirs: Vec<String> = self
+                .scan_dirs
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            let _ = db.set_scan_dirs(&dirs);
+        }
+    }
+
     pub fn save_zoom(&mut self) {
         let idx = match self.current_idx {
             Some(i) => i,

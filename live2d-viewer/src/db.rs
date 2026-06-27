@@ -123,9 +123,6 @@ impl AppDb {
         Ok(Self { conn })
     }
 
-    /// Look up a global setting by key. Returns `None` when the key does
-    /// not exist.
-    #[allow(dead_code)]
     pub fn get_setting(&self, key: &str) -> Option<String> {
         let mut rows = rt()
             .block_on(self.conn.query(
@@ -342,5 +339,18 @@ impl AppDb {
         scored.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);
         Ok(scored)
+    }
+
+    /// Get configured model scan directories (JSON array of paths).
+    pub fn get_scan_dirs(&self) -> Vec<String> {
+        self.get_setting("scan_dirs")
+            .and_then(|v| serde_json::from_str(&v).ok())
+            .unwrap_or_default()
+    }
+
+    /// Save model scan directories.
+    pub fn set_scan_dirs(&self, dirs: &[String]) -> Result<()> {
+        let json = serde_json::to_string(dirs)?;
+        self.set_setting("scan_dirs", &json)
     }
 }

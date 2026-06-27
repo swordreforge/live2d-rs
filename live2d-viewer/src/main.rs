@@ -355,6 +355,8 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    app.load_scan_dirs();
+
     if !app.model_list.is_empty() {
         let _ = app.switch_to(0);
 
