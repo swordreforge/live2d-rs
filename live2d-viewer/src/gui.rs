@@ -635,8 +635,8 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
 
             ui.separator();
             if ui.button("\u{1f50d} Scan All").clicked() {
-                let (added, skipped) = app.scan_and_add_models();
-                app.scan_result = format!("{added} new, {skipped} skipped");
+                let (added, skipped, invalid) = app.scan_and_add_models();
+                app.scan_result = format!("{added} new, {skipped} skipped, {invalid} invalid");
             }
             if !app.scan_result.is_empty() {
                 ui.label(format!("Result: {}", app.scan_result));

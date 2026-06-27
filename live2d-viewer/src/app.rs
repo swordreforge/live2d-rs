@@ -55,6 +55,35 @@ fn fallback_name(path: &Path) -> String {
         .to_string()
 }
 
+/// Validate a model directory before adding to DB.
+/// V3: parse model3.json + verify .moc3 exists.
+/// V2: verify model JSON is parseable.
+fn validate_model_dir(dir: &Path, format: ModelFormat) -> Result<(), String> {
+    match format {
+        ModelFormat::V3 => {
+            let model3_path = crate::model_loader::find_model3_json(dir)
+                .map_err(|e| format!("find model3.json: {e}"))?;
+            let model3 = crate::model_loader::Model3Json::from_file(&model3_path)
+                .map_err(|e| format!("parse model3.json: {e}"))?;
+            let base = model3_path.parent().unwrap_or(dir);
+            let moc_path = base.join(&model3.file_references.moc);
+            if !moc_path.exists() {
+                return Err(format!("moc3 not found: {}", moc_path.display()));
+            }
+            Ok(())
+        }
+        ModelFormat::V2 => {
+            let model_json = find_v2_model_json(dir)
+                .ok_or_else(|| "no V2 model JSON".to_string())?;
+            let json_text = std::fs::read_to_string(&model_json)
+                .map_err(|e| format!("read model.json: {e}"))?;
+            serde_json::from_str::<serde_json::Value>(&json_text)
+                .map_err(|e| format!("invalid JSON: {e}"))?;
+            Ok(())
+        }
+    }
+}
+
 pub struct ModelEntry {
     pub name: String,
     pub dir: PathBuf,
@@ -411,11 +440,12 @@ impl AppState {
     }
 
     /// Scan all configured directories recursively for V2/V3 models.
-    /// Returns (added_count, skipped_count) of newly discovered model dirs.
-    pub fn scan_and_add_models(&mut self) -> (usize, usize) {
+    /// Returns (added, skipped, invalid) counts.
+    pub fn scan_and_add_models(&mut self) -> (usize, usize, usize) {
         let dirs: Vec<PathBuf> = self.scan_dirs.clone();
         let mut added = 0;
         let mut skipped = 0;
+        let mut invalid = 0;
         for scan_dir in &dirs {
             let mut to_visit: Vec<PathBuf> = vec![scan_dir.clone()];
             while let Some(dir) = to_visit.pop() {
@@ -423,8 +453,7 @@ impl AppState {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_dir() {
-                            if detect_model_format(&path).is_some() {
-                                // Check if already in model_list or DB
+                            if let Some(fmt) = detect_model_format(&path) {
                                 let dir_str = path.to_string_lossy().to_string();
                                 let already = self.model_list.iter().any(|e| e.dir == path)
                                     || self.db.as_ref().map_or(false, |d| {
@@ -432,12 +461,14 @@ impl AppState {
                                     });
                                 if already {
                                     skipped += 1;
+                                } else if let Err(e) = validate_model_dir(&path, fmt) {
+                                    log::warn!("[scan] {dir_str}: {e}");
+                                    invalid += 1;
                                 } else {
                                     self.add_model_dir(path);
                                     added += 1;
                                 }
                             } else {
-                                // Not a model dir — scan subdirectories
                                 to_visit.push(path);
                             }
                         }
@@ -445,7 +476,7 @@ impl AppState {
                 }
             }
         }
-        (added, skipped)
+        (added, skipped, invalid)
     }
 
     /// Load scan directories from DB into scan_dirs field.
