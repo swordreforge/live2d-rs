@@ -55,9 +55,34 @@ fn fallback_name(path: &Path) -> String {
         .to_string()
 }
 
-/// Validate a model directory before adding to DB.
-/// V3: parse model3.json + verify .moc3 exists.
-/// V2: verify model JSON is parseable.
+/// Returns true if the model name looks like an engineering code
+/// (e.g. "c455_01", "12345", "ev_cg001_02s") rather than a descriptive name.
+fn is_generic_name(name: &str) -> bool {
+    let chars: Vec<char> = name.chars().collect();
+    // Pure digits
+    if chars.iter().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // No letters at all (digits+underscores only)
+    if chars.iter().all(|c| c.is_ascii_digit() || *c == '_') {
+        return true;
+    }
+    // Pattern: letter(s) + digits + _ + digits (e.g. "c455_01", "st01_rw")
+    if let Some(pos) = name.find('_') {
+        let before = &name[..pos];
+        let after = &name[pos + 1..];
+        if !before.is_empty() && !after.is_empty()
+            && before.len() <= 5
+            && before.chars().next().map_or(false, |c| c.is_alphabetic())
+            && before.chars().skip(1).all(|c| c.is_alphanumeric())
+            && after.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Validate a specific model3.json file within a directory.
 fn validate_model_dir_from_file(model3_path: &Path, base_dir: &Path) -> Result<(), String> {
     let model3 = crate::model_loader::Model3Json::from_file(model3_path)
@@ -484,6 +509,13 @@ impl AppState {
                     // V3: one entry per .model3.json file
                     if !model3_files.is_empty() {
                         for mf in &model3_files {
+                            let name = mf.trim_end_matches(".model3.json");
+                            // Skip generic engineering code names
+                            if is_generic_name(name) {
+                                log::debug!("[scan] skipping generic name: {name}");
+                                skipped += 1;
+                                continue;
+                            }
                             let fp = dir.join(mf);
                             let dir_str = dir.to_string_lossy().to_string();
                             let key = format!("{dir_str}|{mf}");
