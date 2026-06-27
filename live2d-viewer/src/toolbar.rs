@@ -17,6 +17,7 @@ pub enum ToolbarAction {
     ResetCamera,
     ZoomIn,
     ZoomOut,
+    Search,
     ExitPet,
 }
 
@@ -32,6 +33,10 @@ fn ndc(sx: f32, sy: f32, w: f32, h: f32) -> [f32; 2] {
         (sx / w) * 2.0 - 1.0,
         1.0 - (sy / h) * 2.0, // screen Y-down → NDC Y-up
     ]
+}
+
+pub(crate) fn ndc_pos(sx: f32, sy: f32, w: f32, h: f32) -> [f32; 2] {
+    ndc(sx, sy, w, h)
 }
 
 /// 2D overlay toolbar rendered with glow.
@@ -137,7 +142,7 @@ impl ToolbarOverlay {
 
     /// Returns `(start_y, Vec<(top, bottom)>)` for all buttons.
     fn button_layout(vp_h: f32) -> (f32, Vec<(f32, f32)>) {
-        let n = 6u32;
+        let n = 7u32;
         let total = n as f32 * BTN_H + (n - 1) as f32 * BTN_SPACING + 2.0 * SEP_GAP;
         let start_y = (vp_h - total) / 2.0;
         let mut ys = Vec::with_capacity(n as usize);
@@ -159,6 +164,7 @@ impl ToolbarOverlay {
             ToolbarAction::ResetCamera,
             ToolbarAction::ZoomIn,
             ToolbarAction::ZoomOut,
+            ToolbarAction::Search,
             ToolbarAction::ExitPet,
         ]
     }
@@ -304,10 +310,48 @@ impl ToolbarOverlay {
                         icon_cy - bw / 2.0,
                         bl * 2.0,
                         bw,
-                        ic[0],
-                        ic[1],
-                        ic[2],
-                        ic[3],
+                        ic[0], ic[1], ic[2], ic[3],
+                    );
+                }
+                ToolbarAction::Search => {
+                    // magnifying glass: circle (lens, 3/4 arc) + handle (45° line)
+                    let r = ih * 0.65;
+                    let (cx, cy) = (icon_cx - 0.8, icon_cy - 0.8);
+                    let segments = 10;
+                    // ¾ arc from -135° to 135° (skips bottom-left for handle)
+                    let start_rad = -135_f32.to_radians();
+                    let end_rad = 135_f32.to_radians();
+                    let step = (end_rad - start_rad) / segments as f32;
+                    for j in 0..segments {
+                        let a1 = start_rad + step * j as f32;
+                        let a2 = start_rad + step * (j + 1) as f32;
+                        Self::push_tri(
+                            &mut verts, cx, cy,
+                            cx + a1.cos() * r, cy + a1.sin() * r,
+                            cx + a2.cos() * r, cy + a2.sin() * r,
+                            ic,
+                        );
+                    }
+                    // handle: 45° line from bottom-right of lens outward
+                    let hcx = cx + 0.707 * r;
+                    let hcy = cy + 0.707 * r;
+                    let hw = 1.0;
+                    let hlen = ih * 1.0;
+                    Self::push_quad(
+                        &mut verts,
+                        (hcx - hw, hcy - hw),
+                        (hcx + hw, hcy + hw),
+                        (hcx + hw + hlen, hcy + hw + hlen),
+                        (hcx - hw + hlen, hcy - hw + hlen),
+                        ic,
+                    );
+                    Self::push_quad(
+                        &mut verts,
+                        (hcx - hw, hcy - hw),
+                        (hcx - hw + hlen, hcy - hw + hlen),
+                        (hcx + hw + hlen, hcy + hw + hlen),
+                        (hcx + hw, hcy + hw),
+                        ic,
                     );
                 }
                 ToolbarAction::ExitPet => {
@@ -380,6 +424,10 @@ impl ToolbarOverlay {
         gl.delete_buffer(self.vbo);
     }
 
+    pub fn program_id(&self) -> NativeProgram { self.program }
+    pub fn vao_id(&self) -> NativeVertexArray { self.vao }
+    pub fn vbo_id(&self) -> NativeBuffer { self.vbo }
+
     // ──── Geometry helpers (screen space, 6 f32 per vertex) ────
 
     fn push_vert(buf: &mut Vec<f32>, x: f32, y: f32, r: f32, g: f32, b: f32, a: f32) {
@@ -407,7 +455,7 @@ impl ToolbarOverlay {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_rect(
+    pub(crate) fn push_rect(
         buf: &mut Vec<f32>,
         x: f32,
         y: f32,

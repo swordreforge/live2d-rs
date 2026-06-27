@@ -5,6 +5,7 @@ use serde::Deserialize;
 use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
 use smithay_client_toolkit::reexports::client::protocol::wl_compositor;
 use smithay_client_toolkit::reexports::client::protocol::wl_pointer;
+use smithay_client_toolkit::reexports::client::protocol::wl_keyboard;
 use smithay_client_toolkit::reexports::client::protocol::wl_region;
 use smithay_client_toolkit::reexports::client::protocol::wl_seat;
 use smithay_client_toolkit::reexports::client::protocol::{wl_registry, wl_surface};
@@ -33,17 +34,16 @@ pub enum PetCommand {
     Enter {
         model_dir: PathBuf,
         model_format: crate::app::ModelFormat,
-        /// Initial click-through state (input passthrough) from main window
         click_through: bool,
     },
-    /// Toggle click-through state at runtime
     SetClickThrough(bool),
-    /// Overwrite model parameter values (synced from main thread each frame)
     SetParameters {
         values: Vec<f32>,
         part_opacities: Vec<f32>,
     },
     Exit,
+    /// Model entries for the search panel (file_path, name).
+    ModelList(Vec<(String, String)>),
 }
 
 /// Pet thread → Main thread events
@@ -159,6 +159,10 @@ struct PetState {
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    shift_held: bool,
+    search_open: bool,
+    search_query: String,
     ptr: PointerState,
     event_tx: mpsc::Sender<PetEvent>,
 }
@@ -297,6 +301,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for PetState {
                     state.pointer = Some(pointer);
                     log::info!("[pet/wayland] got wl_pointer");
                 }
+                if cap.contains(wl_seat::Capability::Keyboard) {
+                    let keyboard = seat.get_keyboard(qh, ());
+                    state.keyboard = Some(keyboard);
+                    log::info!("[pet/wayland] got wl_keyboard");
+                }
             }
             wl_seat::Event::Name { name } => {
                 log::debug!("[pet/wayland] seat name: {name}");
@@ -416,6 +425,119 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
     }
 }
 
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for PetState {
+    fn event(
+        state: &mut Self,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wl_keyboard::Event::*;
+        use wl_keyboard::KeyState;
+        match event {
+            Key {
+                key,
+                state: key_state,
+                ..
+            } => {
+                let pressed = match key_state {
+                    smithay_client_toolkit::reexports::client::WEnum::Value(KeyState::Pressed) => true,
+                    _ => false,
+                };
+                if !pressed {
+                    return;
+                }
+                if !state.search_open {
+                    return;
+                }
+                let sh = state.shift_held;
+                let ch = evdev_key_to_char(key, sh);
+                match (key, ch, sh) {
+                    // Escape — close search + restore keyboard interactivity
+                    (1, _, _) => {
+                        state.search_open = false;
+                        state.search_query.clear();
+                        state.layer_surface.set_keyboard_interactivity(
+                            zwlr_layer_surface_v1::KeyboardInteractivity::None,
+                        );
+                        state.surface.commit();
+                    }
+                    // Backspace
+                    (14, _, _) => {
+                        if !state.search_query.is_empty() {
+                            state.search_query.pop();
+                        }
+                    }
+                    // Space
+                    (57, _, _) => {
+                        state.search_query.push(' ');
+                    }
+                    // Enter — handled by consumer
+                    (28, _, _) => {}
+                    // Printable character
+                    (_, Some(c), _) => {
+                        state.search_query.push(c);
+                    }
+                    // Shift keys (track for future press)
+                    (42, _, _) | (54, _, _) => {
+                        state.shift_held = true;
+                    }
+                    _ => {}
+                }
+            }
+            Modifiers { .. } => {
+            }
+            _ => {}
+        }
+    }
+}
+
+fn evdev_key_to_char(key: u32, shift: bool) -> Option<char> {
+    // evdev keycodes for US-QWERTY letters (NOT sequentially ordered)
+    let letter = match key {
+        16 => Some(b'q'), 17 => Some(b'w'), 18 => Some(b'e'),
+        19 => Some(b'r'), 20 => Some(b't'), 21 => Some(b'y'),
+        22 => Some(b'u'), 23 => Some(b'i'), 24 => Some(b'o'),
+        25 => Some(b'p'), 30 => Some(b'a'), 31 => Some(b's'),
+        32 => Some(b'd'), 33 => Some(b'f'), 34 => Some(b'g'),
+        35 => Some(b'h'), 36 => Some(b'j'), 37 => Some(b'k'),
+        38 => Some(b'l'), 44 => Some(b'z'), 45 => Some(b'x'),
+        46 => Some(b'c'), 47 => Some(b'v'), 48 => Some(b'b'),
+        49 => Some(b'n'), 50 => Some(b'm'),
+        _ => None,
+    };
+    if let Some(base) = letter {
+        return Some(if shift { (base - 32) as char } else { base as char });
+    }
+
+    // Digits 2-11
+    if (2..=11).contains(&key) {
+        let digit = if key == 11 { 0 } else { key - 1 };
+        let chars = if shift {
+            [')', '!', '@', '#', '$', '%', '^', '&', '*', '(']
+        } else {
+            ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        };
+        return chars.get(digit as usize).copied();
+    }
+
+    match key {
+        12 => Some(if shift { '_' } else { '-' }),   // KEY_MINUS
+        13 => Some(if shift { '+' } else { '=' }),   // KEY_EQUAL
+        26 => Some(if shift { '{' } else { '[' }),   // KEY_LEFTBRACE
+        27 => Some(if shift { '}' } else { ']' }),   // KEY_RIGHTBRACE
+        39 => Some(if shift { ':' } else { ';' }),   // KEY_SEMICOLON
+        40 => Some(if shift { '"' } else { '\'' }),  // KEY_APOSTROPHE
+        51 => Some(if shift { '<' } else { ',' }),   // KEY_COMMA
+        52 => Some(if shift { '>' } else { '.' }),   // KEY_DOT
+        53 => Some(if shift { '?' } else { '/' }),   // KEY_SLASH
+        43 => Some(if shift { '|' } else { '\\' }),  // KEY_BACKSLASH
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Surface setup
 // ---------------------------------------------------------------------------
@@ -467,6 +589,10 @@ fn setup_pet_surface(
         layer_surface,
         seat: Some(seat),
         pointer: None,
+        keyboard: None,
+        shift_held: false,
+        search_open: false,
+        search_query: String::new(),
         ptr: PointerState::new(),
         event_tx: event_tx.clone(),
     };
@@ -756,6 +882,16 @@ fn run_event_loop(
             .map_err(|e| anyhow::anyhow!("toolbar init: {e}"))?
     };
 
+    // Create text renderer for the search panel overlay
+    let text_renderer = unsafe {
+        crate::text_renderer::TextRenderer::new(&gl)
+            .map_err(|e| anyhow::anyhow!("text renderer: {e}"))?
+    };
+
+    // Search panel state
+    let mut search_entries: Vec<(String, String)> = Vec::new();
+    let search_scroll: f32 = 0.0;
+
     let mut prev_look_time = std::time::Instant::now();
     // Surface size is pinned: the Configure handler bounces any compositor-
     // initiated resize back to the original configured size.  No EGL buffer /
@@ -817,6 +953,9 @@ fn run_event_loop(
                         }
                     }
                 }
+                PetCommand::ModelList(entries) => {
+                    search_entries = entries;
+                }
             }
         }
 
@@ -831,12 +970,29 @@ fn run_event_loop(
         let toolbar_action =
             pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
         if let Some(action) = toolbar_action {
-            handle_toolbar_action(
-                action,
-                &mut pet_model,
-                model_dir,
-                click_through,
-            );
+            if matches!(action, crate::toolbar::ToolbarAction::Search) {
+                state.search_open = !state.search_open;
+                if state.search_open {
+                    state.search_query.clear();
+                    search_entries.clear();
+                    state.layer_surface.set_keyboard_interactivity(
+                        zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
+                    );
+                    let _ = event_tx.send(PetEvent::ToolbarAction(action));
+                } else {
+                    state.layer_surface.set_keyboard_interactivity(
+                        zwlr_layer_surface_v1::KeyboardInteractivity::None,
+                    );
+                }
+                state.surface.commit();
+            } else {
+                handle_toolbar_action(
+                    action,
+                    &mut pet_model,
+                    model_dir,
+                    click_through,
+                );
+            }
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
         }
@@ -845,6 +1001,189 @@ fn run_event_loop(
             gl.viewport(0, 0, size.0 as i32, size.1 as i32);
             gl.clear_color(0.0, 0.0, 0.0, 0.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
+        }
+
+        // ── Search panel (overrides model rendering when open) ──
+        if state.search_open {
+            let vpw = size.0 as f32;
+            let vph = size.1 as f32;
+            let pad = 0.1;
+            let px = vpw * pad;
+            let py = vph * pad;
+            let pw = vpw * (1.0 - 2.0 * pad);
+            let ph = vph * (1.0 - 2.0 * pad);
+
+            unsafe {
+                // Background panel
+                let mut overlay_verts: Vec<f32> = Vec::new();
+                crate::toolbar::ToolbarOverlay::push_rect(
+                    &mut overlay_verts, px, py, pw, ph,
+                    0.08, 0.08, 0.12, 0.92,
+                );
+                let mut ndc_buf: Vec<f32> = Vec::with_capacity(overlay_verts.len());
+                for chunk in overlay_verts.chunks_exact(6) {
+                    let [nx, ny] = crate::toolbar::ndc_pos(
+                        chunk[0], chunk[1], vpw, vph,
+                    );
+                    ndc_buf.push(nx);
+                    ndc_buf.push(ny);
+                    ndc_buf.extend_from_slice(&chunk[2..6]);
+                }
+                gl.use_program(Some(toolbar.program_id()));
+                gl.bind_vertex_array(Some(toolbar.vao_id()));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(toolbar.vbo_id()));
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    std::slice::from_raw_parts(
+                        ndc_buf.as_ptr() as *const u8,
+                        ndc_buf.len() * 4,
+                    ),
+                    glow::STREAM_DRAW,
+                );
+                gl.enable(glow::BLEND);
+                gl.blend_func_separate(
+                    glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                );
+                gl.draw_arrays(glow::TRIANGLES, 0, ndc_buf.len() as i32 / 6);
+                gl.bind_vertex_array(None);
+                gl.use_program(None);
+
+                // Search query label
+                text_renderer.draw_text(
+                    &gl, "Search:", px + 8.0, py + 6.0,
+                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
+                );
+                // Query text (with cursor)
+                let display_q = format!("{}{}", state.search_query, "_");
+                text_renderer.draw_text(
+                    &gl, &display_q, px + 8.0 + 70.0, py + 6.0,
+                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
+                );
+
+                // Separator line
+                let sep_y = py + 22.0;
+                let mut sep_v: Vec<f32> = Vec::new();
+                crate::toolbar::ToolbarOverlay::push_rect(
+                    &mut sep_v, px + 6.0, sep_y, pw - 12.0, 1.0,
+                    0.3, 0.3, 0.4, 0.5,
+                );
+                let mut ndc_s: Vec<f32> = Vec::with_capacity(sep_v.len());
+                for chunk in sep_v.chunks_exact(6) {
+                    let [nx, ny] = crate::toolbar::ndc_pos(chunk[0], chunk[1], vpw, vph);
+                    ndc_s.push(nx);
+                    ndc_s.push(ny);
+                    ndc_s.extend_from_slice(&chunk[2..6]);
+                }
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(toolbar.vbo_id()));
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    std::slice::from_raw_parts(ndc_s.as_ptr() as *const u8, ndc_s.len() * 4),
+                    glow::STREAM_DRAW,
+                );
+                gl.draw_arrays(glow::TRIANGLES, 0, ndc_s.len() as i32 / 6);
+
+                // Result entries
+                let entry_h = 22.0;
+                let list_y = py + 28.0;
+                let q_lower = state.search_query.to_lowercase();
+                let filtered: Vec<&(String, String)> = search_entries
+                    .iter()
+                    .filter(|(_, name)| {
+                        q_lower.is_empty() || name.to_lowercase().contains(&q_lower)
+                    })
+                    .collect();
+                if search_entries.is_empty() {
+                    text_renderer.draw_text(
+                        &gl, "(loading...)", px + 8.0, list_y,
+                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
+                    );
+                } else if filtered.is_empty() && !q_lower.is_empty() {
+                    text_renderer.draw_text(
+                        &gl, "(no matches)", px + 8.0, list_y,
+                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
+                    );
+                } else {
+                    let max_visible = ((ph - 50.0) / entry_h) as usize;
+                    let total = filtered.len();
+                    let visible = max_visible.min(total);
+                    for i in 0..visible {
+                        let ey = list_y + i as f32 * entry_h - search_scroll;
+                        if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
+                            text_renderer.draw_text(
+                                &gl, &filtered[i].1,
+                                px + 8.0, ey + 2.0,
+                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
+                            );
+                        }
+                    }
+                }
+
+                // Close button hint
+                text_renderer.draw_text(
+                    &gl, "[Close]", px + 8.0, py + ph - 20.0,
+                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
+                );
+
+                gl.bind_vertex_array(None);
+                gl.use_program(None);
+            }
+
+            // Handle click on search results
+            if let Some((cx, cy)) = state.ptr.pending_click.take() {
+                let entry_h = 22.0;
+                let list_y = py + 28.0;
+                let max_visible = ((ph - 50.0) / entry_h) as usize;
+                let filtered_clone: Vec<(String, String)> = search_entries
+                    .iter()
+                    .filter(|(_, name)| {
+                        state.search_query.is_empty()
+                            || name.to_lowercase().contains(&state.search_query.to_lowercase())
+                    })
+                    .cloned()
+                    .collect();
+                let total = filtered_clone.len();
+                let visible = max_visible.min(total);
+                for i in 0..visible {
+                    let ey = list_y + i as f32 * entry_h - search_scroll;
+                    if ey > py + 24.0 && ey + entry_h < py + ph - 4.0 {
+                        if (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
+                            && cy >= ey as f64 && cy <= (ey + entry_h) as f64
+                        {
+                            let idx = (search_scroll / entry_h) as usize + i;
+                            if idx < total {
+                                let (path, _) = &filtered_clone[idx];
+                                respawn_process(
+                                    std::path::Path::new(path),
+                                    click_through,
+                                    true,
+                                );
+                            }
+                        }
+                    }
+                }
+                // Close button area
+                let close_y = py + ph - 24.0;
+                if cx >= (px + 6.0) as f64 && cx <= (px + pw - 6.0) as f64
+                    && cy >= close_y as f64 && cy <= (close_y + 18.0) as f64
+                {
+                    state.search_open = false;
+                    state.search_query.clear();
+                    state.layer_surface.set_keyboard_interactivity(
+                        zwlr_layer_surface_v1::KeyboardInteractivity::None,
+                    );
+                    state.surface.commit();
+                }
+            }
+
+            // Toolbar should still be rendered when search is open
+            unsafe {
+                toolbar.render(&gl, size.0, size.1);
+            }
+
+            // Skip model rendering
+            egl_surface.swap_buffers(&gl_context)?;
+            continue;
         }
 
         match &mut pet_model {
@@ -1139,6 +1478,9 @@ fn handle_toolbar_action(
                 *v2_scale = (*v2_scale * 0.9).max(0.1);
                 v2_model.set_scale(*v2_scale);
             }
+        },
+        crate::toolbar::ToolbarAction::Search => {
+            // handled before handle_toolbar_action is called
         },
     }
 }

@@ -11,6 +11,7 @@ mod texture;
 mod toolbar;
 mod tray;
 mod v2_motion_sound;
+mod text_renderer;
 #[cfg(target_os = "linux")]
 pub mod wayland_pet;
 
@@ -1185,6 +1186,22 @@ fn main() -> anyhow::Result<()> {
                                     crate::toolbar::ToolbarAction::ExitPet => {
                                         app.pet_mode = PetMode::Off;
                                         app.pet_mode_changed = true;
+                                    }
+                                    crate::toolbar::ToolbarAction::Search => {
+                                        // Send model list to pet thread for its search panel
+                                        if let (Some(db), Some(tx)) =
+                                            (app.db.as_ref(), app.pet_wayland_cmd_tx.as_ref())
+                                        {
+                                            if let Ok(records) = db.model_history() {
+                                                let entries: Vec<_> = records
+                                                    .into_iter()
+                                                    .map(|r| (r.file_path.clone(), r.name.clone()))
+                                                    .collect();
+                                                let _ = tx.send(
+                                                    crate::wayland_pet::PetCommand::ModelList(entries),
+                                                );
+                                            }
+                                        }
                                     }
                                     _ => {} // local actions handled in pet thread
                                 }
