@@ -1123,9 +1123,10 @@ fn run_event_loop(
                     for i in 0..visible {
                         let ey = list_y + i as f32 * entry_h - search_scroll;
                         if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
+                            let baseline = ey + text_renderer.line_height() * 0.75;
                             text_renderer.draw_text(
                                 &gl, &filtered[i].1,
-                                px + 8.0, ey + 2.0,
+                                px + 8.0, baseline,
                                 [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
                             );
                         }
@@ -1177,10 +1178,10 @@ fn run_event_loop(
                         }
                     }
                 }
-                // Close button area
-                let close_y = py + ph - 24.0;
+                // Close button area (text rendered at baseline py+ph-20, top ≈ py+ph-38)
+                let close_y = py + ph - 42.0;
                 if cx >= (px + 6.0) as f64 && cx <= (px + pw - 6.0) as f64
-                    && cy >= close_y as f64 && cy <= (close_y + 18.0) as f64
+                    && cy >= close_y as f64 && cy <= (close_y + 26.0) as f64
                 {
                     state.search_open = false;
                     state.search_query.clear();
