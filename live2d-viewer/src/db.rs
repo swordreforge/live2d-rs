@@ -4,6 +4,51 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use tokio::runtime::Runtime;
 
+// ---------------------------------------------------------------------------
+// Word-vector embedding via character n-gram hashing trick (FNV-1a)
+// ---------------------------------------------------------------------------
+
+/// Dimensionality of embedding vectors.
+const EMBED_DIM: usize = 128;
+
+/// Embed `text` into an L2-normalised f32 vector using character n-gram
+/// feature hashing (FNV-1a).  Zero external dependencies — pure std.
+///
+/// Unigrams, bigrams, and trigrams are each hashed into `[0, EMBED_DIM)`,
+/// weighted by log-frequency `ln(1 + count)`, then L2-normalised.
+fn embed_text(text: &str) -> Vec<f32> {
+    let mut vec = vec![0.0f32; EMBED_DIM];
+    let chars: Vec<char> = text.chars().collect();
+    // 1-3 grams
+    for span_len in 1..=3 {
+        for window in chars.windows(span_len) {
+            let mut hash: u64 = span_len as u64;
+            for &c in window {
+                hash = hash.wrapping_mul(0x100000001b3) ^ (c as u64);
+            }
+            let idx = (hash as usize) % EMBED_DIM;
+            vec[idx] += 1.0;
+        }
+    }
+    // Log-frequency scaling
+    for v in &mut vec {
+        *v = (*v).ln_1p();
+    }
+    // L2 normalise
+    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in &mut vec {
+            *v /= norm;
+        }
+    }
+    vec
+}
+
+/// Cosine similarity between two vectors (dot product for L2-normalised).
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
 /// Single-threaded runtime used to bridge libsql's async API into the
 /// viewer's synchronous event loop.  Initialised once at first DB access.
 fn rt() -> &'static Runtime {
@@ -13,6 +58,16 @@ fn rt() -> &'static Runtime {
             .build()
             .expect("failed to create tokio runtime for libSQL")
     })
+}
+
+/// A single search result — model identity plus similarity score.
+#[derive(Clone)]
+pub struct SearchResult {
+    pub file_path: String,
+    pub name: String,
+    #[allow(dead_code)]
+    pub model_version: String,
+    pub similarity: f32,
 }
 
 /// A model record stored in the local history database.
@@ -56,6 +111,12 @@ impl AppDb {
                 zoom_scale   REAL,
                 last_opened  TEXT NOT NULL DEFAULT (datetime('now')),
                 created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS model_embeddings (
+                file_path    TEXT PRIMARY KEY REFERENCES model_history(file_path) ON DELETE CASCADE,
+                embedding    BLOB NOT NULL,
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
             );",
         ))?;
 
@@ -204,5 +265,82 @@ impl AppDb {
         let prev = if idx == 0 { paths.len() - 1 } else { idx - 1 };
         let next = (idx + 1) % paths.len();
         Ok(Some((paths[prev].clone(), paths[next].clone())))
+    }
+
+    // ------------------------------------------------------------------
+    //  Model embedding helpers (word-vector search)
+    // ------------------------------------------------------------------
+
+    /// Store a pre-computed embedding vector for a model.
+    pub fn set_model_embedding(&self, file_path: &str, embedding: &[f32]) -> Result<()> {
+        let bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        rt().block_on(self.conn.execute(
+            "INSERT INTO model_embeddings (file_path, embedding) VALUES (?1, ?2) \
+             ON CONFLICT(file_path) DO UPDATE SET \
+                embedding=?2, updated_at=datetime('now')",
+            libsql::params![file_path, bytes],
+        ))?;
+        Ok(())
+    }
+
+    /// Retrieve a cached embedding vector for a model.  Returns `None`
+    /// when no embedding has been stored for that path.
+    pub fn get_model_embedding(&self, file_path: &str) -> Result<Option<Vec<f32>>> {
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT embedding FROM model_embeddings WHERE file_path = ?1",
+            libsql::params![file_path],
+        ))?;
+        match rt().block_on(rows.next())? {
+            Some(row) => {
+                let bytes: Vec<u8> = row.get::<Vec<u8>>(0)?;
+                let embedding = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                Ok(Some(embedding))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Search all model history entries by semantic similarity between
+    /// `query` and each model's **name** (or cached embedding).
+    ///
+    /// Returns the top-`limit` results sorted descending by cosine
+    /// similarity.  Embeddings are computed on-the-fly when not cached.
+    pub fn search_models(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        let records = self.model_history()?;
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let q_embed = embed_text(query);
+        let mut scored: Vec<SearchResult> = Vec::with_capacity(records.len());
+
+        for rec in &records {
+            let embed = match self.get_model_embedding(&rec.file_path)? {
+                Some(e) => e,
+                None => {
+                    let e = embed_text(&rec.name);
+                    self.set_model_embedding(&rec.file_path, &e)?;
+                    e
+                }
+            };
+            let sim = cosine_sim(&q_embed, &embed);
+            scored.push(SearchResult {
+                file_path: rec.file_path.clone(),
+                name: rec.name.clone(),
+                model_version: rec.model_version.clone(),
+                similarity: sim,
+            });
+        }
+
+        // Sort descending by similarity, take top-k
+        scored.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        Ok(scored)
     }
 }

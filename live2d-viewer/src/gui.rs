@@ -306,6 +306,62 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 }
             });
     }
+
+    // ── Search window ──
+    let has_query = !app.search_query.is_empty();
+    Window::new("搜索")
+        .default_width(260.0)
+        .show(ctx, |ui| {
+            let prev = app.search_query.clone();
+            ui.add(
+                egui::TextEdit::singleline(&mut app.search_query)
+                    .hint_text("输入关键词搜索模型...")
+                    .desired_width(240.0),
+            );
+
+            // Trigger search when query changes
+            let query_changed = app.search_query != prev;
+            if query_changed {
+                if app.search_query.is_empty() {
+                    app.search_results.clear();
+                } else if let Some(ref db) = app.db {
+                    let q = app.search_query.trim().to_string();
+                    if !q.is_empty() {
+                        app.search_results = db.search_models(&q, 20).unwrap_or_default();
+                    }
+                }
+            }
+
+            ui.separator();
+
+            if app.search_results.is_empty() && has_query {
+                ui.label("无匹配结果");
+            }
+
+            let mut switch_idx: Option<usize> = None;
+            for result in &app.search_results {
+                let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
+                let label = format!(
+                    "{}  ({:.0}%)",
+                    result.name,
+                    pct,
+                );
+                if ui.selectable_label(false, &label).clicked() {
+                    // Find the model in model_list by file_path
+                    if let Some(idx) = app.model_list.iter().position(|e| {
+                        e.dir.to_string_lossy() == result.file_path
+                    }) {
+                        switch_idx = Some(idx);
+                    }
+                }
+            }
+
+            if let Some(i) = switch_idx {
+                if let Err(e) = app.begin_switch(i) {
+                    app.error_message = Some(e);
+                }
+            }
+        });
 }
 
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {

@@ -252,6 +252,9 @@ pub struct AppState {
     pub pet_wayland_event_rx: Option<()>,
     #[cfg(not(target_os = "linux"))]
     pub pet_wayland_thread: Option<()>,
+    /// Search tab state
+    pub search_query: String,
+    pub search_results: Vec<db::SearchResult>,
 }
 
 impl AppState {
@@ -332,6 +335,8 @@ impl AppState {
             pet_events_scratch: Vec::new(),
             #[cfg(not(target_os = "linux"))]
             pet_events_scratch: Vec::new(),
+            search_query: String::new(),
+            search_results: Vec::new(),
         }
     }
 
