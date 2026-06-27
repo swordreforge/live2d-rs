@@ -127,7 +127,10 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                             if selected { "\u{25cf}" } else { "\u{25cb}" },
                             short_name,
                         );
-                        let resp = ui.selectable_label(selected, &label);
+                        let resp = ui.add_sized(
+                            egui::vec2(190.0, 20.0),
+                            egui::SelectableLabel::new(selected, label),
+                        );
                         if resp.clicked() {
                             switched_idx = Some(i);
                         }
