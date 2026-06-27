@@ -883,8 +883,8 @@ fn run_event_loop(
     };
 
     // Create text renderer for the search panel overlay
-    let text_renderer = unsafe {
-        crate::text_renderer::TextRenderer::new(&gl)
+    let mut text_renderer = unsafe {
+        crate::text_renderer::TextRenderer::new(&gl, 22.0)
             .map_err(|e| anyhow::anyhow!("text renderer: {e}"))?
     };
 
@@ -1052,20 +1052,21 @@ fn run_event_loop(
                 gl.bind_vertex_array(None);
                 gl.use_program(None);
 
-                // Search query label
+                // Search query label (baseline-aligned)
                 text_renderer.draw_text(
-                    &gl, "Search:", px + 8.0, py + 6.0,
-                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0, 2.5,
+                    &gl, "Search:", px + 8.0, py + 24.0,
+                    [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
                 );
+                let qx = px + 8.0 + 120.0;
                 // Query text (with cursor)
-                let display_q = format!("{}{}", state.search_query, "_");
+                let display_q = format!("{}{}", "_", state.search_query);
                 text_renderer.draw_text(
-                    &gl, &display_q, px + 8.0 + 130.0, py + 6.0,
-                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0, 2.5,
+                    &gl, &display_q, qx, py + 24.0,
+                    [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
                 );
 
                 // Separator line — rebind toolbar program/vao (text_renderer unbound them)
-                let sep_y = py + 28.0;
+                let sep_y = py + 32.0;
                 let mut sep_v: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
                     &mut sep_v, px + 6.0, sep_y, pw - 12.0, 1.0,
@@ -1096,8 +1097,8 @@ fn run_event_loop(
                 gl.use_program(None);
 
                 // Result entries
-                let entry_h = 26.0;
-                let list_y = py + 34.0;
+                let entry_h = text_renderer.line_height() + 4.0;
+                let list_y = py + 42.0;
                 let q_lower = state.search_query.to_lowercase();
                 let filtered: Vec<&(String, String)> = search_entries
                     .iter()
@@ -1108,12 +1109,12 @@ fn run_event_loop(
                 if search_entries.is_empty() {
                     text_renderer.draw_text(
                         &gl, "(loading...)", px + 8.0, list_y,
-                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0, 2.5,
+                        [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
                     );
                 } else if filtered.is_empty() && !q_lower.is_empty() {
                     text_renderer.draw_text(
                         &gl, "(no matches)", px + 8.0, list_y,
-                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0, 2.5,
+                        [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
                     );
                 } else {
                     let max_visible = ((ph - 50.0) / entry_h) as usize;
@@ -1125,7 +1126,7 @@ fn run_event_loop(
                             text_renderer.draw_text(
                                 &gl, &filtered[i].1,
                                 px + 8.0, ey + 2.0,
-                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0, 2.5,
+                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
                             );
                         }
                     }
@@ -1134,7 +1135,7 @@ fn run_event_loop(
                 // Close button hint
                 text_renderer.draw_text(
                     &gl, "[Close]", px + 8.0, py + ph - 20.0,
-                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0, 2.5,
+                    [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
                 );
 
                 gl.disable(glow::BLEND);
@@ -1145,8 +1146,8 @@ fn run_event_loop(
 
             // Handle click on search results
             if let Some((cx, cy)) = state.ptr.pending_click.take() {
-                let entry_h = 26.0;
-                let list_y = py + 34.0;
+                let entry_h = text_renderer.line_height() + 4.0;
+                let list_y = py + 42.0;
                 let max_visible = ((ph - 50.0) / entry_h) as usize;
                 let filtered_clone: Vec<(String, String)> = search_entries
                     .iter()

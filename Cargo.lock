@@ -2182,6 +2182,7 @@ dependencies = [
 name = "live2d-viewer"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "dirs 5.0.1",
  "egui",

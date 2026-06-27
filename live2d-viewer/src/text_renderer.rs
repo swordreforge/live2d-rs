@@ -1,212 +1,17 @@
-//! Minimal bitmap-font text renderer for the sctk layer-shell overlay.
+//! Text renderer for the sctk layer-shell overlay.
 //!
-//! Uses a hand-crafted 5×7 pixel monospace font for ASCII 32–122
-//! (space through 'z').  Every glyph is uploaded as a single-channel
-//! (alpha) texture atlas; drawing amounts to a batch of textured quads.
+//! Uses `ab_glyph` to rasterise TrueType glyphs on demand into a
+//! dynamic texture atlas.  Anti-aliased, any font, any size — no more
+//! hand-crafted 5×7 pixel font.
 //!
-//! No external dependencies — raw `glow` calls only.
+//! Tries to load a system monospace font (DejaVu / Liberation / Noto).
+//! Falls back to … well, it doesn't.  Fix your font installation.  ;)
 
+use std::collections::HashMap;
+use std::path::Path;
+
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use glow::*;
-
-// ---------------------------------------------------------------------------
-// Font data (91 glyphs × 7 rows, 5-bit encoded, MSB = leftmost pixel)
-// ---------------------------------------------------------------------------
-
-const GLYPH_W: u32 = 5;
-const GLYPH_H: u32 = 7;
-const GLYPH_ROWS: usize = 7;
-const CHARS_PER_ROW: u32 = 13; // 13 × 7 = 91 glyphs (32–122)
-const FIRST_CHAR: u32 = 32; // space
-const TOTAL_CHARS: usize = 91;
-
-/// One row of a glyph: only the low 5 bits are used.
-type GlyphRow = u8;
-
-/// 91 glyphs; each glyph is `[GLYPH_ROWS]` rows.
-const FONT_DATA: &[GlyphRow] = &[
-    // 32  space
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    // 33  !
-    0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04,
-    // 34  "
-    0x0A, 0x0A, 0x0A, 0x00, 0x00, 0x00, 0x00,
-    // 35  #
-    0x0A, 0x0A, 0x1F, 0x0A, 0x1F, 0x0A, 0x0A,
-    // 36  $
-    0x04, 0x0F, 0x14, 0x0E, 0x05, 0x1E, 0x04,
-    // 37  %
-    0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03,
-    // 38  &
-    0x0C, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0D,
-    // 39  '
-    0x04, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00,
-    // 40  (
-    0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02,
-    // 41  )
-    0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08,
-    // 42  *
-    0x04, 0x15, 0x0E, 0x15, 0x04, 0x00, 0x00,
-    // 43  +
-    0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00,
-    // 44  ,
-    0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08,
-    // 45  -
-    0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00,
-    // 46  .
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04,
-    // 47  /
-    0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10,
-    // 48  0
-    0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E,
-    // 49  1
-    0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E,
-    // 50  2
-    0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F,
-    // 51  3
-    0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E,
-    // 52  4
-    0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02,
-    // 53  5
-    0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E,
-    // 54  6
-    0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E,
-    // 55  7
-    0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08,
-    // 56  8
-    0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E,
-    // 57  9
-    0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C,
-    // 58  :
-    0x00, 0x00, 0x04, 0x00, 0x00, 0x04, 0x00,
-    // 59  ;
-    0x00, 0x00, 0x04, 0x00, 0x00, 0x04, 0x08,
-    // 60  <
-    0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02,
-    // 61  =
-    0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00,
-    // 62  >
-    0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08,
-    // 63  ?
-    0x0E, 0x11, 0x01, 0x06, 0x04, 0x00, 0x04,
-    // 64  @
-    0x0E, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0F,
-    // 65  A
-    0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11,
-    // 66  B
-    0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E,
-    // 67  C
-    0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E,
-    // 68  D
-    0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E,
-    // 69  E
-    0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F,
-    // 70  F
-    0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10,
-    // 71  G
-    0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F,
-    // 72  H
-    0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11,
-    // 73  I
-    0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E,
-    // 74  J
-    0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0C,
-    // 75  K
-    0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11,
-    // 76  L
-    0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F,
-    // 77  M
-    0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11,
-    // 78  N
-    0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11,
-    // 79  O
-    0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E,
-    // 80  P
-    0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10,
-    // 81  Q
-    0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D,
-    // 82  R
-    0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11,
-    // 83  S
-    0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E,
-    // 84  T
-    0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
-    // 85  U
-    0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E,
-    // 86  V
-    0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04,
-    // 87  W
-    0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11,
-    // 88  X
-    0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11,
-    // 89  Y
-    0x11, 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04,
-    // 90  Z
-    0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F,
-    // 91  [
-    0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E,
-    // 92  \
-    0x10, 0x08, 0x08, 0x04, 0x02, 0x02, 0x01,
-    // 93  ]
-    0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E,
-    // 94  ^
-    0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00,
-    // 95  _
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F,
-    // 96  `
-    0x08, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00,
-    // 97  a
-    0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F,
-    // 98  b
-    0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1E,
-    // 99  c
-    0x00, 0x00, 0x0E, 0x10, 0x10, 0x11, 0x0E,
-    // 100 d
-    0x01, 0x01, 0x0D, 0x13, 0x11, 0x11, 0x0F,
-    // 101 e
-    0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E,
-    // 102 f
-    0x06, 0x09, 0x08, 0x1C, 0x08, 0x08, 0x08,
-    // 103 g
-    0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x0E,
-    // 104 h
-    0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11,
-    // 105 i
-    0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E,
-    // 106 j
-    0x02, 0x00, 0x06, 0x02, 0x02, 0x12, 0x0C,
-    // 107 k
-    0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12,
-    // 108 l
-    0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E,
-    // 109 m
-    0x00, 0x00, 0x1A, 0x15, 0x15, 0x11, 0x11,
-    // 110 n
-    0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11,
-    // 111 o
-    0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E,
-    // 112 p
-    0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10,
-    // 113 q
-    0x00, 0x00, 0x0D, 0x13, 0x0F, 0x01, 0x01,
-    // 114 r
-    0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10,
-    // 115 s
-    0x00, 0x00, 0x0E, 0x10, 0x0E, 0x01, 0x1E,
-    // 116 t
-    0x08, 0x08, 0x1C, 0x08, 0x08, 0x09, 0x06,
-    // 117 u
-    0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0D,
-    // 118 v
-    0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04,
-    // 119 w
-    0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0A,
-    // 120 x
-    0x00, 0x00, 0x11, 0x0A, 0x04, 0x0A, 0x11,
-    // 121 y
-    0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E,
-    // 122 z
-    0x00, 0x00, 0x1F, 0x02, 0x04, 0x08, 0x1F,
-];
 
 // ---------------------------------------------------------------------------
 // Shader sources
@@ -235,6 +40,24 @@ void main() {
 }"#;
 
 // ---------------------------------------------------------------------------
+// Atlas
+// ---------------------------------------------------------------------------
+
+const ATLAS_SIZE: u32 = 512;
+const GLYPH_PAD: u32 = 2;
+
+#[derive(Clone, Copy)]
+struct GlyphSlot {
+    atlas_x: u32,
+    atlas_y: u32,
+    width: u32,
+    height: u32,
+    advance: f32,
+    bearing_x: f32,
+    bearing_y: f32,
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -243,7 +66,9 @@ fn ndc(sx: f32, sy: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
 }
 
 unsafe fn compile_program(gl: &Context) -> Result<NativeProgram, String> {
-    let program = gl.create_program().map_err(|e| format!("create program: {e}"))?;
+    let program = gl
+        .create_program()
+        .map_err(|e| format!("create program: {e}"))?;
 
     let vs = gl
         .create_shader(VERTEX_SHADER)
@@ -275,6 +100,22 @@ unsafe fn compile_program(gl: &Context) -> Result<NativeProgram, String> {
     Ok(program)
 }
 
+fn find_monospace_font() -> Result<Vec<u8>, String> {
+    let candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf",
+        "/usr/share/fonts/noto/NotoMono-Regular.ttf",
+    ];
+    for p in &candidates {
+        if Path::new(p).exists() {
+            return std::fs::read(p).map_err(|e| format!("read {p}: {e}"));
+        }
+    }
+    Err("no monospace font found".into())
+}
+
 // ---------------------------------------------------------------------------
 // TextRenderer
 // ---------------------------------------------------------------------------
@@ -284,67 +125,64 @@ pub struct TextRenderer {
     vao: NativeVertexArray,
     vbo: NativeBuffer,
     font_tex: NativeTexture,
+    font: FontVec,
+    cache: HashMap<char, GlyphSlot>,
+    cursor_x: u32,
+    cursor_y: u32,
+    row_h: u32,
+    line_h: f32,
 }
 
 impl TextRenderer {
-    /// Create font atlas texture and compile shader.
+    /// Create the renderer with a system monospace font at `px_size` pixels.
     ///
     /// # Safety
     ///
     /// Requires an active GL context.
-    pub unsafe fn new(gl: &Context) -> Result<Self, String> {
-        // --- Font atlas texture ---
-        let cell_w = GLYPH_W + 1;
-        let cell_h = GLYPH_H + 1;
-        let atlas_w = CHARS_PER_ROW * cell_w;
-        let atlas_h =
-            (TOTAL_CHARS as u32).div_ceil(CHARS_PER_ROW) * cell_h;
+    pub unsafe fn new(gl: &Context, px_size: f32) -> Result<Self, String> {
+        let font_data = find_monospace_font()?;
+        let font =
+            FontVec::try_from_vec(font_data).map_err(|e| format!("parse font: {e:?}"))?;
 
-        let mut atlas = vec![0u8; (atlas_w * atlas_h) as usize];
-        for (idx, glyph) in FONT_DATA.chunks_exact(GLYPH_ROWS).enumerate() {
-            let col = idx as u32 % CHARS_PER_ROW;
-            let row = idx as u32 / CHARS_PER_ROW;
-            let ox = (col * cell_w) as usize;
-            let oy = (row * cell_h) as usize;
-            for (y, &bits) in glyph.iter().enumerate().take(GLYPH_H as usize) {
-                for x in 0..GLYPH_W as usize {
-                    let pixel = (bits >> (4 - x)) & 1;
-                    let px = ox + x;
-                    let py = oy + y;
-                    atlas[py * atlas_w as usize + px] = if pixel != 0 { 255 } else { 0 };
-                }
-            }
-        }
+        let font_scaled = font.as_scaled(PxScale::from(px_size));
+        let line_h = font_scaled.height() + font_scaled.line_gap();
 
-        let font_tex = gl.create_texture().map_err(|e| format!("create tex: {e}"))?;
+        // --- Atlas texture ---
+        let font_tex = gl
+            .create_texture()
+            .map_err(|e| format!("create tex: {e}"))?;
         gl.bind_texture(TEXTURE_2D, Some(font_tex));
-        gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_MIN_FILTER, NEAREST as i32);
-        gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_MAG_FILTER, NEAREST as i32);
+        gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR as i32);
+        gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR as i32);
         gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE as i32);
         gl.tex_parameter_i32(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE as i32);
+        // Pre-allocate RGBA atlas
         gl.tex_image_2d(
             TEXTURE_2D,
             0,
-            RED as i32,
-            atlas_w as i32,
-            atlas_h as i32,
+            RGBA as i32,
+            ATLAS_SIZE as i32,
+            ATLAS_SIZE as i32,
             0,
-            RED,
+            RGBA,
             UNSIGNED_BYTE,
-            Some(&atlas),
+            None,
         );
 
         // --- Shader ---
         let program = compile_program(gl)?;
 
         // --- VAO / VBO ---
-        let vao = gl.create_vertex_array().map_err(|e| format!("vao: {e}"))?;
-        let vbo = gl.create_buffer().map_err(|e| format!("vbo: {e}"))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| format!("vao: {e}"))?;
+        let vbo = gl
+            .create_buffer()
+            .map_err(|e| format!("vbo: {e}"))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
-        // layout: pos2 + uv2 + color4 = 8 × f32 = 32 bytes
-        let stride: i32 = 32;
+        let stride: i32 = 32; // pos2 + uv2 + color4 = 8 × f32
         gl.vertex_attrib_pointer_f32(0, 2, FLOAT, false, stride, 0);
         gl.enable_vertex_attrib_array(0);
         gl.vertex_attrib_pointer_f32(1, 2, FLOAT, false, stride, 8);
@@ -355,74 +193,180 @@ impl TextRenderer {
         gl.bind_texture(TEXTURE_2D, None);
         gl.use_program(None);
 
-        Ok(Self { program, vao, vbo, font_tex })
+        Ok(Self {
+            program,
+            vao,
+            vbo,
+            font_tex,
+            font,
+            cache: HashMap::new(),
+            cursor_x: 0,
+            cursor_y: 0,
+            row_h: 0,
+            line_h,
+        })
     }
 
-    /// Draw a string at screen coordinates `(x, y)` using the bitmap font.
+    /// Rasterise `ch` into the atlas if not already cached.
+    /// Returns the glyph slot (atlas position / metrics).
+    fn get_or_rasterise(&mut self, gl: &Context, ch: char) -> Option<GlyphSlot> {
+        if let Some(&s) = self.cache.get(&ch) {
+            return Some(s);
+        }
+
+        let scale = PxScale::from(self.line_h / 1.2); // font size ≈ line_h / 1.2
+        let glyph_id = self.font.glyph_id(ch);
+        let outlined = self.font.outline_glyph(glyph_id.with_scale(scale))?;
+        let bounds = outlined.px_bounds();
+
+        let w = bounds.width().ceil() as u32;
+        let h = bounds.height().ceil() as u32;
+        let advance = self
+            .font
+            .as_scaled(scale)
+            .h_advance(glyph_id);
+
+        if w == 0 || h == 0 {
+            let slot = GlyphSlot {
+                atlas_x: 0,
+                atlas_y: 0,
+                width: 0,
+                height: 0,
+                advance,
+                bearing_x: 0.0,
+                bearing_y: 0.0,
+            };
+            self.cache.insert(ch, slot);
+            return Some(slot);
+        }
+
+        // Atlas packing: simple left-to-right, top-to-bottom
+        if self.cursor_x + w + GLYPH_PAD * 2 > ATLAS_SIZE {
+            self.cursor_x = 0;
+            self.cursor_y += self.row_h + GLYPH_PAD;
+            self.row_h = 0;
+        }
+
+        // If atlas is full, just skip new glyphs
+        if self.cursor_y + h + GLYPH_PAD * 2 > ATLAS_SIZE {
+            log::warn!("[text_renderer] atlas full — skipping glyph '{}'", ch);
+            self.cache.insert(ch, GlyphSlot {
+                atlas_x: 0, atlas_y: 0, width: 0, height: 0,
+                advance, bearing_x: 0.0, bearing_y: 0.0,
+            });
+            return None;
+        }
+
+        let ax = self.cursor_x + GLYPH_PAD;
+        let ay = self.cursor_y + GLYPH_PAD;
+
+        // Rasterise to RGBA bitmap
+        let mut bitmap = vec![0u8; (w * h * 4) as usize];
+        outlined.draw(|px, py, c| {
+            let idx = (py as usize * w as usize + px as usize) * 4;
+            let alpha = (c * 255.0).clamp(0.0, 255.0) as u8;
+            bitmap[idx] = 255;
+            bitmap[idx + 1] = 255;
+            bitmap[idx + 2] = 255;
+            bitmap[idx + 3] = alpha;
+        });
+
+        // Upload sub-region
+        unsafe {
+            gl.bind_texture(TEXTURE_2D, Some(self.font_tex));
+            gl.tex_sub_image_2d(
+                TEXTURE_2D,
+                0,
+                ax as i32,
+                ay as i32,
+                w as i32,
+                h as i32,
+                RGBA,
+                UNSIGNED_BYTE,
+                PixelUnpackData::Slice(&bitmap),
+            );
+        }
+
+        let slot = GlyphSlot {
+            atlas_x: ax,
+            atlas_y: ay,
+            width: w,
+            height: h,
+            advance,
+            bearing_x: bounds.min.x,
+            bearing_y: bounds.min.y,
+        };
+        self.cache.insert(ch, slot);
+
+        self.cursor_x = ax + w;
+        self.row_h = self.row_h.max(h);
+
+        self.cache.get(&ch).copied()
+    }
+
+    /// Draw a string at screen coordinates `(x, y)`.
     ///
-    /// `vp_w` / `vp_h` are the viewport dimensions (in pixels).
-    /// `total_alpha` is multiplied with the per-glyph colour alpha.
+    /// `y` is the *baseline* position (not top-left).
+    /// `alpha_mult` multiplies the per-glyph colour alpha.
     ///
     /// # Safety
     ///
-    /// Requires an active GL context and the caller should enable
-    /// blending with `gl.blend_func_separate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ...)`.
+    /// Requires an active GL context.  The caller should enable blending
+    /// with `gl.blend_func(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`.
     #[allow(clippy::too_many_arguments)]
     pub unsafe fn draw_text(
-        &self,
+        &mut self,
         gl: &Context,
         text: &str,
         mut x: f32,
-        mut y: f32,
+        y: f32,
         color: [f32; 4],
         vp_w: u32,
         vp_h: u32,
         alpha_mult: f32,
-        glyph_scale: f32,
     ) {
         let vpw = vp_w as f32;
         let vph = vp_h as f32;
-        let cell_w = GLYPH_W + 1;
-        let cell_h = GLYPH_H + 1;
-        let atlas_w = (CHARS_PER_ROW * cell_w) as f32;
-        let atlas_h =
-            (((TOTAL_CHARS as u32).div_ceil(CHARS_PER_ROW)) * cell_h) as f32;
+        let atlas_f = ATLAS_SIZE as f32;
+        let a = color[3] * alpha_mult;
 
         let mut verts: Vec<f32> = Vec::new();
-        let a = color[3] * alpha_mult;
         let start_x = x;
-        let gw = GLYPH_W as f32 * glyph_scale;
-        let gh = GLYPH_H as f32 * glyph_scale;
 
         for ch in text.chars() {
             if ch == '\n' {
                 x = start_x;
-                y += cell_h as f32 * glyph_scale;
+                continue; // no multi-line for this panel
+            }
+
+            let slot = match self.get_or_rasterise(gl, ch) {
+                Some(s) => s,
+                None => {
+                    x += self.line_h * 0.3;
+                    continue;
+                }
+            };
+
+            if slot.width == 0 || slot.height == 0 {
+                x += slot.advance;
                 continue;
             }
-            let code = ch as u32;
-            if code < FIRST_CHAR || code >= FIRST_CHAR + TOTAL_CHARS as u32 {
-                x += cell_w as f32 * glyph_scale * 0.6;
-                continue;
-            }
-            let idx = (code - FIRST_CHAR) as u32;
-            let col = idx % CHARS_PER_ROW;
-            let row = idx / CHARS_PER_ROW;
 
-            let u0 = (col * cell_w) as f32 / atlas_w;
-            let v0 = (row * cell_h) as f32 / atlas_h;
-            let u1 = (col * cell_w + GLYPH_W) as f32 / atlas_w;
-            let v1 = (row * cell_h + GLYPH_H) as f32 / atlas_h;
+            // Quad position (pixel-accurate, anchored at bearing baseline)
+            let qx = x + slot.bearing_x;
+            let qy = y - slot.bearing_y - slot.height as f32;
+            let qw = slot.width as f32;
+            let qh = slot.height as f32;
 
-            let x1 = x + gw;
-            let y1 = y + gh;
+            let u0 = slot.atlas_x as f32 / atlas_f;
+            let v0 = slot.atlas_y as f32 / atlas_f;
+            let u1 = (slot.atlas_x + slot.width) as f32 / atlas_f;
+            let v1 = (slot.atlas_y + slot.height) as f32 / atlas_f;
 
-            // TL=(x,y), TR=(x1,y), BL=(x,y1), BR=(x1,y1)
-            // UV: TL=(u0,v0), TR=(u1,v0), BL=(u0,v1), BR=(u1,v1)
-            let [tlx, tly] = ndc(x, y, vpw, vph);
-            let [trx, try_] = ndc(x1, y, vpw, vph);
-            let [blx, bly] = ndc(x, y1, vpw, vph);
-            let [brx, bry] = ndc(x1, y1, vpw, vph);
+            let [tlx, tly] = ndc(qx, qy, vpw, vph);
+            let [trx, try_] = ndc(qx + qw, qy, vpw, vph);
+            let [blx, bly] = ndc(qx, qy + qh, vpw, vph);
+            let [brx, bry] = ndc(qx + qw, qy + qh, vpw, vph);
 
             // Triangle 1: TL, TR, BL
             verts.extend_from_slice(&[
@@ -437,14 +381,17 @@ impl TextRenderer {
                 blx, bly, u0, v1, color[0], color[1], color[2], a,
             ]);
 
-            x += cell_w as f32 * glyph_scale;
+            x += slot.advance;
         }
 
-        if verts.is_empty() { return; }
+        if verts.is_empty() {
+            return;
+        }
 
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(ARRAY_BUFFER, Some(self.vbo));
-        let bytes = std::slice::from_raw_parts(verts.as_ptr() as *const u8, verts.len() * 4);
+        let bytes =
+            std::slice::from_raw_parts(verts.as_ptr() as *const u8, verts.len() * 4);
         gl.buffer_data_u8_slice(ARRAY_BUFFER, bytes, STREAM_DRAW);
 
         gl.use_program(Some(self.program));
@@ -461,10 +408,23 @@ impl TextRenderer {
         gl.use_program(None);
     }
 
-    /// Return the advance width of a string in screen pixels.
-    pub fn text_width(text: &str) -> f32 {
-        let cell_w = (GLYPH_W + 1) as f32;
-        text.chars().count() as f32 * cell_w
+    /// Height of a text line in screen pixels.
+    pub fn line_height(&self) -> f32 {
+        self.line_h
+    }
+
+    /// Estimated pixel width of a string (cached glyphs only; falls back
+    /// to average advance for uncached characters).
+    pub fn text_width(&mut self, gl: &Context, text: &str) -> f32 {
+        let mut w = 0.0f32;
+        for ch in text.chars() {
+            if let Some(s) = self.get_or_rasterise(gl, ch) {
+                w += s.advance;
+            } else {
+                w += self.line_h * 0.4;
+            }
+        }
+        w
     }
 
     /// Destroy GL resources.
