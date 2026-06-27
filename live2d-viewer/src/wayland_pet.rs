@@ -1141,24 +1141,25 @@ fn run_event_loop(
                             [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
                         );
                     } else {
-                        let max_visible = ((ph - 50.0) / entry_h) as usize;
                         let total = filtered.len();
+                        let max_visible = ((ph - 50.0) / entry_h) as usize;
                         let visible = max_visible.min(total);
                         // Clamp scroll to valid range
                         let max_scroll = ((total as f32) - visible as f32).max(0.0) * entry_h;
                         if state.ptr.scroll_offset > max_scroll {
                             state.ptr.scroll_offset = max_scroll;
                         }
-                        for i in 0..visible {
-                            let ey = list_y + i as f32 * entry_h - state.ptr.scroll_offset;
-                            if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
-                                let baseline = ey + tr.line_height() * 0.75;
-                                tr.draw_text(
-                                    &gl, &filtered[i].1,
-                                    px + 8.0, baseline,
-                                    [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
-                                );
-                            }
+                        let first_idx = (state.ptr.scroll_offset / entry_h) as usize;
+                        let remainder = state.ptr.scroll_offset % entry_h;
+                        let end_idx = (first_idx + visible + 1).min(total);
+                        for idx in first_idx..end_idx {
+                            let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
+                            let baseline = ey + tr.line_height() * 0.75;
+                            tr.draw_text(
+                                &gl, &filtered[idx].1,
+                                px + 8.0, baseline,
+                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
+                            );
                         }
                     }
 
@@ -1192,21 +1193,21 @@ fn run_event_loop(
                     .collect();
                 let total = filtered_clone.len();
                 let visible = max_visible.min(total);
-                for i in 0..visible {
-                    let ey = list_y + i as f32 * entry_h - state.ptr.scroll_offset;
+                let first_idx = (state.ptr.scroll_offset / entry_h) as usize;
+                let remainder = state.ptr.scroll_offset % entry_h;
+                let end_idx = (first_idx + visible + 1).min(total);
+                for idx in first_idx..end_idx {
+                    let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
                     if ey > py + 24.0 && ey + entry_h < py + ph - 4.0 {
                         if (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
                             && cy >= ey as f64 && cy <= (ey + entry_h) as f64
                         {
-                            let idx = (state.ptr.scroll_offset / entry_h) as usize + i;
-                            if idx < total {
-                                let (path, _) = &filtered_clone[idx];
-                                respawn_process(
-                                    std::path::Path::new(path),
-                                    click_through,
-                                    true,
-                                );
-                            }
+                            let (path, _) = &filtered_clone[idx];
+                            respawn_process(
+                                std::path::Path::new(path),
+                                click_through,
+                                true,
+                            );
                         }
                     }
                 }
