@@ -68,7 +68,10 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             let mut deleted_idx = None;
             let mut switched_idx = None;
 
-            for (i, name) in model_names.iter().enumerate() {
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    for (i, name) in model_names.iter().enumerate() {
                 let selected = current_idx == Some(i);
                 let is_renaming = app.renaming_idx == Some(i);
 
@@ -122,6 +125,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                 });
             }
+            });
 
             // Deferred: process outside the loop to avoid borrow conflict with model_list
             if let Some(i) = deleted_idx {
@@ -290,7 +294,10 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 
                 ui.separator();
 
-                // Parameter sliders
+                // Parameter sliders in scroll area
+                egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .show(ui, |ui| {
                 for i in 0..app.parameter_names.len() {
                     let name = &app.parameter_names[i];
                     let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);
@@ -304,6 +311,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.update_parameters();
                     }
                 }
+            });
         }); // close Window::show
 
     } // close if app.current_model.is_some()
@@ -340,6 +348,9 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             }
 
             let mut switch_idx: Option<usize> = None;
+            egui::ScrollArea::vertical()
+                .max_height(350.0)
+                .show(ui, |ui| {
             for result in &app.search_results {
                 let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
                 let label = format!(
@@ -356,6 +367,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                 }
             }
+            });
 
             if let Some(i) = switch_idx {
                 if let Err(e) = app.begin_switch(i) {
@@ -541,6 +553,9 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                     ui.separator();
 
                     if !app.search_results.is_empty() {
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
                         let results = app.search_results.clone();
                         for result in &results {
                             let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
@@ -559,6 +574,7 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                                 }
                             }
                         }
+                        });
                     } else if !app.search_query.is_empty() {
                         ui.label("无匹配结果");
                     }
