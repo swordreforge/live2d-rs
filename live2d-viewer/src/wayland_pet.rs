@@ -125,6 +125,7 @@ struct PointerState {
     /// Last cursor position sent to main thread (for throttling look-at updates)
     last_cursor_x: f64,
     last_cursor_y: f64,
+    scroll_offset: f32,
 }
 
 impl PointerState {
@@ -143,6 +144,7 @@ impl PointerState {
             pending_click: None,
             last_cursor_x: f64::NEG_INFINITY,
             last_cursor_y: f64::NEG_INFINITY,
+            scroll_offset: 0.0,
         }
     }
 }
@@ -419,7 +421,20 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                 }
             }
             wl_pointer::Event::Frame => {}
-            wl_pointer::Event::Axis { .. } => {}
+            wl_pointer::Event::Axis {
+                axis,
+                value,
+                ..
+            } => {
+                // vertical scroll only
+                if matches!(axis, smithay_client_toolkit::reexports::client::WEnum::Value(wl_pointer::Axis::VerticalScroll)) {
+                    state.ptr.scroll_offset += value as f32;
+                    // clamp to >= 0 (can't scroll above top)
+                    if state.ptr.scroll_offset < 0.0 {
+                        state.ptr.scroll_offset = 0.0;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -896,7 +911,6 @@ fn run_event_loop(
 
     // Search panel state
     let mut search_entries: Vec<(String, String)> = Vec::new();
-    let search_scroll: f32 = 0.0;
 
     let mut prev_look_time = std::time::Instant::now();
     // Surface size is pinned: the Configure handler bounces any compositor-
@@ -1130,8 +1144,13 @@ fn run_event_loop(
                         let max_visible = ((ph - 50.0) / entry_h) as usize;
                         let total = filtered.len();
                         let visible = max_visible.min(total);
+                        // Clamp scroll to valid range
+                        let max_scroll = ((total as f32) - visible as f32).max(0.0) * entry_h;
+                        if state.ptr.scroll_offset > max_scroll {
+                            state.ptr.scroll_offset = max_scroll;
+                        }
                         for i in 0..visible {
-                            let ey = list_y + i as f32 * entry_h - search_scroll;
+                            let ey = list_y + i as f32 * entry_h - state.ptr.scroll_offset;
                             if ey > py + 24.0 && ey + entry_h < py + ph - 28.0 {
                                 let baseline = ey + tr.line_height() * 0.75;
                                 tr.draw_text(
@@ -1174,12 +1193,12 @@ fn run_event_loop(
                 let total = filtered_clone.len();
                 let visible = max_visible.min(total);
                 for i in 0..visible {
-                    let ey = list_y + i as f32 * entry_h - search_scroll;
+                    let ey = list_y + i as f32 * entry_h - state.ptr.scroll_offset;
                     if ey > py + 24.0 && ey + entry_h < py + ph - 4.0 {
                         if (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
                             && cy >= ey as f64 && cy <= (ey + entry_h) as f64
                         {
-                            let idx = (search_scroll / entry_h) as usize + i;
+                            let idx = (state.ptr.scroll_offset / entry_h) as usize + i;
                             if idx < total {
                                 let (path, _) = &filtered_clone[idx];
                                 respawn_process(
