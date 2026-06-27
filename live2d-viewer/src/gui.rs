@@ -26,6 +26,19 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
             }
         });
     }
+
+    // Settings window — accessible from all modes
+    if app.settings_open {
+        draw_settings(ctx, app);
+    }
+    // Toggle button in top-right corner
+    egui::Area::new("settings_btn".into())
+        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 38.0, 4.0))
+        .show(ctx, |ui| {
+            if ui.button("\u{2699}").clicked() {
+                app.settings_open = !app.settings_open;
+            }
+        });
 }
 
 fn draw_floating_ui(ctx: &Context, app: &mut AppState) {
@@ -189,9 +202,6 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 
             // Zoom controls — always visible regardless of model type
             ui.separator();
-            if ui.button("\u{2699} Settings").clicked() {
-                app.settings_open = !app.settings_open;
-            }
             ui.horizontal(|ui| {
                 if ui.button("-").clicked() {
                     if app.is_v2 {
@@ -585,56 +595,55 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
                 });
         });
     }
+}
 
-    // ── Settings window ──
-    if app.settings_open {
-        let mut changed = false;
-        Window::new("Settings")
-            .default_width(400.0)
-            .show(ctx, |ui| {
-                ui.heading("Model Scan Directories");
-                ui.label("Recursively scanned for V2/V3 model folders:");
-                ui.separator();
+fn draw_settings(ctx: &Context, app: &mut AppState) {
+    let mut changed = false;
+    Window::new("Settings")
+        .default_width(400.0)
+        .show(ctx, |ui| {
+            ui.heading("Model Scan Directories");
+            ui.label("Recursively scanned for V2/V3 model folders:");
+            ui.separator();
 
-                let mut remove_idx = None;
-                {
-                    let dirs: Vec<PathBuf> = app.scan_dirs.clone();
-                    for (i, d) in dirs.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(d.to_string_lossy());
-                            if ui.button("✖").clicked() {
-                                remove_idx = Some(i);
-                            }
-                        });
-                    }
-                }
-                if let Some(i) = remove_idx {
-                    app.scan_dirs.remove(i);
-                    changed = true;
-                }
-
-                if ui.button("+ Add Directory").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        let s = path.to_string_lossy().to_string();
-                        if !app.scan_dirs.iter().any(|d| d.to_string_lossy() == s) {
-                            app.scan_dirs.push(path);
-                            changed = true;
+            let mut remove_idx = None;
+            {
+                let dirs: Vec<PathBuf> = app.scan_dirs.clone();
+                for (i, d) in dirs.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(d.to_string_lossy());
+                        if ui.button("✖").clicked() {
+                            remove_idx = Some(i);
                         }
+                    });
+                }
+            }
+            if let Some(i) = remove_idx {
+                app.scan_dirs.remove(i);
+                changed = true;
+            }
+
+            if ui.button("+ Add Directory").clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let s = path.to_string_lossy().to_string();
+                    if !app.scan_dirs.iter().any(|d| d.to_string_lossy() == s) {
+                        app.scan_dirs.push(path);
+                        changed = true;
                     }
                 }
+            }
 
-                ui.separator();
-                if ui.button("\u{1f50d} Scan All").clicked() {
-                    let (added, skipped) = app.scan_and_add_models();
-                    app.scan_result = format!("{added} new, {skipped} skipped");
-                }
-                if !app.scan_result.is_empty() {
-                    ui.label(format!("Result: {}", app.scan_result));
-                }
-            });
-        if changed {
-            app.save_scan_dirs();
-        }
+            ui.separator();
+            if ui.button("\u{1f50d} Scan All").clicked() {
+                let (added, skipped) = app.scan_and_add_models();
+                app.scan_result = format!("{added} new, {skipped} skipped");
+            }
+            if !app.scan_result.is_empty() {
+                ui.label(format!("Result: {}", app.scan_result));
+            }
+        });
+    if changed {
+        app.save_scan_dirs();
     }
 }
 
