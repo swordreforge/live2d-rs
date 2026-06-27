@@ -4,8 +4,9 @@ use std::sync::mpsc;
 use serde::Deserialize;
 use smithay_client_toolkit::reexports::client::globals::{registry_queue_init, GlobalListContents};
 use smithay_client_toolkit::reexports::client::protocol::wl_compositor;
-use smithay_client_toolkit::reexports::client::protocol::wl_pointer;
 use smithay_client_toolkit::reexports::client::protocol::wl_keyboard;
+use smithay_client_toolkit::reexports::client::protocol::wl_output;
+use smithay_client_toolkit::reexports::client::protocol::wl_pointer;
 use smithay_client_toolkit::reexports::client::protocol::wl_region;
 use smithay_client_toolkit::reexports::client::protocol::wl_seat;
 use smithay_client_toolkit::reexports::client::protocol::{wl_registry, wl_surface};
@@ -168,6 +169,8 @@ struct PetState {
     search_query: String,
     ptr: PointerState,
     event_tx: mpsc::Sender<PetEvent>,
+    /// HiDPI output scale factor from wl_output (default 1, set by compositor's Scale event).
+    output_scale: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +211,22 @@ impl Dispatch<wl_surface::WlSurface, ()> for PetState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for PetState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Scale { factor } = event {
+            state.output_scale = factor;
+            log::info!("[pet/wayland] output scale: {}", factor);
+        }
     }
 }
 
@@ -574,6 +593,8 @@ fn setup_pet_surface(
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
     let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ())?;
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ())?;
+    // Bind to wl_output to receive HiDPI scale factor; ignore error (scale=1 fallback).
+    let _output: Result<wl_output::WlOutput, _> = globals.bind(&qh, 1..=4, ());
 
     let surface = compositor.create_surface(&qh, ());
     let layer_surface = layer_shell.get_layer_surface(
@@ -612,9 +633,17 @@ fn setup_pet_surface(
         search_query: String::new(),
         ptr: PointerState::new(),
         event_tx: event_tx.clone(),
+        output_scale: 1,
     };
 
     event_queue.roundtrip(&mut state)?;
+
+    // Apply HiDPI buffer scale from wl_output::Event::Scale (default 1).
+    let scale = state.output_scale.max(1) as u32;
+    if scale > 1 {
+        state.surface.set_buffer_scale(scale as i32);
+        log::info!("[pet/wayland] buffer_scale={}", scale);
+    }
 
     if let Some((w, h)) = state.configured_size {
         let _ = event_tx.send(PetEvent::Configured {
@@ -645,12 +674,12 @@ fn setup_pet_surface(
     let not_current = unsafe { gl_display.create_context(&gl_config, &context_attrs)? };
 
     let (init_w, init_h) = state.configured_size.unwrap_or((400, 500));
-    let phys_w =
-        NonZeroU32::new(init_w.max(1)).ok_or_else(|| std::io::Error::other("zero width"))?;
-    let phys_h =
-        NonZeroU32::new(init_h.max(1)).ok_or_else(|| std::io::Error::other("zero height"))?;
+    let egl_w = NonZeroU32::new((init_w * scale).max(1))
+        .ok_or_else(|| std::io::Error::other("zero width"))?;
+    let egl_h = NonZeroU32::new((init_h * scale).max(1))
+        .ok_or_else(|| std::io::Error::other("zero height"))?;
     let surf_attrs =
-        SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window, phys_w, phys_h);
+        SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window, egl_w, egl_h);
     let egl_surface = unsafe { gl_display.create_window_surface(&gl_config, &surf_attrs)? };
 
     let gl_context = not_current.make_current(&egl_surface)?;
@@ -981,14 +1010,19 @@ fn run_event_loop(
 
         // 3. Update & handle overlay toolbar
         let size = state.configured_size.unwrap_or((400, 500));
+        let sf = state.output_scale.max(1) as f32;
+        let phys_size = ((size.0 as f32 * sf) as u32, (size.1 as f32 * sf) as u32);
+        // Convert pointer from surface-local (logical) to physical pixels.
+        let px_phys = state.ptr.pointer_x * sf as f64;
+        let py_phys = state.ptr.pointer_y * sf as f64;
 
         // Update fade / hover state based on current pointer position.
-        toolbar.update(state.ptr.pointer_x, state.ptr.pointer_y, size.0, size.1);
+        toolbar.update(px_phys, py_phys, phys_size.0, phys_size.1);
 
         // Check if toolbar consumes a pending click before model interaction.
         let pending = state.ptr.pending_click.take();
         let toolbar_action =
-            pending.and_then(|(cx, cy)| toolbar.handle_click(cx, cy, size.0, size.1));
+            pending.and_then(|(cx, cy)| toolbar.handle_click(cx * sf as f64, cy * sf as f64, phys_size.0, phys_size.1));
         if let Some(action) = toolbar_action {
             if matches!(action, crate::toolbar::ToolbarAction::Search) {
                 state.search_open = !state.search_open;
@@ -1018,15 +1052,15 @@ fn run_event_loop(
         }
 
         unsafe {
-            gl.viewport(0, 0, size.0 as i32, size.1 as i32);
+            gl.viewport(0, 0, phys_size.0 as i32, phys_size.1 as i32);
             gl.clear_color(0.0, 0.0, 0.0, 0.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
 
         // ── Search panel (overrides model rendering when open) ──
         if state.search_open {
-            let vpw = size.0 as f32;
-            let vph = size.1 as f32;
+            let vpw = phys_size.0 as f32;
+            let vph = phys_size.1 as f32;
             let pad = 0.1;
             let px = vpw * pad;
             let py = vph * pad;
@@ -1076,13 +1110,13 @@ fn run_event_loop(
                 if let Some(ref mut tr) = text_renderer {
                     tr.draw_text(
                         &gl, "Search:", px + 8.0, py + 24.0,
-                        [0.5, 0.5, 0.6, 1.0], size.0, size.1, 1.0,
+                        [0.5, 0.5, 0.6, 1.0], phys_size.0, phys_size.1, 1.0,
                     );
                     let qx = px + 8.0 + 120.0;
                     let display_q = format!("{}{}", "_", state.search_query);
                     tr.draw_text(
                         &gl, &display_q, qx, py + 24.0,
-                        [1.0, 1.0, 0.8, 1.0], size.0, size.1, 1.0,
+                        [1.0, 1.0, 0.8, 1.0], phys_size.0, phys_size.1, 1.0,
                     );
                 }
 
@@ -1133,12 +1167,12 @@ fn run_event_loop(
                     if search_entries.is_empty() {
                         tr.draw_text(
                             &gl, "(loading...)", px + 8.0, list_y,
-                            [0.5, 0.5, 0.5, 1.0], size.0, size.1, 1.0,
+                            [0.5, 0.5, 0.5, 1.0], phys_size.0, phys_size.1, 1.0,
                         );
                     } else if filtered.is_empty() && !q_lower.is_empty() {
                         tr.draw_text(
                             &gl, "(no matches)", px + 8.0, list_y,
-                            [0.6, 0.4, 0.4, 1.0], size.0, size.1, 1.0,
+                            [0.6, 0.4, 0.4, 1.0], phys_size.0, phys_size.1, 1.0,
                         );
                     } else {
                         let total = filtered.len();
@@ -1158,7 +1192,7 @@ fn run_event_loop(
                             tr.draw_text(
                                 &gl, &filtered[idx].1,
                                 px + 8.0, baseline,
-                                [1.0, 1.0, 1.0, 1.0], size.0, size.1, 1.0,
+                                [1.0, 1.0, 1.0, 1.0], phys_size.0, phys_size.1, 1.0,
                             );
                         }
                     }
@@ -1166,7 +1200,7 @@ fn run_event_loop(
                     // Close button hint
                     tr.draw_text(
                         &gl, "[Close]", px + 8.0, py + ph - 20.0,
-                        [0.6, 0.3, 0.3, 1.0], size.0, size.1, 1.0,
+                        [0.6, 0.3, 0.3, 1.0], phys_size.0, phys_size.1, 1.0,
                     );
                 }
 
@@ -1227,7 +1261,7 @@ fn run_event_loop(
 
             // Toolbar should still be rendered when search is open
             unsafe {
-                toolbar.render(&gl, size.0, size.1);
+                toolbar.render(&gl, phys_size.0, phys_size.1);
             }
 
             // Skip model rendering
@@ -1286,7 +1320,7 @@ fn run_event_loop(
                 model.update();
 
                 // Forward tap to main thread (it has model, motion, V2/V2 dispatch)
-                if let Some((cx, cy)) = state.ptr.pending_click.take() {
+            if let Some((cx, cy)) = state.ptr.pending_click.take() {
                     let _ = event_tx.send(PetEvent::Tap {
                         x: cx,
                         y: cy,
@@ -1389,7 +1423,7 @@ fn run_event_loop(
 
         // 4. Render overlay toolbar on top of the model
         unsafe {
-            toolbar.render(&gl, size.0, size.1);
+            toolbar.render(&gl, phys_size.0, phys_size.1);
         }
 
         // 5. Swap buffers
