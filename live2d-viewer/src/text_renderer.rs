@@ -265,9 +265,10 @@ impl TextRenderer {
         outlined.draw(|px, py, c| {
             let idx = (py as usize * w as usize + px as usize) * 4;
             let alpha = (c * 255.0).clamp(0.0, 255.0) as u8;
-            bitmap[idx] = 255;
-            bitmap[idx + 1] = 255;
-            bitmap[idx + 2] = 255;
+            // Put coverage in all channels; fragment shader samples .r
+            bitmap[idx] = alpha;
+            bitmap[idx + 1] = alpha;
+            bitmap[idx + 2] = alpha;
             bitmap[idx + 3] = alpha;
         });
 
