@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser, Tag};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 use crate::app::AppState;
 use crate::ai::types::ChatRole;
@@ -20,7 +20,10 @@ fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
 /// Handles paragraphs, bold, inline code, code blocks, headings, lists,
 /// rules, tables — the common subset AI chat responses typically use.
 fn render_markdown(ui: &mut egui::Ui, text: &str) {
-    let parser = Parser::new(text);
+    let parser = Parser::new_ext(
+        text,
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH,
+    );
     let mut bold: u32 = 0;
     let mut plain = String::new();
 
@@ -100,6 +103,9 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                 Tag::Emphasis | Tag::Strong => {
                     flush_plain(ui, &mut plain, bold > 0);
                     bold += 1;
+                }
+                Tag::Strikethrough => {
+                    flush_plain(ui, &mut plain, bold > 0);
                 }
                 Tag::Heading(..) => {
                     flush_plain(ui, &mut plain, bold > 0);
@@ -197,6 +203,9 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                 Tag::Emphasis | Tag::Strong => {
                     flush_plain(ui, &mut plain, bold > 0);
                     bold = bold.saturating_sub(1);
+                }
+                Tag::Strikethrough => {
+                    flush_plain(ui, &mut plain, bold > 0);
                 }
                 Tag::Heading(..) => {
                     flush_plain(ui, &mut plain, bold > 0);
