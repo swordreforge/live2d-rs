@@ -22,6 +22,11 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
             ui.label("模型");
             ui.text_edit_singleline(&mut app.ai_config.model);
 
+            ui.add_space(4.0);
+            if ui.button("📝 编辑角色卡").clicked() {
+                app.character_card_editor_open = true;
+            }
+
             ui.add_space(8.0);
 
             ui.label("上下文长度");
