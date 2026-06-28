@@ -12,7 +12,6 @@ use crate::ai::types::{
 /// `block_on` over an async client buys nothing for MVP. The blocking client
 /// sends the HTTP request on the current thread; the UI shows a `Thinking...`
 /// state so the user knows progress is happening.
-#[allow(dead_code)]
 pub struct AiChatClient {
     http: reqwest::blocking::Client,
 }

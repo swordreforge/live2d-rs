@@ -412,32 +412,4 @@ impl TextRenderer {
     pub fn line_height(&self) -> f32 {
         self.line_h
     }
-
-    /// Estimated pixel width of a string (cached glyphs only; falls back
-    /// to average advance for uncached characters).
-    #[allow(dead_code)]
-    pub fn text_width(&mut self, gl: &Context, text: &str) -> f32 {
-        let mut w = 0.0f32;
-        for ch in text.chars() {
-            if let Some(s) = self.get_or_rasterise(gl, ch) {
-                w += s.advance;
-            } else {
-                w += self.line_h * 0.4;
-            }
-        }
-        w
-    }
-
-    /// Destroy GL resources.
-    ///
-    /// # Safety
-    ///
-    /// Requires an active GL context.
-    #[allow(dead_code)]
-    pub unsafe fn destroy(self, gl: &Context) {
-        gl.delete_program(self.program);
-        gl.delete_vertex_array(self.vao);
-        gl.delete_buffer(self.vbo);
-        gl.delete_texture(self.font_tex);
-    }
 }

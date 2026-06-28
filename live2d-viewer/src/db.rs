@@ -67,20 +67,19 @@ fn rt() -> &'static Runtime {
 pub struct SearchResult {
     pub file_path: String,
     pub name: String,
-    #[allow(dead_code)]
-    pub model_version: String,
     pub similarity: f32,
 }
 
 /// A model record stored in the local history database.
-#[allow(dead_code)]
 pub struct ModelRecord {
     pub file_path: String,
     pub name: String,
+    #[allow(dead_code)]
     pub model_version: String, // "V2" or "V3"
     pub zoom_scale: Option<f32>,
     pub layout_pan_x: Option<f32>,
     pub layout_pan_y: Option<f32>,
+    #[allow(dead_code)]
     pub last_opened: String, // ISO datetime string from SQLite
 }
 
@@ -266,17 +265,6 @@ impl AppDb {
         }
     }
 
-    /// Update the zoom scale for a model. Pass `None` to clear the value.
-    #[allow(dead_code)]
-    pub fn set_zoom(&self, file_path: &str, zoom_scale: Option<f32>) -> Result<()> {
-        let zoom: Option<f64> = zoom_scale.map(|z| z as f64);
-        rt().block_on(self.conn.execute(
-            "UPDATE model_history SET zoom_scale = ?1 WHERE file_path = ?2",
-            libsql::params![zoom, file_path],
-        ))?;
-        Ok(())
-    }
-
     /// Save full layout (pan + zoom) for a model.
     pub fn set_model_layout(
         &self,
@@ -451,7 +439,6 @@ impl AppDb {
             scored.push(SearchResult {
                 file_path: rec.file_path.clone(),
                 name: rec.name.clone(),
-                model_version: rec.model_version.clone(),
                 similarity: sim,
             });
         }
@@ -591,40 +578,6 @@ impl AppDb {
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);
         Ok(scored.into_iter().map(|(_, entry)| entry).collect())
-    }
-
-    /// Return the most recent memory entries for a model.
-    #[allow(dead_code)]
-    pub fn get_recent_memories(&self, file_path: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        let mut rows = rt().block_on(self.conn.query(
-            "SELECT id, file_path, content, entry_type, created_at \
-             FROM conversation_memory WHERE file_path = ?1 \
-             ORDER BY id DESC LIMIT ?2",
-            libsql::params![file_path, limit as i64],
-        ))?;
-
-        let mut entries = Vec::new();
-        while let Some(row) = rt().block_on(rows.next())? {
-            entries.push(MemoryEntry {
-                id: row.get::<i64>(0)?,
-                file_path: row.get::<String>(1)?,
-                content: row.get::<String>(2)?,
-                entry_type: row.get::<String>(3)?,
-                created_at: row.get::<String>(4)?,
-            });
-        }
-        entries.reverse(); // oldest-first
-        Ok(entries)
-    }
-
-    /// Delete all conversation memory for a model.
-    #[allow(dead_code)]
-    pub fn delete_memories(&self, file_path: &str) -> Result<()> {
-        rt().block_on(self.conn.execute(
-            "DELETE FROM conversation_memory WHERE file_path = ?1",
-            libsql::params![file_path],
-        ))?;
-        Ok(())
     }
 
     /// Log a tool execution to the audit trail.
