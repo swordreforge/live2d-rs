@@ -315,7 +315,8 @@ cargo check --release
 | 状态 | 功能 |
 |------|------|
 | ❌ | **AI 聊天助手**（已规划 —— 参见 `docs/superpowers/`） |
-| ❌ | UserData（可点击区域回调） |
+| (✅) | HitAreas + 点击触发动作 — 从 `model3.json` HitAreas（V3）和 C++ hitTest（V2）实现碰撞检测；点击触发身体动作。**已实现。** |
+| ✅ | UserData（`userdata3.json`）— 解析为 ID→描述查找表；点击时在 GUI 中显示 |
 | ❌ | 保存/加载每个模型的参数预设 |
 | ❌ | 布局设置（模型画布位置/缩放） |
 

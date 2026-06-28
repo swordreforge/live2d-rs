@@ -248,6 +248,10 @@ pub struct AppState {
     /// Base directory for resolving relative paths
     pub base_dir: Option<PathBuf>,
     pub hit_areas: Vec<crate::model_loader::HitArea>,
+    /// UserData lookup from userdata3.json: drawable/part ID → description.
+    pub user_data_map: HashMap<String, String>,
+    /// Last hit UserData description text (displayed in GUI after tap).
+    pub last_tapped_user_data: Option<String>,
     tap_count: usize,
     pub pose_data: Option<crate::model_loader::PoseData>,
     pub pose_fade_remaining: f32,
@@ -368,6 +372,8 @@ impl AppState {
             auto_play_idle: true,
             base_dir: None,
             hit_areas: Vec::new(),
+            user_data_map: HashMap::new(),
+            last_tapped_user_data: None,
             tap_count: 0,
             pose_data: None,
             pose_fade_remaining: 0.0,
@@ -1071,6 +1077,7 @@ impl AppState {
             self.load_pose(&loaded.base_dir, &loaded.model3_json);
             self.apply_pose_reset();
             self.load_physics(&loaded.base_dir, &loaded.model3_json);
+            self.load_user_data(&loaded.base_dir, &loaded.model3_json);
 
             // Start idle motion
             if self.auto_play_idle {
@@ -1225,6 +1232,30 @@ impl AppState {
         }
 
         self.physics = Some(engine);
+    }
+
+    /// Load userdata3.json if present and build the ID→description map.
+    fn load_user_data(
+        &mut self,
+        base_dir: &std::path::Path,
+        model3_json: &crate::model_loader::Model3Json,
+    ) {
+        let user_data_path = match model3_json.file_references.user_data {
+            Some(ref p) => base_dir.join(p),
+            None => return,
+        };
+        let json = match crate::model_loader::UserData3Json::from_file(&user_data_path) {
+            Ok(j) => j,
+            Err(e) => {
+                log::warn!("Failed to load userdata3.json {}: {e}", user_data_path.display());
+                return;
+            }
+        };
+        self.user_data_map = json.to_map();
+        log::info!(
+            "Loaded userdata3.json ({} entries)",
+            self.user_data_map.len()
+        );
     }
 
     fn apply_pose_reset(&mut self) {
@@ -1514,6 +1545,25 @@ impl AppState {
                 let c = &verts[tri[2] as usize];
 
                 if point_in_triangle(model_x, model_y, a.X, a.Y, b.X, b.Y, c.X, c.Y) {
+                    // Show UserData description for the hit drawable, if available
+                    let drawable_id = drawable_ids[di].to_string_lossy();
+                    self.last_tapped_user_data = self
+                        .user_data_map
+                        .get(drawable_id.as_ref())
+                        .or_else(|| {
+                            // Fallback: check part-level UserData via the drawable's parent part
+                            let parent_idx = drawables.parent_part_indices()[di] as usize;
+                            let part_ids: Vec<String> = model
+                                .parts()
+                                .ids()
+                                .iter()
+                                .map(|id| id.to_string_lossy().into_owned())
+                                .collect();
+                            let part_id = part_ids.get(parent_idx)?;
+                            self.user_data_map.get(part_id.as_str())
+                        })
+                        .cloned();
+
                     // Try "TapBody" first, then fall back to "" (some models use flat keys)
                     let motions = self
                         .loaded_motions

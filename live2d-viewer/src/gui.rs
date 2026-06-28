@@ -319,6 +319,19 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                 }
 
+                // UserData info: show description of last tapped area
+                if let Some(ref info) = app.last_tapped_user_data {
+                    ui.label(
+                        egui::RichText::new(info)
+                            .color(egui::Color32::LIGHT_BLUE)
+                            .size(13.0),
+                    );
+                    if ui.button("✕").clicked() {
+                        app.last_tapped_user_data = None;
+                    }
+                    ui.separator();
+                }
+
                 ui.separator();
 
                 // Parameter sliders in scroll area

@@ -2,6 +2,42 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Parsed `userdata3.json` — metadata attached to Parts/Drawables.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserData3Json {
+    pub version: u32,
+    pub user_data_count: u32,
+    pub total_user_data_size: u32,
+    pub user_data: Vec<UserDataEntry>,
+}
+
+/// A single UserData entry mapping a target (Part/Drawable) to a description.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct UserDataEntry {
+    pub target: String,
+    pub id: String,
+    pub value: String,
+}
+
+impl UserData3Json {
+    /// Load and parse a userdata3.json file.
+    pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path.as_ref())?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    /// Build a lookup map: drawable/part ID → description text.
+    pub fn to_map(&self) -> HashMap<String, String> {
+        self.user_data
+            .iter()
+            .map(|e| (e.id.clone(), e.value.clone()))
+            .collect()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
