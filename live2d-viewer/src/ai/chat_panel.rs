@@ -1,6 +1,6 @@
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
-use crate::ai::types::ChatRole;
+use crate::ai::types::{AiState, ChatRole};
 use crate::app::AppState;
 use egui::{Color32, Grid, Window};
 
@@ -234,9 +234,22 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     let enter_triggered =
         app.ai_chat_open && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
     let input_before = app.ai_input_buffer.clone();
-    let pending = app.ai_pending;
+    let pending = !matches!(app.ai_state, AiState::Idle);
+
+    // Extract pending tool info (cloned) before entering the UI closure to avoid borrow conflicts.
+    let pending_tool_info = match &app.ai_state {
+        AiState::PendingTool {
+            tool_name, args, ..
+        } => Some((
+            tool_name.clone(),
+            serde_json::to_string_pretty(args).unwrap_or_default(),
+        )),
+        _ => None,
+    };
 
     let mut clicked_send = false;
+    let mut approve_clicked = false;
+    let mut reject_clicked = false;
 
     Window::new("AI 聊天 💬")
         .default_width(320.0)
@@ -261,6 +274,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                             ChatRole::User => ("你", Color32::LIGHT_BLUE),
                             ChatRole::Assistant => ("AI", Color32::LIGHT_GREEN),
                             ChatRole::System => ("系统", Color32::GRAY),
+                            ChatRole::Tool => ("工具", Color32::YELLOW),
                         };
                         ui.colored_label(color, format!("[{}]", prefix));
 
@@ -286,6 +300,27 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
             ui.separator();
 
+            // ── Tool approval UI ──
+            if let Some((ref tool_name, ref args_str)) = pending_tool_info {
+                let frame = egui::Frame::none()
+                    .fill(Color32::from_rgba_premultiplied(40, 0, 0, 200))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0));
+                frame.show(ui, |ui| {
+                    ui.colored_label(Color32::RED, "⚠️ 工具调用需要审批");
+                    ui.label(format!("工具: {tool_name}"));
+                    ui.label(format!("参数: {args_str}"));
+                    ui.horizontal(|ui| {
+                        if ui.button("✅ 批准").clicked() {
+                            approve_clicked = true;
+                        }
+                        if ui.button("❌ 拒绝").clicked() {
+                            reject_clicked = true;
+                        }
+                    });
+                });
+                ui.separator();
+            }
+
             ui.horizontal(|ui| {
                 ui.add_sized(
                     egui::vec2(ui.available_width() - 60.0, 0.0),
@@ -304,5 +339,11 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
     if !pending && (clicked_send || (enter_triggered && !input_before.trim().is_empty())) {
         app.send_ai_message();
+    }
+    if approve_clicked {
+        app.approve_tool();
+    }
+    if reject_clicked {
+        app.reject_tool();
     }
 }

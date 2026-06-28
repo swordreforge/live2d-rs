@@ -350,7 +350,7 @@ pub struct AppState {
     // ── AI Chat ──
     pub ai_enabled: bool,
     pub ai_messages: Vec<crate::ai::types::ChatMessage>,
-    pub ai_pending: bool,
+    pub ai_state: crate::ai::types::AiState,
     pub ai_error: Option<String>,
     pub ai_config: crate::ai::types::AiConfig,
     pub ai_input_buffer: String,
@@ -358,6 +358,8 @@ pub struct AppState {
     pub ai_settings_open: bool,
     pub ai_test_result: Option<(String, bool)>,
     pub ai_result_rx: Option<std::sync::mpsc::Receiver<crate::ai::types::AiStreamEvent>>,
+    pub tool_registry: crate::ai::tools::registry::ToolRegistry,
+    pub safety_config: crate::ai::tools::safety::SafetyConfig,
     /// Timestamp (user_time_seconds) until which the current AI emotion persists.
     pub ai_emotion_until: Option<f64>,
     // ── TTS ──
@@ -465,7 +467,7 @@ impl AppState {
             scan_result: String::new(),
             ai_enabled: true,
             ai_messages: Vec::new(),
-            ai_pending: false,
+            ai_state: crate::ai::types::AiState::Idle,
             ai_error: None,
             ai_config,
             ai_input_buffer: String::new(),
@@ -473,6 +475,12 @@ impl AppState {
             ai_settings_open: false,
             ai_test_result: None,
             ai_result_rx: None,
+            tool_registry: crate::ai::tools::registry::ToolRegistry::builtin(),
+            safety_config: crate::ai::tools::safety::SafetyConfig {
+                allowed_commands: vec![],
+                allowed_read_paths: vec![],
+                max_tool_rounds: 10,
+            },
             ai_emotion_until: None,
             tts_voices_cache: Vec::new(),
             tts_result_rx: None,
@@ -840,7 +848,7 @@ impl AppState {
     /// The result is picked up by `poll_ai_result()` on the next frame.
     pub fn send_ai_message(&mut self) {
         let text = self.ai_input_buffer.trim().to_string();
-        if text.is_empty() || self.ai_pending {
+        if text.is_empty() || self.ai_state != crate::ai::types::AiState::Idle {
             return;
         }
         self.ai_input_buffer.clear();
@@ -854,6 +862,8 @@ impl AppState {
             role: crate::ai::types::ChatRole::User,
             content: text,
             timestamp,
+            tool_call_id: None,
+            tool_calls: None,
         });
 
         let mut api_messages = Vec::new();
@@ -904,6 +914,8 @@ impl AppState {
                 role: crate::ai::types::ChatRole::System,
                 content: system_prompt,
                 timestamp: 0.0,
+                tool_call_id: None,
+                tool_calls: None,
             });
         }
         // Inject relevant conversation memories as system context
@@ -920,6 +932,8 @@ impl AppState {
                             role: crate::ai::types::ChatRole::System,
                             content: format!("[相关记忆: {}]\n{}", mem.entry_type, mem.content),
                             timestamp: 0.0,
+                            tool_call_id: None,
+                            tool_calls: None,
                         });
                     }
                 }
@@ -932,7 +946,7 @@ impl AppState {
             .saturating_sub(self.ai_config.context_length);
         api_messages.extend_from_slice(&self.ai_messages[start..]);
 
-        self.ai_pending = true;
+        self.ai_state = crate::ai::types::AiState::Waiting;
         self.ai_error = None;
 
         // Insert a placeholder assistant message that will be filled as tokens arrive.
@@ -940,34 +954,51 @@ impl AppState {
             role: crate::ai::types::ChatRole::Assistant,
             content: String::new(),
             timestamp,
+            tool_call_id: None,
+            tool_calls: None,
         });
 
         let config = self.ai_config.clone();
+        let tools_defs = if config.tool_calling_enabled {
+            Some(self.tool_registry.definitions())
+        } else {
+            None
+        };
         let (tx, rx) = std::sync::mpsc::channel();
         self.ai_result_rx = Some(rx);
 
         std::thread::spawn(move || {
             let client = crate::ai::client::AiChatClient::new();
-            client.send_stream(&api_messages, &config, tx);
+            client.send_stream(&api_messages, &config, tools_defs.as_deref(), tx);
         });
     }
 
     /// Poll for the AI response from the background thread.
     /// Call once per frame from the UI loop.
     pub fn poll_ai_result(&mut self) {
-        use crate::ai::types::AiStreamEvent;
+        use crate::ai::types::{AiState, AiStreamEvent, ToolCall};
+
+        // ── PendingTool state: wait for approval (handled by approve_tool/reject_tool) ──
+        if matches!(self.ai_state, AiState::PendingTool { .. }) {
+            return;
+        }
+
         let rx = match self.ai_result_rx.take() {
             Some(rx) => rx,
             None => return,
         };
-        // Drain all available events (don't block)
+
         let mut done = false;
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
         while let Ok(event) = rx.try_recv() {
             match event {
                 AiStreamEvent::Token(t) => {
                     if let Some(last) = self.ai_messages.last_mut() {
                         last.content.push_str(&t);
                     }
+                }
+                AiStreamEvent::ToolCall(tc) => {
+                    tool_calls.push(tc);
                 }
                 AiStreamEvent::Done => {
                     done = true;
@@ -985,101 +1016,160 @@ impl AppState {
                 }
             }
         }
-        if done {
-            self.ai_pending = false;
-            let should_pop = self.ai_messages.last().is_some_and(|m| {
-                m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
+
+        if !done && tool_calls.is_empty() {
+            // Still streaming — put the receiver back
+            self.ai_result_rx = Some(rx);
+            return;
+        }
+
+        // ── Handle tool calls ──
+        if !tool_calls.is_empty() {
+            // Pop the empty placeholder assistant message
+            if let Some(last) = self.ai_messages.last() {
+                if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
+                    self.ai_messages.pop();
+                }
+            }
+            // Push assistant message with tool_calls for display
+            self.ai_messages.push(crate::ai::types::ChatMessage {
+                role: crate::ai::types::ChatRole::Assistant,
+                content: String::new(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0),
+                tool_call_id: None,
+                tool_calls: Some(tool_calls.clone()),
             });
-            let emotion = self
-                .ai_messages
-                .last_mut()
-                .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
-                .and_then(|m| extract_emotion_tag(&mut m.content));
-            if should_pop {
-                self.ai_messages.pop();
-            }
-            if let Some(emotion) = emotion {
-                self.apply_emotion(&emotion);
-            }
-            // Save conversation to vector memory
-            if self.ai_config.memory_enabled {
-                let current_path = self
-                    .current_model_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if let Some(ref db) = self.db {
-                    // Find the last user message in history
-                    let user_msg = self
-                        .ai_messages
-                        .iter()
-                        .rev()
-                        .skip(1) // skip the assistant message just completed
-                        .find(|m| m.role == crate::ai::types::ChatRole::User)
-                        .map(|m| m.content.clone());
-                    let assistant_msg = self
-                        .ai_messages
-                        .last()
-                        .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
-                        .map(|m| m.content.clone());
-                    if let Some(ref msg) = user_msg {
-                        let _ = db.save_memory(&current_path, msg, "message");
-                    }
-                    if let Some(ref msg) = assistant_msg {
-                        if !msg.is_empty() {
-                            let _ = db.save_memory(&current_path, msg, "message");
+
+            // Check safety: all tool calls must be approved
+            let all_safe = tool_calls.iter().all(|tc| {
+                self.tool_registry
+                    .safety_level(&tc.function.name)
+                    .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
+            });
+
+            if all_safe {
+                // Auto-execute all safe tools then re-request
+                self.execute_tools_and_continue(tool_calls);
+            } else {
+                // First dangerous tool → enter PendingTool
+                let tc = tool_calls.into_iter().find(|tc| {
+                    !self
+                        .tool_registry
+                        .safety_level(&tc.function.name)
+                        .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
+                });
+                if let Some(tc) = tc {
+                    match serde_json::from_str(&tc.function.arguments) {
+                        Ok(args) => {
+                            self.ai_state = AiState::PendingTool {
+                                tool_call_id: tc.id,
+                                tool_name: tc.function.name,
+                                args,
+                            };
+                        }
+                        Err(_) => {
+                            self.ai_state = AiState::Idle;
+                            self.ai_error =
+                                Some(format!("invalid tool args: {}", tc.function.arguments));
                         }
                     }
                 }
             }
-            // Auto-speak the response via TTS
-            if self.ai_config.tts_enabled && !self.ai_config.tts_key.is_empty() {
-                let mut tts_config = self.ai_config.clone();
-                // Override TTS voice with character card's voice if set
-                let current_path = self
-                    .current_model_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if let Some(card) = self.character_cards.get(&current_path) {
-                    if !card.tts_voice.is_empty() {
-                        tts_config.tts_voice = card.tts_voice.clone();
+            return;
+        }
+
+        // ── Normal completion (text response) ──
+        self.ai_state = AiState::Idle;
+        let should_pop = self.ai_messages.last().is_some_and(|m| {
+            m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
+        });
+        let emotion = self
+            .ai_messages
+            .last_mut()
+            .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
+            .and_then(|m| extract_emotion_tag(&mut m.content));
+        if should_pop {
+            self.ai_messages.pop();
+        }
+        if let Some(emotion) = emotion {
+            self.apply_emotion(&emotion);
+        }
+        // Save conversation to vector memory
+        if self.ai_config.memory_enabled {
+            let current_path = self
+                .current_model_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if let Some(ref db) = self.db {
+                let user_msg = self
+                    .ai_messages
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .find(|m| m.role == crate::ai::types::ChatRole::User)
+                    .map(|m| m.content.clone());
+                let assistant_msg = self
+                    .ai_messages
+                    .last()
+                    .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
+                    .map(|m| m.content.clone());
+                if let Some(ref msg) = user_msg {
+                    let _ = db.save_memory(&current_path, msg, "message");
+                }
+                if let Some(ref msg) = assistant_msg {
+                    if !msg.is_empty() {
+                        let _ = db.save_memory(&current_path, msg, "message");
                     }
                 }
-                if !tts_config.tts_voice.is_empty() {
-                    let text = self
-                        .ai_messages
-                        .last()
-                        .map(|m| m.content.clone())
-                        .unwrap_or_default();
-                    let text = crate::ai::tts::sanitize_text_for_tts(&text);
-                    if !text.is_empty() {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        self.tts_result_rx = Some(rx);
-                        std::thread::spawn(move || {
-                            let result = crate::ai::tts::synthesize(
-                                &tts_config,
-                                &text,
-                                &tts_config.tts_voice,
-                            );
-                            match result {
-                                Ok(mp3_bytes) => {
-                                    let tmp_dir = std::env::temp_dir();
-                                    let path = tmp_dir.join(format!(
-                                        "live2d-tts-{}.mp3",
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_nanos()
-                                    ));
-                                    if std::fs::write(&path, &mp3_bytes).is_ok() {
-                                        let _ = tx.send(path);
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!("[tts] synthesis failed: {e}");
+            }
+        }
+        // Auto-speak the response via TTS
+        if self.ai_config.tts_enabled && !self.ai_config.tts_key.is_empty() {
+            let mut tts_config = self.ai_config.clone();
+            let current_path = self
+                .current_model_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if let Some(card) = self.character_cards.get(&current_path) {
+                if !card.tts_voice.is_empty() {
+                    tts_config.tts_voice = card.tts_voice.clone();
+                }
+            }
+            if !tts_config.tts_voice.is_empty() {
+                let text = self
+                    .ai_messages
+                    .last()
+                    .map(|m| m.content.clone())
+                    .unwrap_or_default();
+                let text = crate::ai::tts::sanitize_text_for_tts(&text);
+                if !text.is_empty() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.tts_result_rx = Some(rx);
+                    std::thread::spawn(move || {
+                        let result =
+                            crate::ai::tts::synthesize(&tts_config, &text, &tts_config.tts_voice);
+                        match result {
+                            Ok(mp3_bytes) => {
+                                let tmp_dir = std::env::temp_dir();
+                                let path = tmp_dir.join(format!(
+                                    "live2d-tts-{}.mp3",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_nanos()
+                                ));
+                                if std::fs::write(&path, &mp3_bytes).is_ok() {
+                                    let _ = tx.send(path);
                                 }
                             }
-                        });
-                    }
+                            Err(e) => {
+                                log::warn!("[tts] synthesis failed: {e}");
+                            }
+                        }
+                    });
                 }
             }
         } else {
@@ -1221,6 +1311,192 @@ impl AppState {
                 .start_expression(expr, self.motion_queue.user_time_seconds);
             self.ai_emotion_until = Some(self.motion_queue.user_time_seconds as f64 + 5.0);
         }
+    }
+
+    // ── Tool Calling: approval & execution ──
+
+    /// Approve a pending tool call and execute it.
+    pub fn approve_tool(&mut self) {
+        use crate::ai::types::{AiState, ChatMessage, ChatRole};
+        let state = std::mem::replace(&mut self.ai_state, AiState::Executing);
+        match state {
+            AiState::PendingTool {
+                tool_call_id,
+                tool_name,
+                args,
+            } => {
+                let result = self
+                    .tool_registry
+                    .execute(&tool_name, &args, &self.safety_config);
+
+                let content = match result {
+                    Ok(out) => out,
+                    Err(e) => format!("Error: {e}"),
+                };
+
+                self.ai_messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    content,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
+                    tool_call_id: Some(tool_call_id),
+                    tool_calls: None,
+                });
+                self.continue_with_tool_result();
+            }
+            _ => {
+                self.ai_state = AiState::Idle;
+            }
+        }
+    }
+
+    /// Reject a pending tool call — tell the LLM it was denied.
+    pub fn reject_tool(&mut self) {
+        use crate::ai::types::{AiState, ChatMessage, ChatRole};
+        let state = std::mem::replace(&mut self.ai_state, AiState::Idle);
+        if let AiState::PendingTool { tool_call_id, .. } = state {
+            self.ai_messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                content: "Operation rejected by user".to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0),
+                tool_call_id: Some(tool_call_id),
+                tool_calls: None,
+            });
+            self.continue_with_tool_result();
+        }
+    }
+
+    /// Spawn a non-streaming request to continue the multi-turn tool loop.
+    fn continue_with_tool_result(&mut self) {
+        use crate::ai::types::{AiState, AiStreamEvent, ChatMessage, ChatRole};
+
+        let config = self.ai_config.clone();
+        let tools_defs = if config.tool_calling_enabled {
+            Some(self.tool_registry.definitions())
+        } else {
+            None
+        };
+
+        let start = self
+            .ai_messages
+            .len()
+            .saturating_sub(self.ai_config.context_length);
+        let api_messages: Vec<ChatMessage> = self.ai_messages[start..].to_vec();
+
+        let current_path = self
+            .current_model_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let card = self
+            .character_cards
+            .get(&current_path)
+            .cloned()
+            .or_else(|| {
+                self.db
+                    .as_ref()
+                    .and_then(|db| db.get_character_card(&current_path).ok())
+                    .flatten()
+            })
+            .unwrap_or_default();
+        let card_sections: Vec<String> = [
+            ("角色名", &card.name),
+            ("描述", &card.description),
+            ("性格", &card.personality),
+            ("场景", &card.scenario),
+            ("对话示例", &card.example_dialogs),
+            ("角色提示词", &card.system_prompt),
+        ]
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(label, value)| format!("【{label}】\n{value}"))
+        .collect();
+        let system_prompt = if !card_sections.is_empty() {
+            let joined = card_sections.join("\n\n");
+            if !config.system_prompt.is_empty() {
+                format!("{joined}\n\n---\n\n{}", config.system_prompt)
+            } else {
+                joined
+            }
+        } else {
+            config.system_prompt.clone()
+        };
+
+        let mut full_messages = Vec::new();
+        if !system_prompt.is_empty() {
+            full_messages.push(ChatMessage {
+                role: ChatRole::System,
+                content: system_prompt,
+                timestamp: 0.0,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+        full_messages.extend(api_messages);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.ai_result_rx = Some(rx);
+        self.ai_state = AiState::Waiting;
+
+        std::thread::spawn(move || {
+            let client = crate::ai::client::AiChatClient::new();
+            if let Some(tools) = &tools_defs {
+                // Non-streaming request with tools
+                match client.send_with_tools(&full_messages, &config, tools) {
+                    Ok(resp) => {
+                        if let Some(content) = resp.content {
+                            if !content.is_empty() {
+                                // Send as a single token chunk
+                                let _ = tx.send(AiStreamEvent::Token(content));
+                            }
+                        }
+                        for tc in resp.tool_calls {
+                            let _ = tx.send(AiStreamEvent::ToolCall(tc));
+                        }
+                        let _ = tx.send(AiStreamEvent::Done);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AiStreamEvent::Error(e));
+                    }
+                }
+            } else {
+                // Fallback: streaming (no tools needed)
+                client.send_stream(&full_messages, &config, None, tx);
+            }
+        });
+    }
+
+    /// Auto-execute a set of safe tool calls and continue.
+    fn execute_tools_and_continue(&mut self, tool_calls: Vec<crate::ai::types::ToolCall>) {
+        use crate::ai::types::{ChatMessage, ChatRole};
+
+        for tc in tool_calls {
+            let args: serde_json::Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+            let result = self
+                .tool_registry
+                .execute(&tc.function.name, &args, &self.safety_config);
+            let content = match result {
+                Ok(out) => out,
+                Err(e) => format!("Error: {e}"),
+            };
+            self.ai_messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                content,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0),
+                tool_call_id: Some(tc.id),
+                tool_calls: None,
+            });
+        }
+
+        self.continue_with_tool_result();
     }
 
     /// Auto-reset expression back to neutral after the timeout elapses.

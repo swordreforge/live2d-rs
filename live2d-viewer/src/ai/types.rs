@@ -7,6 +7,12 @@ pub struct ChatMessage {
     pub content: String,
     /// Seconds since epoch (for UI display ordering)
     pub timestamp: f64,
+    /// `tool_call_id` is set when `role == Tool` (tool result message).
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    /// `tool_calls` is set when `role == Assistant` and LLM invoked tools.
+    #[serde(default)]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 /// Role of a chat message sender.
@@ -15,7 +21,60 @@ pub enum ChatRole {
     User,
     Assistant,
     System,
+    /// Tool result (response to a tool_call).
+    Tool,
 }
+
+// ── Tool Calling Types ──
+
+/// A tool call instruction from the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub function: ToolCallFunction,
+}
+
+/// The function name + arguments within a ToolCall.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    /// JSON string of arguments (e.g. `{"cmd": "ps aux"}`).
+    pub arguments: String,
+}
+
+/// Tool definition sent to the API in the `tools` parameter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub function: ToolFunctionSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFunctionSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// AI chat state machine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AiState {
+    /// Not waiting for any AI response.
+    Idle,
+    /// Streaming a response from the API.
+    Waiting,
+    /// LLM requested a dangerous tool; awaiting user approval.
+    PendingTool {
+        tool_call_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    /// Executing a tool locally.
+    Executing,
+}
+
+// ── Provider Configuration ──
 
 /// AI provider configuration, persisted to disk as JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +105,15 @@ pub struct AiConfig {
     // ── Conversation Memory ──
     /// Whether to persist conversation history as vector-searchable memory.
     pub memory_enabled: bool,
+    // ── Tool Calling ──
+    /// Whether to enable tool calling (read file, exec cmd, etc.).
+    pub tool_calling_enabled: bool,
+    /// Max tool call rounds per conversation turn.
+    pub max_tool_rounds: u32,
+    /// Shell commands allowed without user approval (empty = all need approval).
+    pub allowed_commands: Vec<String>,
+    /// Readable path prefixes (empty = no path restrictions).
+    pub allowed_read_paths: Vec<String>,
 }
 
 /// A single entry in the conversation memory store.
@@ -84,6 +152,8 @@ pub struct CharacterCard {
 pub enum AiStreamEvent {
     /// A single delta token from the stream.
     Token(String),
+    /// A complete tool call (delta-assembled).
+    ToolCall(ToolCall),
     /// The stream finished successfully.
     Done,
     /// A fatal error occurred.
@@ -112,6 +182,10 @@ impl Default for AiConfig {
             tts_api_url: "https://api.hewoyi.com/api/ai/audio/speech".into(),
             tts_voice: "zh-CN-XiaoxiaoNeural".into(),
             memory_enabled: true,
+            tool_calling_enabled: false,
+            max_tool_rounds: 10,
+            allowed_commands: vec![],
+            allowed_read_paths: vec![],
         }
     }
 }

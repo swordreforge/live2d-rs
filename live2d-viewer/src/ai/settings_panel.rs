@@ -119,6 +119,53 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 }
             }
 
+            ui.add_space(16.0);
+            ui.separator();
+            ui.heading("工具调用 (Tool Calling)");
+
+            ui.checkbox(
+                &mut app.ai_config.tool_calling_enabled,
+                "启用工具调用（AI 可执行命令、读文件等）",
+            );
+
+            if app.ai_config.tool_calling_enabled {
+                ui.add_space(4.0);
+                ui.label("每轮最大工具调用次数");
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.ai_config.max_tool_rounds)
+                            .clamp_range(1..=50),
+                    )
+                    .changed()
+                {
+                    *dirty = true;
+                }
+
+                ui.add_space(4.0);
+                ui.label("允许的命令（英文逗号分隔，留空=全部需审批）");
+                let mut cmds = app.ai_config.allowed_commands.join(",");
+                if ui.text_edit_singleline(&mut cmds).changed() {
+                    app.ai_config.allowed_commands = cmds
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    *dirty = true;
+                }
+
+                ui.add_space(4.0);
+                ui.label("允许读取的路径前缀（英文逗号分隔，留空=不限制）");
+                let mut paths = app.ai_config.allowed_read_paths.join(",");
+                if ui.text_edit_singleline(&mut paths).changed() {
+                    app.ai_config.allowed_read_paths = paths
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    *dirty = true;
+                }
+            }
+
             ui.add_space(8.0);
 
             // Save button — write to DB + JSON file

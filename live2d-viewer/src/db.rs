@@ -158,6 +158,17 @@ impl AppDb {
                 embedding   BLOB,
                 entry_type  TEXT NOT NULL DEFAULT 'message',
                 created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS tool_execution_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path   TEXT NOT NULL REFERENCES model_history(file_path) ON DELETE CASCADE,
+                tool_name   TEXT NOT NULL,
+                arguments   TEXT NOT NULL DEFAULT '',
+                result      TEXT NOT NULL DEFAULT '',
+                approved    INTEGER NOT NULL DEFAULT 1,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );",
         ))?;
 
@@ -614,6 +625,24 @@ impl AppDb {
             libsql::params![file_path],
         ))?;
         Ok(())
+    }
+
+    /// Log a tool execution to the audit trail.
+    pub fn save_tool_execution(
+        &self,
+        file_path: &str,
+        tool_name: &str,
+        arguments: &str,
+        result: &str,
+        approved: bool,
+        duration_ms: u64,
+    ) -> Result<i64> {
+        rt().block_on(self.conn.execute(
+            "INSERT INTO tool_execution_log (file_path, tool_name, arguments, result, approved, duration_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            libsql::params![file_path, tool_name, arguments, result, approved as i32, duration_ms as i64],
+        ))?;
+        Ok(self.conn.last_insert_rowid())
     }
 
     /// Get configured model scan directories (JSON array of paths).
