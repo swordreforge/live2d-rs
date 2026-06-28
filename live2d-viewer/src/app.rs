@@ -355,7 +355,7 @@ pub struct AppState {
     pub ai_chat_open: bool,
     pub ai_settings_open: bool,
     pub ai_test_result: Option<(String, bool)>,
-    pub ai_result_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub ai_result_rx: Option<std::sync::mpsc::Receiver<crate::ai::types::AiStreamEvent>>,
 }
 
 impl AppState {
@@ -820,7 +820,6 @@ impl AppState {
             timestamp,
         });
 
-        // Build API message list: system prompt + recent context
         let mut api_messages = Vec::new();
         if !self.ai_config.system_prompt.is_empty() {
             api_messages.push(crate::ai::types::ChatMessage {
@@ -838,44 +837,66 @@ impl AppState {
         self.ai_pending = true;
         self.ai_error = None;
 
+        // Insert a placeholder assistant message that will be filled as tokens arrive.
+        self.ai_messages.push(crate::ai::types::ChatMessage {
+            role: crate::ai::types::ChatRole::Assistant,
+            content: String::new(),
+            timestamp,
+        });
+
         let config = self.ai_config.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.ai_result_rx = Some(rx);
 
         std::thread::spawn(move || {
             let client = crate::ai::client::AiChatClient::new();
-            let result = client.send(&api_messages, &config);
-            let _ = tx.send(result);
+            client.send_stream(&api_messages, &config, tx);
         });
     }
 
     /// Poll for the AI response from the background thread.
     /// Call once per frame from the UI loop.
     pub fn poll_ai_result(&mut self) {
-        let result = match self.ai_result_rx.as_ref() {
-            Some(rx) => rx.try_recv().ok(),
+        use crate::ai::types::AiStreamEvent;
+        let rx = match self.ai_result_rx.take() {
+            Some(rx) => rx,
             None => return,
         };
-        match result {
-            Some(Ok(response)) => {
-                self.ai_messages.push(crate::ai::types::ChatMessage {
-                    role: crate::ai::types::ChatRole::Assistant,
-                    content: response,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0),
-                });
-                self.ai_error = None;
-                self.ai_pending = false;
-                self.ai_result_rx = None;
+        // Drain all available events (don't block)
+        let mut done = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                AiStreamEvent::Token(t) => {
+                    if let Some(last) = self.ai_messages.last_mut() {
+                        last.content.push_str(&t);
+                    }
+                }
+                AiStreamEvent::Done => {
+                    done = true;
+                }
+                AiStreamEvent::Error(e) => {
+                    self.ai_error = Some(e);
+                    done = true;
+                    // Remove the empty placeholder
+                    if let Some(last) = self.ai_messages.last() {
+                        if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
+                            self.ai_messages.pop();
+                        }
+                    }
+                }
             }
-            Some(Err(e)) => {
-                self.ai_error = Some(e);
-                self.ai_pending = false;
-                self.ai_result_rx = None;
+        }
+        if done {
+            self.ai_pending = false;
+            // Remove empty trailing message if no tokens arrived
+            if let Some(last) = self.ai_messages.last() {
+                if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
+                    self.ai_messages.pop();
+                }
             }
-            None => {} // still waiting
+        } else {
+            // Put the receiver back for next frame's poll
+            self.ai_result_rx = Some(rx);
         }
     }
 

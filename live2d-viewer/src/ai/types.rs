@@ -36,6 +36,17 @@ pub struct AiConfig {
     pub system_prompt: String,
 }
 
+/// Events sent from the background streaming thread to the UI thread.
+#[derive(Debug, Clone)]
+pub enum AiStreamEvent {
+    /// A single delta token from the stream.
+    Token(String),
+    /// The stream finished successfully.
+    Done,
+    /// A fatal error occurred.
+    Error(String),
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
