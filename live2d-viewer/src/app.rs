@@ -261,6 +261,8 @@ pub struct AppState {
     pub pet_mode: PetMode,
     /// Window click-through mode (input passthrough), toggled from tray menu.
     pub click_through: bool,
+    /// Layout adjustment mode — shows pan/zoom sliders; saved to DB per model.
+    pub layout_mode: bool,
     /// Set to true when pet_mode toggles so main.rs applies window changes
     pub pet_mode_changed: bool,
     /// True when camera needs recalculation (after pet mode window resize)
@@ -384,6 +386,7 @@ impl AppState {
             part_ids: Vec::new(),
             pet_mode: PetMode::Off,
             click_through: false,
+            layout_mode: false,
             pet_mode_changed: false,
             camera_needs_fit: false,
             pet_mode_delay: 0,
@@ -598,24 +601,7 @@ impl AppState {
     }
 
     pub fn save_zoom(&mut self) {
-        let idx = match self.current_idx {
-            Some(i) => i,
-            None => return,
-        };
-        let path = match self.model_list.get(idx) {
-            Some(e) => e.dir.to_string_lossy().to_string(),
-            None => return,
-        };
-        let zoom = if self.is_v2 {
-            Some(self.v2_scale)
-        } else {
-            // Use average absolute scale — scale_y is negative (Y-flip from fit_to_canvas),
-            // so (scale_x + scale_y) / 2.0 produces a near-zero/incorrect value.
-            Some((self.camera.scale_x.abs() + self.camera.scale_y.abs()) / 2.0)
-        };
-        if let Some(ref db) = self.db {
-            let _ = db.set_zoom(&path, zoom);
-        }
+        self.save_layout();
     }
 
     // ──────── Parameter presets ────────
@@ -727,6 +713,70 @@ impl AppState {
             let _ = db.delete_preset(&path, name);
         }
         self.refresh_presets();
+    }
+
+    // ──────── Layout persistence ────────
+
+    /// Save current camera (pan + zoom) to DB for the current model.
+    pub fn save_layout(&mut self) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        let (pan_x, pan_y, zoom) = if self.is_v2 {
+            (None, None, Some(self.v2_scale))
+        } else {
+            let z = (self.camera.scale_x.abs() + self.camera.scale_y.abs()) / 2.0;
+            (
+                Some(self.camera.translate_x),
+                Some(self.camera.translate_y),
+                Some(z),
+            )
+        };
+        if let Some(ref db) = self.db {
+            let _ = db.set_model_layout(&path, pan_x, pan_y, zoom);
+        }
+    }
+
+    /// Restore saved layout (pan + zoom) from DB for the current model.
+    pub fn restore_layout(&mut self) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        let rec = match self.db {
+            Some(ref db) => match db.get_model(&path) {
+                Ok(Some(r)) => r,
+                _ => return,
+            },
+            None => return,
+        };
+        if self.is_v2 {
+            if let Some(z) = rec.zoom_scale {
+                self.v2_scale = z;
+                if let Some(ref mut v2) = self.v2_model {
+                    v2.set_scale(z);
+                }
+            }
+        } else {
+            let z = rec.zoom_scale.unwrap_or(1.0);
+            self.camera.scale_x = self.camera.scale_x.signum() * z;
+            self.camera.scale_y = self.camera.scale_y.signum() * z;
+            if let Some(x) = rec.layout_pan_x {
+                self.camera.translate_x = x;
+            }
+            if let Some(y) = rec.layout_pan_y {
+                self.camera.translate_y = y;
+            }
+        }
     }
 
     /// Start switching to model at `idx` asynchronously.
@@ -872,19 +922,8 @@ impl AppState {
         self.current_model = Some(model);
         self.current_idx = Some(idx);
 
-        // Restore saved zoom for this model
-        if let Some(ref db) = self.db {
-            let path = &self.model_list[idx].dir;
-            if let Ok(Some(rec)) = db.get_model(&path.to_string_lossy()) {
-                if let Some(z) = rec.zoom_scale {
-                    self.camera.scale_x = z;
-                    self.camera.scale_y = z;
-                    self.camera.translate_x = 0.0;
-                    self.camera.translate_y = 0.0;
-                    log::info!("Restored zoom={:.2} for {}", z, rec.name);
-                }
-            }
-        }
+        // Restore saved layout (pan + zoom) for this model
+        self.restore_layout();
 
         self.texture_paths = raw.texture_paths;
         self.base_dir = Some(raw.base_dir);
@@ -1112,19 +1151,8 @@ impl AppState {
             self.model_list[idx].loaded = true;
             log::info!("Loaded V2 model: {} (params={})", name, nparams);
 
-            // Restore saved zoom for V2 model
-            if let Some(ref db) = self.db {
-                let p = self.model_list[idx].dir.to_string_lossy().to_string();
-                if let Ok(Some(rec)) = db.get_model(&p) {
-                    if let Some(z) = rec.zoom_scale {
-                        self.v2_scale = z;
-                        if let Some(ref mut v2) = self.v2_model {
-                            v2.set_scale(z);
-                        }
-                        log::info!("Restored V2 zoom={:.2} for {}", z, rec.name);
-                    }
-                }
-            }
+            // Restore saved layout (zoom) for V2 model
+            self.restore_layout();
 
             // Refresh parameter presets for this model
             self.refresh_presets();

@@ -376,6 +376,44 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 
                 ui.separator();
 
+                // ── Layout mode toggle ──
+                if ui.button("调整布局").clicked() {
+                    app.layout_mode = !app.layout_mode;
+                }
+
+                if app.layout_mode {
+                    ui.separator();
+                    ui.label("布局模式");
+                    let mut px = app.camera.translate_x;
+                    let mut py = app.camera.translate_y;
+                    let mut zm = (app.camera.scale_x.abs() + app.camera.scale_y.abs()) / 2.0;
+                    let p_changed = ui.add(Slider::new(&mut px, -5.0..=5.0).text("X 偏移")).changed()
+                        | ui.add(Slider::new(&mut py, -5.0..=5.0).text("Y 偏移")).changed();
+                    let z_changed = ui.add(Slider::new(&mut zm, 0.1..=5.0).text("缩放")).changed();
+                    if p_changed {
+                        app.camera.translate_x = px;
+                        app.camera.translate_y = py;
+                    }
+                    if z_changed {
+                        let sign_x = app.camera.scale_x.signum();
+                        let sign_y = app.camera.scale_y.signum();
+                        app.camera.scale_x = sign_x * zm;
+                        app.camera.scale_y = sign_y * zm;
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("保存布局").clicked() {
+                            app.save_layout();
+                            app.layout_mode = false;
+                        }
+                        if ui.button("重置布局").clicked() {
+                            app.camera.translate_x = 0.0;
+                            app.camera.translate_y = 0.0;
+                            app.layout_mode = false;
+                        }
+                    });
+                    ui.separator();
+                }
+
                 // Parameter sliders in scroll area
                 egui::ScrollArea::vertical()
                     .max_height(400.0)

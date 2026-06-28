@@ -140,11 +140,12 @@ The motion system is **self-implemented** (not Cubism Framework), located in `li
 - **Tap detection** — click on model body triggers a random "TapBody" motion (V3: from loaded motions; V2: cycles through internal C++ motions)
 - **Audio** — V2 motions can trigger sound playback via `rodio` (OGG/WAV/MP3)
 
-### Camera
+### Camera & Layout
 
 - **Interactive pan & zoom** — drag to pan, scroll or buttons to zoom
 - **Reset** — one-click restore default view
-- **Zoom persistence** — zoom level is saved per model and restored on switch (V2 stores `v2_scale`; V3 computes from camera with proper Y-flip and aspect ratio)
+- **Layout mode** — enter adjustment mode with pan X/Y and zoom sliders for precise positioning
+- **Per-model layout persistence** — pan position + zoom level saved to DB per model, restored on switch (V2 stores `v2_scale`; V3 computes from camera with proper Y-flip and aspect ratio)
 
 ### Pet / Overlay Modes
 
@@ -318,7 +319,7 @@ Order: `fmt → clippy → test`. No custom `rustfmt.toml` or `clippy.toml`. Som
 | (✅) | HitAreas + tap-to-motion — hit-testing from `model3.json` HitAreas (V3) and C++ hitTest (V2); tap triggers body motions. **Done.** |
 | ✅ | UserData (`userdata3.json`) — parsed into ID→description lookup map; shown in GUI on tap |
 | ✅ | Save/Load parameter presets — named snapshots stored in DB per model; restore via GUI |
-| ❌ | Layout settings (model canvas position/scale) |
+| ✅ | Layout settings — per-model pan + zoom saved to DB; layout mode with sliders for precise positioning |
 
 ## License
 

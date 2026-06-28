@@ -77,6 +77,8 @@ pub struct ModelRecord {
     pub name: String,
     pub model_version: String, // "V2" or "V3"
     pub zoom_scale: Option<f32>,
+    pub layout_pan_x: Option<f32>,
+    pub layout_pan_y: Option<f32>,
     pub last_opened: String, // ISO datetime string from SQLite
 }
 
@@ -98,6 +100,13 @@ impl AppDb {
         let conn = db.connect()?;
 
         rt().block_on(conn.execute_batch("PRAGMA journal_mode=WAL"))?;
+        // Migration: add layout columns to existing model_history (no-op if already present)
+        let _ = rt().block_on(conn.execute(
+            "ALTER TABLE model_history ADD COLUMN layout_pan_x REAL", (),
+        ));
+        let _ = rt().block_on(conn.execute(
+            "ALTER TABLE model_history ADD COLUMN layout_pan_y REAL", (),
+        ));
         rt().block_on(conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS global_settings (
                 key    TEXT PRIMARY KEY,
@@ -109,6 +118,8 @@ impl AppDb {
                 name         TEXT NOT NULL,
                 model_version TEXT NOT NULL,
                 zoom_scale   REAL,
+                layout_pan_x REAL,
+                layout_pan_y REAL,
                 last_opened  TEXT NOT NULL DEFAULT (datetime('now')),
                 created_at   TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -180,8 +191,8 @@ impl AppDb {
     /// Return every model history record ordered by `last_opened`
     /// descending (most recent first).
     pub fn model_history(&self) -> Result<Vec<ModelRecord>> {
-        let mut rows = rt().block_on(self.conn.query(
-            "SELECT file_path, name, model_version, zoom_scale, last_opened \
+        let mut rows =         rt().block_on(self.conn.query(
+            "SELECT file_path, name, model_version, zoom_scale, layout_pan_x, layout_pan_y, last_opened \
              FROM model_history ORDER BY last_opened DESC",
             (),
         ))?;
@@ -193,7 +204,9 @@ impl AppDb {
                 name: row.get::<String>(1)?,
                 model_version: row.get::<String>(2)?,
                 zoom_scale: row.get::<Option<f64>>(3)?.map(|z| z as f32),
-                last_opened: row.get::<String>(4)?,
+                layout_pan_x: row.get::<Option<f64>>(4)?.map(|x| x as f32),
+                layout_pan_y: row.get::<Option<f64>>(5)?.map(|y| y as f32),
+                last_opened: row.get::<String>(6)?,
             });
         }
         Ok(records)
@@ -202,7 +215,7 @@ impl AppDb {
     /// Retrieve a single model record by its file path.
     pub fn get_model(&self, file_path: &str) -> Result<Option<ModelRecord>> {
         let mut rows = rt().block_on(self.conn.query(
-            "SELECT file_path, name, model_version, zoom_scale, last_opened \
+            "SELECT file_path, name, model_version, zoom_scale, layout_pan_x, layout_pan_y, last_opened \
              FROM model_history WHERE file_path = ?1",
             libsql::params![file_path],
         ))?;
@@ -213,18 +226,40 @@ impl AppDb {
                 name: row.get::<String>(1)?,
                 model_version: row.get::<String>(2)?,
                 zoom_scale: row.get::<Option<f64>>(3)?.map(|z| z as f32),
-                last_opened: row.get::<String>(4)?,
+                layout_pan_x: row.get::<Option<f64>>(4)?.map(|x| x as f32),
+                layout_pan_y: row.get::<Option<f64>>(5)?.map(|y| y as f32),
+                last_opened: row.get::<String>(6)?,
             })),
             None => Ok(None),
         }
     }
 
     /// Update the zoom scale for a model. Pass `None` to clear the value.
+    #[allow(dead_code)]
     pub fn set_zoom(&self, file_path: &str, zoom_scale: Option<f32>) -> Result<()> {
         let zoom: Option<f64> = zoom_scale.map(|z| z as f64);
         rt().block_on(self.conn.execute(
             "UPDATE model_history SET zoom_scale = ?1 WHERE file_path = ?2",
             libsql::params![zoom, file_path],
+        ))?;
+        Ok(())
+    }
+
+    /// Save full layout (pan + zoom) for a model.
+    pub fn set_model_layout(
+        &self,
+        file_path: &str,
+        pan_x: Option<f32>,
+        pan_y: Option<f32>,
+        zoom: Option<f32>,
+    ) -> Result<()> {
+        let px: Option<f64> = pan_x.map(|x| x as f64);
+        let py: Option<f64> = pan_y.map(|y| y as f64);
+        let z: Option<f64> = zoom.map(|z| z as f64);
+        rt().block_on(self.conn.execute(
+            "UPDATE model_history SET layout_pan_x=?1, layout_pan_y=?2, zoom_scale=?3 \
+             WHERE file_path=?4",
+            libsql::params![px, py, z, file_path],
         ))?;
         Ok(())
     }
