@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
+use crate::ai::types::CharacterCard;
 use crate::camera::Camera;
 use crate::db;
 use crate::motion;
@@ -366,6 +367,10 @@ pub struct AppState {
     pub tts_result_rx: Option<std::sync::mpsc::Receiver<std::path::PathBuf>>,
     /// Set to true to trigger a TTS voice list refresh on the next frame.
     pub tts_refresh_requested: bool,
+    /// Per-model character cards cache (keyed by model file_path).
+    pub character_cards: HashMap<String, CharacterCard>,
+    /// Character card editor window visibility.
+    pub character_card_editor_open: bool,
 }
 
 impl AppState {
@@ -472,6 +477,8 @@ impl AppState {
             tts_voices_cache: Vec::new(),
             tts_result_rx: None,
             tts_refresh_requested: false,
+            character_cards: HashMap::new(),
+            character_card_editor_open: false,
         }
     }
 
@@ -817,6 +824,20 @@ impl AppState {
         }
     }
 
+    /// Load the character card for the current model from DB and cache it.
+    /// Returns the card (or a default if none exists).
+    pub fn load_character_card(&mut self, file_path: &str) -> CharacterCard {
+        let card = self
+            .db
+            .as_ref()
+            .and_then(|db| db.get_character_card(file_path).ok())
+            .flatten()
+            .unwrap_or_default();
+        self.character_cards
+            .insert(file_path.to_string(), card.clone());
+        card
+    }
+
     /// Send a user message to the AI on a background thread.
     /// The result is picked up by `poll_ai_result()` on the next frame.
     pub fn send_ai_message(&mut self) {
@@ -838,10 +859,52 @@ impl AppState {
         });
 
         let mut api_messages = Vec::new();
-        if !self.ai_config.system_prompt.is_empty() {
+
+        // Build system prompt from character card fields + global system prompt
+        let current_path = self
+            .current_model_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let card = self
+            .character_cards
+            .get(&current_path)
+            .cloned()
+            .or_else(|| {
+                self.db
+                    .as_ref()
+                    .and_then(|db| db.get_character_card(&current_path).ok())
+                    .flatten()
+            })
+            .unwrap_or_default();
+
+        let card_sections: Vec<String> = [
+            ("角色名", &card.name),
+            ("描述", &card.description),
+            ("性格", &card.personality),
+            ("场景", &card.scenario),
+            ("对话示例", &card.example_dialogs),
+            ("角色提示词", &card.system_prompt),
+        ]
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(label, value)| format!("【{label}】\n{value}"))
+        .collect();
+
+        let system_prompt = if !card_sections.is_empty() {
+            let joined = card_sections.join("\n\n");
+            if !self.ai_config.system_prompt.is_empty() {
+                format!("{joined}\n\n---\n\n{}", self.ai_config.system_prompt)
+            } else {
+                joined
+            }
+        } else {
+            self.ai_config.system_prompt.clone()
+        };
+
+        if !system_prompt.is_empty() {
             api_messages.push(crate::ai::types::ChatMessage {
                 role: crate::ai::types::ChatRole::System,
-                content: self.ai_config.system_prompt.clone(),
+                content: system_prompt,
                 timestamp: 0.0,
             });
         }
@@ -921,42 +984,54 @@ impl AppState {
                 self.apply_emotion(&emotion);
             }
             // Auto-speak the response via TTS
-            if self.ai_config.tts_enabled
-                && !self.ai_config.tts_key.is_empty()
-                && !self.ai_config.tts_voice.is_empty()
-            {
-                let tts_config = self.ai_config.clone();
-                let text = self
-                    .ai_messages
-                    .last()
-                    .map(|m| m.content.clone())
+            if self.ai_config.tts_enabled && !self.ai_config.tts_key.is_empty() {
+                let mut tts_config = self.ai_config.clone();
+                // Override TTS voice with character card's voice if set
+                let current_path = self
+                    .current_model_dir()
+                    .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let text = crate::ai::tts::sanitize_text_for_tts(&text);
-                if !text.is_empty() {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    self.tts_result_rx = Some(rx);
-                    std::thread::spawn(move || {
-                        let result =
-                            crate::ai::tts::synthesize(&tts_config, &text, &tts_config.tts_voice);
-                        match result {
-                            Ok(mp3_bytes) => {
-                                let tmp_dir = std::env::temp_dir();
-                                let path = tmp_dir.join(format!(
-                                    "live2d-tts-{}.mp3",
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_nanos()
-                                ));
-                                if std::fs::write(&path, &mp3_bytes).is_ok() {
-                                    let _ = tx.send(path);
+                if let Some(card) = self.character_cards.get(&current_path) {
+                    if !card.tts_voice.is_empty() {
+                        tts_config.tts_voice = card.tts_voice.clone();
+                    }
+                }
+                if !tts_config.tts_voice.is_empty() {
+                    let text = self
+                        .ai_messages
+                        .last()
+                        .map(|m| m.content.clone())
+                        .unwrap_or_default();
+                    let text = crate::ai::tts::sanitize_text_for_tts(&text);
+                    if !text.is_empty() {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.tts_result_rx = Some(rx);
+                        std::thread::spawn(move || {
+                            let result = crate::ai::tts::synthesize(
+                                &tts_config,
+                                &text,
+                                &tts_config.tts_voice,
+                            );
+                            match result {
+                                Ok(mp3_bytes) => {
+                                    let tmp_dir = std::env::temp_dir();
+                                    let path = tmp_dir.join(format!(
+                                        "live2d-tts-{}.mp3",
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_nanos()
+                                    ));
+                                    if std::fs::write(&path, &mp3_bytes).is_ok() {
+                                        let _ = tx.send(path);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("[tts] synthesis failed: {e}");
                                 }
                             }
-                            Err(e) => {
-                                log::warn!("[tts] synthesis failed: {e}");
-                            }
-                        }
-                    });
+                        });
+                    }
                 }
             }
         } else {

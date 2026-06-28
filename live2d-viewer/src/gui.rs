@@ -45,6 +45,8 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     }
     // AI Chat window (normal mode only)
     crate::ai::chat_panel::draw_chat_panel(ctx, app);
+    // Character card editor window
+    crate::ai::character_card_panel::draw_character_card_panel(ctx, app);
 
     // Toggle buttons in top-right corner
     egui::Area::new("toggle_btns".into())
