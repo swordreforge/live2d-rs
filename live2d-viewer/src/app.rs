@@ -908,6 +908,26 @@ impl AppState {
                 timestamp: 0.0,
             });
         }
+        // Inject relevant conversation memories as system context
+        if self.ai_config.memory_enabled {
+            if let Some(ref db) = self.db {
+                let query = self
+                    .ai_messages
+                    .last()
+                    .map(|m| m.content.as_str())
+                    .unwrap_or("");
+                if let Ok(memories) = db.search_memories(&current_path, query, 3) {
+                    for mem in &memories {
+                        api_messages.push(crate::ai::types::ChatMessage {
+                            role: crate::ai::types::ChatRole::System,
+                            content: format!("[相关记忆: {}]\n{}", mem.entry_type, mem.content),
+                            timestamp: 0.0,
+                        });
+                    }
+                }
+            }
+        }
+
         let start = self
             .ai_messages
             .len()
@@ -982,6 +1002,36 @@ impl AppState {
             }
             if let Some(emotion) = emotion {
                 self.apply_emotion(&emotion);
+            }
+            // Save conversation to vector memory
+            if self.ai_config.memory_enabled {
+                let current_path = self
+                    .current_model_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if let Some(ref db) = self.db {
+                    // Find the last user message in history
+                    let user_msg = self
+                        .ai_messages
+                        .iter()
+                        .rev()
+                        .skip(1) // skip the assistant message just completed
+                        .find(|m| m.role == crate::ai::types::ChatRole::User)
+                        .map(|m| m.content.clone());
+                    let assistant_msg = self
+                        .ai_messages
+                        .last()
+                        .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
+                        .map(|m| m.content.clone());
+                    if let Some(ref msg) = user_msg {
+                        let _ = db.save_memory(&current_path, msg, "message");
+                    }
+                    if let Some(ref msg) = assistant_msg {
+                        if !msg.is_empty() {
+                            let _ = db.save_memory(&current_path, msg, "message");
+                        }
+                    }
+                }
             }
             // Auto-speak the response via TTS
             if self.ai_config.tts_enabled && !self.ai_config.tts_key.is_empty() {

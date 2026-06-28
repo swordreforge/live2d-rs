@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use tokio::runtime::Runtime;
 
-use crate::ai::types::CharacterCard;
+use crate::ai::types::{CharacterCard, MemoryEntry};
 
 // ---------------------------------------------------------------------------
 // Word-vector embedding via character n-gram hashing trick (FNV-1a)
@@ -149,6 +149,15 @@ impl AppDb {
                 system_prompt   TEXT NOT NULL DEFAULT '',
                 tts_voice       TEXT NOT NULL DEFAULT '',
                 updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_memory (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path   TEXT NOT NULL REFERENCES model_history(file_path) ON DELETE CASCADE,
+                content     TEXT NOT NULL,
+                embedding   BLOB,
+                entry_type  TEXT NOT NULL DEFAULT 'message',
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );",
         ))?;
 
@@ -502,6 +511,104 @@ impl AppDb {
     pub fn delete_character_card(&self, file_path: &str) -> Result<()> {
         rt().block_on(self.conn.execute(
             "DELETE FROM character_cards WHERE file_path = ?1",
+            libsql::params![file_path],
+        ))?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    //  Conversation memory (vector-searchable history)
+    // ------------------------------------------------------------------
+
+    /// Store a message as a vector-searchable memory entry.
+    ///
+    /// The n-gram embedding is computed automatically from `content`.
+    /// Returns the row ID of the inserted entry.
+    pub fn save_memory(&self, file_path: &str, content: &str, entry_type: &str) -> Result<i64> {
+        let embedding = embed_text(content);
+        let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+        rt().block_on(self.conn.execute(
+            "INSERT INTO conversation_memory (file_path, content, embedding, entry_type) \
+             VALUES (?1, ?2, ?3, ?4)",
+            libsql::params![file_path, content, bytes, entry_type],
+        ))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Search conversation memory by semantic similarity to `query`.
+    ///
+    /// Returns up to `limit` entries sorted by descending cosine similarity.
+    pub fn search_memories(
+        &self,
+        file_path: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        let q_embed = embed_text(query);
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT id, file_path, content, entry_type, created_at, embedding \
+             FROM conversation_memory WHERE file_path = ?1",
+            libsql::params![file_path],
+        ))?;
+
+        let mut scored: Vec<(f32, MemoryEntry)> = Vec::new();
+        while let Some(row) = rt().block_on(rows.next())? {
+            let id = row.get::<i64>(0)?;
+            let fp = row.get::<String>(1)?;
+            let content = row.get::<String>(2)?;
+            let entry_type = row.get::<String>(3)?;
+            let created_at = row.get::<String>(4)?;
+            let bytes: Vec<u8> = row.get::<Vec<u8>>(5)?;
+            let embed: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            let sim = cosine_sim(&q_embed, &embed);
+            scored.push((
+                sim,
+                MemoryEntry {
+                    id,
+                    file_path: fp,
+                    content,
+                    entry_type,
+                    created_at,
+                },
+            ));
+        }
+
+        // Sort descending by similarity, take top-k
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        Ok(scored.into_iter().map(|(_, entry)| entry).collect())
+    }
+
+    /// Return the most recent memory entries for a model.
+    pub fn get_recent_memories(&self, file_path: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT id, file_path, content, entry_type, created_at \
+             FROM conversation_memory WHERE file_path = ?1 \
+             ORDER BY id DESC LIMIT ?2",
+            libsql::params![file_path, limit as i64],
+        ))?;
+
+        let mut entries = Vec::new();
+        while let Some(row) = rt().block_on(rows.next())? {
+            entries.push(MemoryEntry {
+                id: row.get::<i64>(0)?,
+                file_path: row.get::<String>(1)?,
+                content: row.get::<String>(2)?,
+                entry_type: row.get::<String>(3)?,
+                created_at: row.get::<String>(4)?,
+            });
+        }
+        entries.reverse(); // oldest-first
+        Ok(entries)
+    }
+
+    /// Delete all conversation memory for a model.
+    pub fn delete_memories(&self, file_path: &str) -> Result<()> {
+        rt().block_on(self.conn.execute(
+            "DELETE FROM conversation_memory WHERE file_path = ?1",
             libsql::params![file_path],
         ))?;
         Ok(())

@@ -43,6 +43,23 @@ pub struct AiConfig {
     pub tts_api_url: String,
     /// Selected voice ID (e.g. "zh-CN-XiaoxiaoNeural").
     pub tts_voice: String,
+    // ── Conversation Memory ──
+    /// Whether to persist conversation history as vector-searchable memory.
+    pub memory_enabled: bool,
+}
+
+/// A single entry in the conversation memory store.
+///
+/// Stored in the SQLite `conversation_memory` table keyed by model
+/// file_path, with an n-gram embedding vector for semantic recall.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEntry {
+    pub id: i64,
+    pub file_path: String,
+    pub content: String,
+    /// "message" | "summary" | "fact"
+    pub entry_type: String,
+    pub created_at: String,
 }
 
 /// Per-model character card.
@@ -94,6 +111,7 @@ impl Default for AiConfig {
             tts_key: String::new(),
             tts_api_url: "https://api.hewoyi.com/api/ai/audio/speech".into(),
             tts_voice: "zh-CN-XiaoxiaoNeural".into(),
+            memory_enabled: true,
         }
     }
 }
