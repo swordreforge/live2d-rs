@@ -31,13 +31,24 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     if app.settings_open {
         draw_settings(ctx, app);
     }
-    // Toggle button in top-right corner
-    egui::Area::new("settings_btn".into())
-        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 38.0, 4.0))
+    // AI Chat window (normal mode only)
+    crate::ai::chat_panel::draw_chat_panel(ctx, app);
+
+    // Toggle buttons in top-right corner
+    egui::Area::new("toggle_btns".into())
+        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 76.0, 4.0))
         .show(ctx, |ui| {
-            if ui.button("\u{2699}").clicked() {
-                app.settings_open = !app.settings_open;
-            }
+            ui.horizontal(|ui| {
+                if app.ai_enabled && app.pet_mode == PetMode::Off {
+                    let chat_label = if app.ai_chat_open { "\u{1F4AC}" } else { "\u{1F4AD}" };
+                    if ui.button(chat_label).clicked() {
+                        app.ai_chat_open = !app.ai_chat_open;
+                    }
+                }
+                if ui.button("\u{2699}").clicked() {
+                    app.settings_open = !app.settings_open;
+                }
+            });
         });
 }
 
@@ -750,10 +761,21 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
             if !app.scan_result.is_empty() {
                 ui.label(format!("Result: {}", app.scan_result));
             }
+
+            ui.separator();
+            ui.heading("AI Chat");
+            if ui.button("AI 设置").clicked() {
+                app.ai_settings_open = !app.ai_settings_open;
+            }
+            if !app.ai_enabled {
+                ui.colored_label(egui::Color32::GRAY, "AI not enabled");
+            }
         });
     if changed {
         app.save_scan_dirs();
     }
+
+    crate::ai::settings_panel::draw_settings_panel(ctx, app);
 }
 
 fn small_btn(ui: &mut egui::Ui, label: &str) -> egui::Response {

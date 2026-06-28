@@ -5,8 +5,9 @@ edition = "2021"
 rust-version = "1.75"
 
 [features]
-default = ["static-link"]
+default = ["static-link", "ai"]
 static-link = ["live2d-core-sys/static-link"]
+ai = []
 
 [dependencies]
 live2d-core = { path = "../live2d-core" }
@@ -33,6 +34,7 @@ libsql = { version = "0.9", default-features = false, features = ["core"] }
 ab_glyph = "0.2"
 tokio = { version = "1", default-features = false, features = ["rt"] }
 dirs = "5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.24", default-features = false }
 

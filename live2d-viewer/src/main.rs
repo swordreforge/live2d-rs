@@ -1,4 +1,6 @@
 mod app;
+#[cfg(feature = "ai")]
+mod ai;
 mod audio;
 mod camera;
 mod data_dir;
@@ -1144,6 +1146,8 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
+                // Save AI config
+                crate::ai::config::save_config(&app.ai_config);
                 painter.destroy();
             }
             Event::AboutToWait => {

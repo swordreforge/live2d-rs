@@ -345,6 +345,17 @@ pub struct AppState {
     pub scan_dirs: Vec<PathBuf>,
     pub settings_open: bool,
     pub scan_result: String,
+    // ── AI Chat ──
+    pub ai_enabled: bool,
+    pub ai_messages: Vec<crate::ai::types::ChatMessage>,
+    pub ai_pending: bool,
+    pub ai_error: Option<String>,
+    pub ai_config: crate::ai::types::AiConfig,
+    pub ai_client: crate::ai::client::AiChatClient,
+    pub ai_input_buffer: String,
+    pub ai_chat_open: bool,
+    pub ai_settings_open: bool,
+    pub ai_test_result: Option<(String, bool)>,
 }
 
 impl AppState {
@@ -436,6 +447,16 @@ impl AppState {
             scan_dirs: Vec::new(),
             settings_open: false,
             scan_result: String::new(),
+            ai_enabled: true,
+            ai_messages: Vec::new(),
+            ai_pending: false,
+            ai_error: None,
+            ai_config: crate::ai::config::load_config(),
+            ai_client: crate::ai::client::AiChatClient::new(),
+            ai_input_buffer: String::new(),
+            ai_chat_open: false,
+            ai_settings_open: false,
+            ai_test_result: None,
         }
     }
 
@@ -777,6 +798,57 @@ impl AppState {
                 self.camera.translate_y = y;
             }
         }
+    }
+
+    /// Send a user message to the AI and append the response.
+    pub fn send_ai_message(&mut self) {
+        let text = self.ai_input_buffer.trim().to_string();
+        if text.is_empty() || self.ai_pending {
+            return;
+        }
+        self.ai_input_buffer.clear();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        self.ai_messages.push(crate::ai::types::ChatMessage {
+            role: crate::ai::types::ChatRole::User,
+            content: text,
+            timestamp,
+        });
+
+        // Build API message list: system prompt + recent context
+        let mut api_messages = Vec::new();
+        if !self.ai_config.system_prompt.is_empty() {
+            api_messages.push(crate::ai::types::ChatMessage {
+                role: crate::ai::types::ChatRole::System,
+                content: self.ai_config.system_prompt.clone(),
+                timestamp: 0.0,
+            });
+        }
+        let start = self
+            .ai_messages
+            .len()
+            .saturating_sub(self.ai_config.context_length);
+        api_messages.extend_from_slice(&self.ai_messages[start..]);
+
+        self.ai_pending = true;
+        match self.ai_client.send(&api_messages, &self.ai_config) {
+            Ok(response) => {
+                self.ai_messages.push(crate::ai::types::ChatMessage {
+                    role: crate::ai::types::ChatRole::Assistant,
+                    content: response,
+                    timestamp,
+                });
+                self.ai_error = None;
+            }
+            Err(e) => {
+                self.ai_error = Some(e);
+            }
+        }
+        self.ai_pending = false;
     }
 
     /// Start switching to model at `idx` asynchronously.
