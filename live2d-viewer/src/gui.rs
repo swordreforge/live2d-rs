@@ -3,6 +3,9 @@ use egui::{Context, Slider, Window};
 use std::path::PathBuf;
 
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
+    // Poll for AI response (non-blocking, receives from background thread)
+    app.poll_ai_result();
+
     if app.minimized_to_float {
         draw_floating_ui(ctx, app);
         return;

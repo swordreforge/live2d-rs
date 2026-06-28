@@ -351,11 +351,11 @@ pub struct AppState {
     pub ai_pending: bool,
     pub ai_error: Option<String>,
     pub ai_config: crate::ai::types::AiConfig,
-    pub ai_client: crate::ai::client::AiChatClient,
     pub ai_input_buffer: String,
     pub ai_chat_open: bool,
     pub ai_settings_open: bool,
     pub ai_test_result: Option<(String, bool)>,
+    pub ai_result_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
 }
 
 impl AppState {
@@ -452,11 +452,11 @@ impl AppState {
             ai_pending: false,
             ai_error: None,
             ai_config: crate::ai::config::load_config(),
-            ai_client: crate::ai::client::AiChatClient::new(),
             ai_input_buffer: String::new(),
             ai_chat_open: false,
             ai_settings_open: false,
             ai_test_result: None,
+            ai_result_rx: None,
         }
     }
 
@@ -800,7 +800,8 @@ impl AppState {
         }
     }
 
-    /// Send a user message to the AI and append the response.
+    /// Send a user message to the AI on a background thread.
+    /// The result is picked up by `poll_ai_result()` on the next frame.
     pub fn send_ai_message(&mut self) {
         let text = self.ai_input_buffer.trim().to_string();
         if text.is_empty() || self.ai_pending {
@@ -835,20 +836,47 @@ impl AppState {
         api_messages.extend_from_slice(&self.ai_messages[start..]);
 
         self.ai_pending = true;
-        match self.ai_client.send(&api_messages, &self.ai_config) {
-            Ok(response) => {
+        self.ai_error = None;
+
+        let config = self.ai_config.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.ai_result_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let client = crate::ai::client::AiChatClient::new();
+            let result = client.send(&api_messages, &config);
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll for the AI response from the background thread.
+    /// Call once per frame from the UI loop.
+    pub fn poll_ai_result(&mut self) {
+        let result = match self.ai_result_rx.as_ref() {
+            Some(rx) => rx.try_recv().ok(),
+            None => return,
+        };
+        match result {
+            Some(Ok(response)) => {
                 self.ai_messages.push(crate::ai::types::ChatMessage {
                     role: crate::ai::types::ChatRole::Assistant,
                     content: response,
-                    timestamp,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
                 });
                 self.ai_error = None;
+                self.ai_pending = false;
+                self.ai_result_rx = None;
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 self.ai_error = Some(e);
+                self.ai_pending = false;
+                self.ai_result_rx = None;
             }
+            None => {} // still waiting
         }
-        self.ai_pending = false;
     }
 
     /// Start switching to model at `idx` asynchronously.
