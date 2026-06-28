@@ -45,6 +45,23 @@ pub struct AiConfig {
     pub tts_voice: String,
 }
 
+/// Per-model character card.
+///
+/// Stored in the SQLite `character_cards` table keyed by model file_path.
+/// All fields are free-text; the system prompt sent to the AI is
+/// constructed by concatenating non-empty fields at runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CharacterCard {
+    pub file_path: String,
+    pub name: String,
+    pub description: String,
+    pub personality: String,
+    pub scenario: String,
+    pub example_dialogs: String,
+    pub system_prompt: String,
+    pub tts_voice: String,
+}
+
 /// Events sent from the background streaming thread to the UI thread.
 #[derive(Debug, Clone)]
 pub enum AiStreamEvent {

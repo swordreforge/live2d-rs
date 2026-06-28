@@ -485,8 +485,14 @@ impl AppDb {
              example_dialogs=?6, system_prompt=?7, tts_voice=?8, \
              updated_at=datetime('now')",
             libsql::params![
-                card.file_path, card.name, card.description, card.personality,
-                card.scenario, card.example_dialogs, card.system_prompt, card.tts_voice,
+                card.file_path.clone(),
+                card.name.clone(),
+                card.description.clone(),
+                card.personality.clone(),
+                card.scenario.clone(),
+                card.example_dialogs.clone(),
+                card.system_prompt.clone(),
+                card.tts_voice.clone(),
             ],
         ))?;
         Ok(())
