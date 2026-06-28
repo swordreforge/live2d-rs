@@ -1,18 +1,99 @@
+use pulldown_cmark::{Event, Parser, Tag};
+
 use crate::app::AppState;
 use crate::ai::types::ChatRole;
 use egui::Window;
 
+fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
+    if !buf.is_empty() {
+        let text = std::mem::take(buf);
+        if bold {
+            ui.label(egui::RichText::new(text).strong());
+        } else {
+            ui.label(text);
+        }
+    }
+}
+
+/// Render a markdown string into egui widgets.
+fn render_markdown(ui: &mut egui::Ui, text: &str) {
+    let parser = Parser::new(text);
+    let mut bold: u32 = 0;
+    let mut plain = String::new();
+
+    for event in parser {
+        match event {
+            Event::Text(t) => plain.push_str(&t),
+            Event::Code(t) => {
+                flush_plain(ui, &mut plain, bold > 0);
+                ui.colored_label(
+                    egui::Color32::from_rgb(230, 200, 150),
+                    format!(" `{}` ", t),
+                );
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                flush_plain(ui, &mut plain, bold > 0);
+            }
+            Event::Start(tag) => match tag {
+                Tag::Paragraph => {}
+                Tag::CodeBlock(_kind) => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
+                Tag::Emphasis | Tag::Strong => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    bold += 1;
+                }
+                Tag::Heading(..) => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    ui.add_space(4.0);
+                }
+                Tag::List(_) => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
+                Tag::Item => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
+                _ => {}
+            },
+            Event::End(tag) => match tag {
+                Tag::Paragraph => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
+                Tag::CodeBlock(_kind) => {}
+                Tag::Emphasis | Tag::Strong => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    bold = bold.saturating_sub(1);
+                }
+                Tag::Heading(..) => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    ui.add_space(4.0);
+                }
+                Tag::List(_) => {}
+                Tag::Item => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
+                _ => {}
+            },
+            Event::Html(t) => {
+                flush_plain(ui, &mut plain, bold > 0);
+                ui.label(t.as_ref());
+            }
+            Event::Rule => {
+                flush_plain(ui, &mut plain, bold > 0);
+                ui.separator();
+            }
+            _ => {}
+        }
+    }
+    flush_plain(ui, &mut plain, bold > 0);
+}
+
 /// Draw the AI chat panel inside a normal-mode egui window.
-///
-/// Because `AppState` is borrowed mutably by the egui closure tree, the
-/// actual `send_ai_message()` call is deferred to after the Window closes.
-/// Only UI state reads happen inside the closure.
 pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     if !app.ai_chat_open {
         return;
     }
 
-    // Snapshot flags before the UI closure to avoid nested borrow conflicts.
     let enter_triggered = app.ai_chat_open
         && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
     let input_before = app.ai_input_buffer.clone();
@@ -40,7 +121,12 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                             ChatRole::System => ("系统", egui::Color32::GRAY),
                         };
                         ui.colored_label(color, format!("[{}]", prefix));
-                        ui.label(&msg.content);
+
+                        if msg.role == ChatRole::Assistant {
+                            render_markdown(ui, &msg.content);
+                        } else {
+                            ui.label(&msg.content);
+                        }
                         ui.add_space(4.0);
                     }
 
@@ -71,7 +157,6 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
         });
 
-    // Deferred send after the Window closure releases the borrow.
     if clicked_send && !pending {
         app.send_ai_message();
     } else if enter_triggered && !input_before.trim().is_empty() && !pending {
