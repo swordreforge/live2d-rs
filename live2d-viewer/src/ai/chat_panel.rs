@@ -2,7 +2,7 @@ use pulldown_cmark::{Event, Parser, Tag};
 
 use crate::app::AppState;
 use crate::ai::types::ChatRole;
-use egui::Window;
+use egui::{Color32, Grid, Window};
 
 fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
     if !buf.is_empty() {
@@ -16,25 +16,83 @@ fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
 }
 
 /// Render a markdown string into egui widgets.
+///
+/// Handles paragraphs, bold, inline code, code blocks, headings, lists,
+/// rules, tables — the common subset AI chat responses typically use.
 fn render_markdown(ui: &mut egui::Ui, text: &str) {
     let parser = Parser::new(text);
     let mut bold: u32 = 0;
     let mut plain = String::new();
 
+    // Table accumulation state
+    enum TableCellKind {
+        Header,
+        Body,
+    }
+    let mut in_table = false;
+    let mut table_cols: usize = 0;
+    let mut table_rows: Vec<(TableCellKind, Vec<String>)> = Vec::new();
+    let mut table_cur_row: Vec<String> = Vec::new();
+    let mut table_cur_cell = String::new();
+    let mut table_in_head = false;
+    let mut table_in_cell = false;
+
     for event in parser {
         match event {
-            Event::Text(t) => plain.push_str(&t),
+            // --- text-like events ---
+            Event::Text(t) => {
+                if in_table && table_in_cell {
+                    table_cur_cell.push_str(&t);
+                } else {
+                    plain.push_str(&t);
+                }
+            }
             Event::Code(t) => {
-                flush_plain(ui, &mut plain, bold > 0);
-                ui.colored_label(
-                    egui::Color32::from_rgb(230, 200, 150),
-                    format!(" `{}` ", t),
-                );
+                if in_table && table_in_cell {
+                    table_cur_cell.push_str(&format!(" `{}` ", t));
+                } else {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    ui.colored_label(Color32::from_rgb(230, 200, 150), format!(" `{}` ", t));
+                }
             }
             Event::SoftBreak | Event::HardBreak => {
-                flush_plain(ui, &mut plain, bold > 0);
+                if in_table && table_in_cell {
+                    table_cur_cell.push(' ');
+                } else {
+                    flush_plain(ui, &mut plain, bold > 0);
+                }
             }
+            Event::Html(t) => {
+                if in_table && table_in_cell {
+                    table_cur_cell.push_str(&t);
+                } else {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    ui.label(t.as_ref());
+                }
+            }
+
+            // --- Start tags ---
             Event::Start(tag) => match tag {
+                Tag::Table(alignments) => {
+                    flush_plain(ui, &mut plain, bold > 0);
+                    in_table = true;
+                    table_cols = alignments.len();
+                    table_rows.clear();
+                    table_cur_row = Vec::new();
+                    table_cur_cell.clear();
+                    table_in_head = false;
+                    table_in_cell = false;
+                }
+                Tag::TableHead => {
+                    table_in_head = true;
+                }
+                Tag::TableRow => {
+                    table_cur_row = Vec::new();
+                }
+                Tag::TableCell => {
+                    table_in_cell = true;
+                    table_cur_cell.clear();
+                }
                 Tag::Paragraph => {}
                 Tag::CodeBlock(_kind) => {
                     flush_plain(ui, &mut plain, bold > 0);
@@ -55,7 +113,83 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                 }
                 _ => {}
             },
+
+            // --- End tags ---
             Event::End(tag) => match tag {
+                Tag::Table(_) => {
+                    // Flush final row if non-empty
+                    if !table_cur_row.is_empty() || !table_cur_cell.is_empty() {
+                        if table_in_cell {
+                            // last cell wasn't closed
+                        }
+                        if !table_cur_row.is_empty() || !table_cur_cell.is_empty() {
+                            let kind = if table_in_head {
+                                TableCellKind::Header
+                            } else {
+                                TableCellKind::Body
+                            };
+                            table_rows.push((kind, table_cur_row.clone()));
+                        }
+                    }
+
+                    // Render the table
+                    if !table_rows.is_empty() {
+                        let id = ui.next_auto_id();
+                        Grid::new(id)
+                            .striped(true)
+                            .min_col_width(40.0)
+                            .show(ui, |ui| {
+                                for (kind, cells) in &table_rows {
+                                    let is_header = matches!(kind, TableCellKind::Header);
+                                    for cell in cells {
+                                        if is_header {
+                                            ui.label(
+                                                egui::RichText::new(cell).strong().color(
+                                                    Color32::from_rgb(180, 210, 255),
+                                                ),
+                                            );
+                                        } else {
+                                            ui.label(cell.as_str());
+                                        }
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    }
+
+                    in_table = false;
+                    table_cur_cell.clear();
+                    table_cur_row.clear();
+                    table_rows.clear();
+                }
+                Tag::TableHead => {
+                    table_in_head = false;
+                }
+                Tag::TableRow => {
+                    if !table_cur_row.is_empty() || !table_cur_cell.is_empty() {
+                        // Push the pending cell if any
+                        if table_in_cell {
+                            table_cur_row.push(std::mem::take(&mut table_cur_cell));
+                            table_in_cell = false;
+                        }
+                        // Pad row to table_cols
+                        while table_cur_row.len() < table_cols {
+                            table_cur_row.push(String::new());
+                        }
+                        let kind = if table_in_head {
+                            TableCellKind::Header
+                        } else {
+                            TableCellKind::Body
+                        };
+                        table_rows.push((kind, std::mem::take(&mut table_cur_row)));
+                    }
+                }
+                Tag::TableCell => {
+                    if table_in_cell {
+                        table_cur_row.push(std::mem::take(&mut table_cur_cell));
+                        table_in_cell = false;
+                    }
+                }
                 Tag::Paragraph => {
                     flush_plain(ui, &mut plain, bold > 0);
                 }
@@ -74,10 +208,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                 }
                 _ => {}
             },
-            Event::Html(t) => {
-                flush_plain(ui, &mut plain, bold > 0);
-                ui.label(t.as_ref());
-            }
+
             Event::Rule => {
                 flush_plain(ui, &mut plain, bold > 0);
                 ui.separator();
@@ -116,9 +247,9 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
                         let (prefix, color) = match msg.role {
-                            ChatRole::User => ("你", egui::Color32::LIGHT_BLUE),
-                            ChatRole::Assistant => ("AI", egui::Color32::LIGHT_GREEN),
-                            ChatRole::System => ("系统", egui::Color32::GRAY),
+                            ChatRole::User => ("你", Color32::LIGHT_BLUE),
+                            ChatRole::Assistant => ("AI", Color32::LIGHT_GREEN),
+                            ChatRole::System => ("系统", Color32::GRAY),
                         };
                         ui.colored_label(color, format!("[{}]", prefix));
 
@@ -131,11 +262,11 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                     }
 
                     if pending {
-                        ui.colored_label(egui::Color32::YELLOW, "思考中...");
+                        ui.colored_label(Color32::YELLOW, "思考中...");
                     }
 
                     if let Some(ref err) = app.ai_error {
-                        ui.colored_label(egui::Color32::RED, err);
+                        ui.colored_label(Color32::RED, err);
                         if ui.button("清除错误").clicked() {
                             app.ai_error = None;
                         }
