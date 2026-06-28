@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use tokio::runtime::Runtime;
 
+use crate::ai::types::CharacterCard;
+
 // ---------------------------------------------------------------------------
 // Word-vector embedding via character n-gram hashing trick (FNV-1a)
 // ---------------------------------------------------------------------------
@@ -135,6 +137,18 @@ impl AppDb {
                 parameters   BLOB NOT NULL,
                 created_at   TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(file_path, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS character_cards (
+                file_path       TEXT PRIMARY KEY REFERENCES model_history(file_path) ON DELETE CASCADE,
+                name            TEXT NOT NULL DEFAULT '',
+                description     TEXT NOT NULL DEFAULT '',
+                personality     TEXT NOT NULL DEFAULT '',
+                scenario        TEXT NOT NULL DEFAULT '',
+                example_dialogs TEXT NOT NULL DEFAULT '',
+                system_prompt   TEXT NOT NULL DEFAULT '',
+                tts_voice       TEXT NOT NULL DEFAULT '',
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             );",
         ))?;
 
@@ -430,6 +444,61 @@ impl AppDb {
         });
         scored.truncate(limit);
         Ok(scored)
+    }
+
+    // ------------------------------------------------------------------
+    //  Character cards (AI companion profile per model)
+    // ------------------------------------------------------------------
+
+    /// Retrieve the character card for a model, if one exists.
+    pub fn get_character_card(&self, file_path: &str) -> Result<Option<CharacterCard>> {
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT file_path, name, description, personality, scenario, \
+             example_dialogs, system_prompt, tts_voice \
+             FROM character_cards WHERE file_path = ?1",
+            libsql::params![file_path],
+        ))?;
+        match rt().block_on(rows.next())? {
+            Some(row) => Ok(Some(CharacterCard {
+                file_path: row.get::<String>(0)?,
+                name: row.get::<String>(1)?,
+                description: row.get::<String>(2)?,
+                personality: row.get::<String>(3)?,
+                scenario: row.get::<String>(4)?,
+                example_dialogs: row.get::<String>(5)?,
+                system_prompt: row.get::<String>(6)?,
+                tts_voice: row.get::<String>(7)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Insert or update a character card for a model.
+    pub fn save_character_card(&self, card: &CharacterCard) -> Result<()> {
+        rt().block_on(self.conn.execute(
+            "INSERT INTO character_cards \
+             (file_path, name, description, personality, scenario, \
+              example_dialogs, system_prompt, tts_voice) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+             ON CONFLICT(file_path) DO UPDATE SET \
+             name=?2, description=?3, personality=?4, scenario=?5, \
+             example_dialogs=?6, system_prompt=?7, tts_voice=?8, \
+             updated_at=datetime('now')",
+            libsql::params![
+                card.file_path, card.name, card.description, card.personality,
+                card.scenario, card.example_dialogs, card.system_prompt, card.tts_voice,
+            ],
+        ))?;
+        Ok(())
+    }
+
+    /// Delete a character card for a model.
+    pub fn delete_character_card(&self, file_path: &str) -> Result<()> {
+        rt().block_on(self.conn.execute(
+            "DELETE FROM character_cards WHERE file_path = ?1",
+            libsql::params![file_path],
+        ))?;
+        Ok(())
     }
 
     /// Get configured model scan directories (JSON array of paths).
