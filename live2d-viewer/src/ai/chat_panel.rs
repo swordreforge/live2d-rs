@@ -238,12 +238,17 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
     let mut clicked_send = false;
 
-    Window::new("AI 聊天")
+    Window::new("AI 聊天 💬")
         .default_width(320.0)
         .default_pos([4.0, 100.0])
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
-            ui.label(format!("模型: {}", app.ai_config.model));
+            ui.horizontal(|ui| {
+                ui.label(format!("模型: {}", app.ai_config.model));
+                if ui.button("📝").on_hover_text("编辑角色卡").clicked() {
+                    app.character_card_editor_open = true;
+                }
+            });
             ui.separator();
 
             let height = ui.available_height() - 60.0;
