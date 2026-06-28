@@ -583,6 +583,7 @@ impl AppDb {
     }
 
     /// Return the most recent memory entries for a model.
+    #[allow(dead_code)]
     pub fn get_recent_memories(&self, file_path: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
         let mut rows = rt().block_on(self.conn.query(
             "SELECT id, file_path, content, entry_type, created_at \
@@ -606,6 +607,7 @@ impl AppDb {
     }
 
     /// Delete all conversation memory for a model.
+    #[allow(dead_code)]
     pub fn delete_memories(&self, file_path: &str) -> Result<()> {
         rt().block_on(self.conn.execute(
             "DELETE FROM conversation_memory WHERE file_path = ?1",

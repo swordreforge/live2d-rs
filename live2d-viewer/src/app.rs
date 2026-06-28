@@ -75,7 +75,7 @@ fn is_generic_name(name: &str) -> bool {
         if !before.is_empty()
             && !after.is_empty()
             && before.len() <= 5
-            && before.chars().next().map_or(false, |c| c.is_alphabetic())
+            && before.chars().next().is_some_and(|c| c.is_alphabetic())
             && before.chars().skip(1).all(|c| c.is_alphanumeric())
             && after.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
@@ -562,10 +562,8 @@ impl AppState {
                             subdirs.push(path);
                         } else if fname.ends_with(".model3.json") {
                             model3_files.push(fname);
-                        } else if fname.ends_with(".json") {
-                            if is_v2_model_json(&fname) {
-                                has_v2 = true;
-                            }
+                        } else if fname.ends_with(".json") && is_v2_model_json(&fname) {
+                            has_v2 = true;
                         }
                     }
 
@@ -607,7 +605,7 @@ impl AppState {
                             || self
                                 .db
                                 .as_ref()
-                                .map_or(false, |d| d.get_model(&dir_str).ok().flatten().is_some());
+                                .is_some_and(|d| d.get_model(&dir_str).ok().flatten().is_some());
                         if already {
                             skipped += 1;
                         } else if let Err(e) = validate_model_dir(&dir, ModelFormat::V2) {

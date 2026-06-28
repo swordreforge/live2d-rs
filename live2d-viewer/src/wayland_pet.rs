@@ -478,12 +478,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for PetState {
                 state: key_state,
                 ..
             } => {
-                let pressed = match key_state {
-                    smithay_client_toolkit::reexports::client::WEnum::Value(KeyState::Pressed) => {
-                        true
-                    }
-                    _ => false,
-                };
+                let pressed = matches!(
+                    key_state,
+                    smithay_client_toolkit::reexports::client::WEnum::Value(KeyState::Pressed)
+                );
                 if !pressed {
                     return;
                 }
@@ -830,7 +828,7 @@ fn setup_pet_surface(
             }
         }
         crate::app::ModelFormat::V2 => {
-            let model_json_path = crate::app::find_v2_model_json(&model_dir)
+            let model_json_path = crate::app::find_v2_model_json(model_dir)
                 .ok_or_else(|| anyhow::anyhow!("no V2 model JSON found in {:?}", model_dir))?;
 
             let mut v2 = live2d_v2_core::Model::new()
@@ -1249,12 +1247,17 @@ fn run_event_loop(
                         let first_idx = (state.ptr.scroll_offset / entry_h) as usize;
                         let remainder = state.ptr.scroll_offset % entry_h;
                         let end_idx = (first_idx + visible + 1).min(total);
-                        for idx in first_idx..end_idx {
-                            let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
+                        for (i, item) in filtered
+                            .iter()
+                            .enumerate()
+                            .skip(first_idx)
+                            .take(end_idx - first_idx)
+                        {
+                            let ey = list_y + (i - first_idx) as f32 * entry_h - remainder;
                             let baseline = ey + tr.line_height() * 0.75;
                             tr.draw_text(
                                 &gl,
-                                &filtered[idx].1,
+                                &item.1,
                                 px + 8.0,
                                 baseline,
                                 [1.0, 1.0, 1.0, 1.0],
@@ -1306,16 +1309,21 @@ fn run_event_loop(
                 let first_idx = (state.ptr.scroll_offset / entry_h) as usize;
                 let remainder = state.ptr.scroll_offset % entry_h;
                 let end_idx = (first_idx + visible + 1).min(total);
-                for idx in first_idx..end_idx {
-                    let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
-                    if ey > py + 24.0 && ey + entry_h < py + ph - 4.0 {
-                        if (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
-                            && cy >= ey as f64
-                            && cy <= (ey + entry_h) as f64
-                        {
-                            let (path, _) = &filtered_clone[idx];
-                            respawn_process(std::path::Path::new(path), click_through, true);
-                        }
+                for (i, item) in filtered_clone
+                    .iter()
+                    .enumerate()
+                    .skip(first_idx)
+                    .take(end_idx - first_idx)
+                {
+                    let ey = list_y + (i - first_idx) as f32 * entry_h - remainder;
+                    if ey > py + 24.0
+                        && ey + entry_h < py + ph - 4.0
+                        && (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
+                        && cy >= ey as f64
+                        && cy <= (ey + entry_h) as f64
+                    {
+                        let (path, _) = item;
+                        respawn_process(std::path::Path::new(path), click_through, true);
                     }
                 }
                 // Close button area (text rendered at baseline py+ph-20, top ≈ py+ph-48)

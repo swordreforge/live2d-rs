@@ -302,9 +302,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
         });
 
-    if clicked_send && !pending {
-        app.send_ai_message();
-    } else if enter_triggered && !input_before.trim().is_empty() && !pending {
+    if !pending && (clicked_send || (enter_triggered && !input_before.trim().is_empty())) {
         app.send_ai_message();
     }
 }
