@@ -29,6 +29,7 @@ live2d-py/cmake-build-*/
 *.exp
 *.pdb
 .omo/run-continuation/
+.worktrees/
 live2d-viewer-dddddddd
 warn.log
 *.swp
