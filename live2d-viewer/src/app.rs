@@ -378,6 +378,11 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: Option<db::AppDb>) -> Self {
         let ai_config = crate::ai::config::load_config(db.as_ref());
+        let safety_config = crate::ai::tools::safety::SafetyConfig {
+            allowed_commands: ai_config.allowed_commands.clone(),
+            allowed_read_paths: ai_config.allowed_read_paths.clone(),
+            max_tool_rounds: ai_config.max_tool_rounds,
+        };
         Self {
             model_list: Vec::new(),
             current_idx: None,
@@ -476,11 +481,7 @@ impl AppState {
             ai_test_result: None,
             ai_result_rx: None,
             tool_registry: crate::ai::tools::registry::ToolRegistry::builtin(),
-            safety_config: crate::ai::tools::safety::SafetyConfig {
-                allowed_commands: vec![],
-                allowed_read_paths: vec![],
-                max_tool_rounds: 10,
-            },
+            safety_config,
             ai_emotion_until: None,
             tts_voices_cache: Vec::new(),
             tts_result_rx: None,

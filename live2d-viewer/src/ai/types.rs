@@ -107,12 +107,16 @@ pub struct AiConfig {
     pub memory_enabled: bool,
     // ── Tool Calling ──
     /// Whether to enable tool calling (read file, exec cmd, etc.).
+    #[serde(default)]
     pub tool_calling_enabled: bool,
     /// Max tool call rounds per conversation turn.
+    #[serde(default)]
     pub max_tool_rounds: u32,
     /// Shell commands allowed without user approval (empty = all need approval).
+    #[serde(default)]
     pub allowed_commands: Vec<String>,
     /// Readable path prefixes (empty = no path restrictions).
+    #[serde(default)]
     pub allowed_read_paths: Vec<String>,
 }
 
