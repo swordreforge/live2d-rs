@@ -441,13 +441,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for PetState {
                 }
             }
             wl_pointer::Event::Frame => {}
-            wl_pointer::Event::Axis {
-                axis,
-                value,
-                ..
-            } => {
+            wl_pointer::Event::Axis { axis, value, .. } => {
                 // vertical scroll only
-                if matches!(axis, smithay_client_toolkit::reexports::client::WEnum::Value(wl_pointer::Axis::VerticalScroll)) {
+                if matches!(
+                    axis,
+                    smithay_client_toolkit::reexports::client::WEnum::Value(
+                        wl_pointer::Axis::VerticalScroll
+                    )
+                ) {
                     state.ptr.scroll_offset += value as f32;
                     // clamp to >= 0 (can't scroll above top)
                     if state.ptr.scroll_offset < 0.0 {
@@ -478,7 +479,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for PetState {
                 ..
             } => {
                 let pressed = match key_state {
-                    smithay_client_toolkit::reexports::client::WEnum::Value(KeyState::Pressed) => true,
+                    smithay_client_toolkit::reexports::client::WEnum::Value(KeyState::Pressed) => {
+                        true
+                    }
                     _ => false,
                 };
                 if !pressed {
@@ -522,8 +525,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for PetState {
                     _ => {}
                 }
             }
-            Modifiers { .. } => {
-            }
+            Modifiers { .. } => {}
             _ => {}
         }
     }
@@ -532,19 +534,40 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for PetState {
 fn evdev_key_to_char(key: u32, shift: bool) -> Option<char> {
     // evdev keycodes for US-QWERTY letters (NOT sequentially ordered)
     let letter = match key {
-        16 => Some(b'q'), 17 => Some(b'w'), 18 => Some(b'e'),
-        19 => Some(b'r'), 20 => Some(b't'), 21 => Some(b'y'),
-        22 => Some(b'u'), 23 => Some(b'i'), 24 => Some(b'o'),
-        25 => Some(b'p'), 30 => Some(b'a'), 31 => Some(b's'),
-        32 => Some(b'd'), 33 => Some(b'f'), 34 => Some(b'g'),
-        35 => Some(b'h'), 36 => Some(b'j'), 37 => Some(b'k'),
-        38 => Some(b'l'), 44 => Some(b'z'), 45 => Some(b'x'),
-        46 => Some(b'c'), 47 => Some(b'v'), 48 => Some(b'b'),
-        49 => Some(b'n'), 50 => Some(b'm'),
+        16 => Some(b'q'),
+        17 => Some(b'w'),
+        18 => Some(b'e'),
+        19 => Some(b'r'),
+        20 => Some(b't'),
+        21 => Some(b'y'),
+        22 => Some(b'u'),
+        23 => Some(b'i'),
+        24 => Some(b'o'),
+        25 => Some(b'p'),
+        30 => Some(b'a'),
+        31 => Some(b's'),
+        32 => Some(b'd'),
+        33 => Some(b'f'),
+        34 => Some(b'g'),
+        35 => Some(b'h'),
+        36 => Some(b'j'),
+        37 => Some(b'k'),
+        38 => Some(b'l'),
+        44 => Some(b'z'),
+        45 => Some(b'x'),
+        46 => Some(b'c'),
+        47 => Some(b'v'),
+        48 => Some(b'b'),
+        49 => Some(b'n'),
+        50 => Some(b'm'),
         _ => None,
     };
     if let Some(base) = letter {
-        return Some(if shift { (base - 32) as char } else { base as char });
+        return Some(if shift {
+            (base - 32) as char
+        } else {
+            base as char
+        });
     }
 
     // Digits 2-11
@@ -559,16 +582,16 @@ fn evdev_key_to_char(key: u32, shift: bool) -> Option<char> {
     }
 
     match key {
-        12 => Some(if shift { '_' } else { '-' }),   // KEY_MINUS
-        13 => Some(if shift { '+' } else { '=' }),   // KEY_EQUAL
-        26 => Some(if shift { '{' } else { '[' }),   // KEY_LEFTBRACE
-        27 => Some(if shift { '}' } else { ']' }),   // KEY_RIGHTBRACE
-        39 => Some(if shift { ':' } else { ';' }),   // KEY_SEMICOLON
-        40 => Some(if shift { '"' } else { '\'' }),  // KEY_APOSTROPHE
-        51 => Some(if shift { '<' } else { ',' }),   // KEY_COMMA
-        52 => Some(if shift { '>' } else { '.' }),   // KEY_DOT
-        53 => Some(if shift { '?' } else { '/' }),   // KEY_SLASH
-        43 => Some(if shift { '|' } else { '\\' }),  // KEY_BACKSLASH
+        12 => Some(if shift { '_' } else { '-' }),  // KEY_MINUS
+        13 => Some(if shift { '+' } else { '=' }),  // KEY_EQUAL
+        26 => Some(if shift { '{' } else { '[' }),  // KEY_LEFTBRACE
+        27 => Some(if shift { '}' } else { ']' }),  // KEY_RIGHTBRACE
+        39 => Some(if shift { ':' } else { ';' }),  // KEY_SEMICOLON
+        40 => Some(if shift { '"' } else { '\'' }), // KEY_APOSTROPHE
+        51 => Some(if shift { '<' } else { ',' }),  // KEY_COMMA
+        52 => Some(if shift { '>' } else { '.' }),  // KEY_DOT
+        53 => Some(if shift { '?' } else { '/' }),  // KEY_SLASH
+        43 => Some(if shift { '|' } else { '\\' }), // KEY_BACKSLASH
         _ => None,
     }
 }
@@ -808,9 +831,7 @@ fn setup_pet_surface(
         }
         crate::app::ModelFormat::V2 => {
             let model_json_path = crate::app::find_v2_model_json(&model_dir)
-                .ok_or_else(|| anyhow::anyhow!(
-                    "no V2 model JSON found in {:?}", model_dir
-                ))?;
+                .ok_or_else(|| anyhow::anyhow!("no V2 model JSON found in {:?}", model_dir))?;
 
             let mut v2 = live2d_v2_core::Model::new()
                 .map_err(|e| anyhow::anyhow!("create V2 model: {e}"))?;
@@ -1030,8 +1051,9 @@ fn run_event_loop(
 
         // Check if toolbar consumes a pending click before model interaction.
         let pending = state.ptr.pending_click.take();
-        let toolbar_action =
-            pending.and_then(|(cx, cy)| toolbar.handle_click(cx * sf as f64, cy * sf as f64, phys_size.0, phys_size.1));
+        let toolbar_action = pending.and_then(|(cx, cy)| {
+            toolbar.handle_click(cx * sf as f64, cy * sf as f64, phys_size.0, phys_size.1)
+        });
         if let Some(action) = toolbar_action {
             if matches!(action, crate::toolbar::ToolbarAction::Search) {
                 state.search_open = !state.search_open;
@@ -1049,12 +1071,7 @@ fn run_event_loop(
                 }
                 state.surface.commit();
             } else {
-                handle_toolbar_action(
-                    action,
-                    &mut pet_model,
-                    model_dir,
-                    click_through,
-                );
+                handle_toolbar_action(action, &mut pet_model, model_dir, click_through);
             }
         } else if let Some(click) = pending {
             state.ptr.pending_click = Some(click); // restore for model handling
@@ -1083,14 +1100,19 @@ fn run_event_loop(
                 // ── Background panel ──
                 let mut overlay_verts: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
-                    &mut overlay_verts, px, py, pw, ph,
-                    0.08, 0.08, 0.12, 0.92,
+                    &mut overlay_verts,
+                    px,
+                    py,
+                    pw,
+                    ph,
+                    0.08,
+                    0.08,
+                    0.12,
+                    0.92,
                 );
                 let mut ndc_buf: Vec<f32> = Vec::with_capacity(overlay_verts.len());
                 for chunk in overlay_verts.chunks_exact(6) {
-                    let [nx, ny] = crate::toolbar::ndc_pos(
-                        chunk[0], chunk[1], vpw, vph,
-                    );
+                    let [nx, ny] = crate::toolbar::ndc_pos(chunk[0], chunk[1], vpw, vph);
                     ndc_buf.push(nx);
                     ndc_buf.push(ny);
                     ndc_buf.extend_from_slice(&chunk[2..6]);
@@ -1100,32 +1122,43 @@ fn run_event_loop(
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(toolbar.vbo_id()));
                 gl.buffer_data_u8_slice(
                     glow::ARRAY_BUFFER,
-                    std::slice::from_raw_parts(
-                        ndc_buf.as_ptr() as *const u8,
-                        ndc_buf.len() * 4,
-                    ),
+                    std::slice::from_raw_parts(ndc_buf.as_ptr() as *const u8, ndc_buf.len() * 4),
                     glow::STREAM_DRAW,
                 );
                 gl.enable(glow::BLEND);
                 gl.blend_func_separate(
-                    glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
-                    glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                    glow::SRC_ALPHA,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE,
+                    glow::ONE_MINUS_SRC_ALPHA,
                 );
                 gl.draw_arrays(glow::TRIANGLES, 0, ndc_buf.len() as i32 / 6);
                 gl.bind_vertex_array(None);
                 gl.use_program(None);
 
-                 // Search query label (baseline-aligned)
+                // Search query label (baseline-aligned)
                 if let Some(ref mut tr) = text_renderer {
                     tr.draw_text(
-                        &gl, "Search:", px + 8.0, py + 30.0,
-                        [0.5, 0.5, 0.6, 1.0], phys_size.0, phys_size.1, 1.0,
+                        &gl,
+                        "Search:",
+                        px + 8.0,
+                        py + 30.0,
+                        [0.5, 0.5, 0.6, 1.0],
+                        phys_size.0,
+                        phys_size.1,
+                        1.0,
                     );
                     let qx = px + 8.0 + 120.0;
                     let display_q = format!("{}{}", "_", state.search_query);
                     tr.draw_text(
-                        &gl, &display_q, qx, py + 30.0,
-                        [1.0, 1.0, 0.8, 1.0], phys_size.0, phys_size.1, 1.0,
+                        &gl,
+                        &display_q,
+                        qx,
+                        py + 30.0,
+                        [1.0, 1.0, 0.8, 1.0],
+                        phys_size.0,
+                        phys_size.1,
+                        1.0,
                     );
                 }
 
@@ -1133,8 +1166,15 @@ fn run_event_loop(
                 let sep_y = py + 40.0;
                 let mut sep_v: Vec<f32> = Vec::new();
                 crate::toolbar::ToolbarOverlay::push_rect(
-                    &mut sep_v, px + 6.0, sep_y, pw - 12.0, 1.0,
-                    0.3, 0.3, 0.4, 0.5,
+                    &mut sep_v,
+                    px + 6.0,
+                    sep_y,
+                    pw - 12.0,
+                    1.0,
+                    0.3,
+                    0.3,
+                    0.4,
+                    0.5,
                 );
                 let mut ndc_s: Vec<f32> = Vec::with_capacity(sep_v.len());
                 for chunk in sep_v.chunks_exact(6) {
@@ -1153,8 +1193,10 @@ fn run_event_loop(
                 );
                 gl.enable(glow::BLEND);
                 gl.blend_func_separate(
-                    glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
-                    glow::ONE, glow::ONE_MINUS_SRC_ALPHA,
+                    glow::SRC_ALPHA,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE,
+                    glow::ONE_MINUS_SRC_ALPHA,
                 );
                 gl.draw_arrays(glow::TRIANGLES, 0, ndc_s.len() as i32 / 6);
                 gl.bind_vertex_array(None);
@@ -1175,13 +1217,25 @@ fn run_event_loop(
                 if let Some(ref mut tr) = text_renderer {
                     if search_entries.is_empty() {
                         tr.draw_text(
-                            &gl, "(loading...)", px + 8.0, list_y,
-                            [0.5, 0.5, 0.5, 1.0], phys_size.0, phys_size.1, 1.0,
+                            &gl,
+                            "(loading...)",
+                            px + 8.0,
+                            list_y,
+                            [0.5, 0.5, 0.5, 1.0],
+                            phys_size.0,
+                            phys_size.1,
+                            1.0,
                         );
                     } else if filtered.is_empty() && !q_lower.is_empty() {
                         tr.draw_text(
-                            &gl, "(no matches)", px + 8.0, list_y,
-                            [0.6, 0.4, 0.4, 1.0], phys_size.0, phys_size.1, 1.0,
+                            &gl,
+                            "(no matches)",
+                            px + 8.0,
+                            list_y,
+                            [0.6, 0.4, 0.4, 1.0],
+                            phys_size.0,
+                            phys_size.1,
+                            1.0,
                         );
                     } else {
                         let total = filtered.len();
@@ -1199,17 +1253,28 @@ fn run_event_loop(
                             let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
                             let baseline = ey + tr.line_height() * 0.75;
                             tr.draw_text(
-                                &gl, &filtered[idx].1,
-                                px + 8.0, baseline,
-                                [1.0, 1.0, 1.0, 1.0], phys_size.0, phys_size.1, 1.0,
+                                &gl,
+                                &filtered[idx].1,
+                                px + 8.0,
+                                baseline,
+                                [1.0, 1.0, 1.0, 1.0],
+                                phys_size.0,
+                                phys_size.1,
+                                1.0,
                             );
                         }
                     }
 
                     // Close button hint
                     tr.draw_text(
-                        &gl, "[Close]", px + 8.0, py + ph - 20.0,
-                        [0.6, 0.3, 0.3, 1.0], phys_size.0, phys_size.1, 1.0,
+                        &gl,
+                        "[Close]",
+                        px + 8.0,
+                        py + ph - 20.0,
+                        [0.6, 0.3, 0.3, 1.0],
+                        phys_size.0,
+                        phys_size.1,
+                        1.0,
                     );
                 }
 
@@ -1230,7 +1295,9 @@ fn run_event_loop(
                     .iter()
                     .filter(|(_, name)| {
                         state.search_query.is_empty()
-                            || name.to_lowercase().contains(&state.search_query.to_lowercase())
+                            || name
+                                .to_lowercase()
+                                .contains(&state.search_query.to_lowercase())
                     })
                     .cloned()
                     .collect();
@@ -1243,21 +1310,20 @@ fn run_event_loop(
                     let ey = list_y + (idx - first_idx) as f32 * entry_h - remainder;
                     if ey > py + 24.0 && ey + entry_h < py + ph - 4.0 {
                         if (cx - px as f64 - 8.0).abs() < pw as f64 - 16.0
-                            && cy >= ey as f64 && cy <= (ey + entry_h) as f64
+                            && cy >= ey as f64
+                            && cy <= (ey + entry_h) as f64
                         {
                             let (path, _) = &filtered_clone[idx];
-                            respawn_process(
-                                std::path::Path::new(path),
-                                click_through,
-                                true,
-                            );
+                            respawn_process(std::path::Path::new(path), click_through, true);
                         }
                     }
                 }
                 // Close button area (text rendered at baseline py+ph-20, top ≈ py+ph-48)
                 let close_y = py + ph - 48.0;
-                if cx >= (px + 6.0) as f64 && cx <= (px + pw - 6.0) as f64
-                    && cy >= close_y as f64 && cy <= (close_y + 34.0) as f64
+                if cx >= (px + 6.0) as f64
+                    && cx <= (px + pw - 6.0) as f64
+                    && cy >= close_y as f64
+                    && cy <= (close_y + 34.0) as f64
                 {
                     state.search_open = false;
                     state.search_query.clear();
@@ -1329,7 +1395,7 @@ fn run_event_loop(
                 model.update();
 
                 // Forward tap to main thread (it has model, motion, V2/V2 dispatch)
-            if let Some((cx, cy)) = state.ptr.pending_click.take() {
+                if let Some((cx, cy)) = state.ptr.pending_click.take() {
                     let _ = event_tx.send(PetEvent::Tap {
                         x: cx,
                         y: cy,
@@ -1573,7 +1639,7 @@ fn handle_toolbar_action(
         },
         crate::toolbar::ToolbarAction::Search => {
             // handled before handle_toolbar_action is called
-        },
+        }
     }
 }
 
@@ -1600,9 +1666,14 @@ pub fn spawn_pet_surface(
                 zoom_scale,
             }) => {
                 log::info!("[pet/wayland] enter: {:?}", model_dir);
-                if let Err(e) =
-                    setup_pet_surface(&model_dir, model_format, click_through, zoom_scale, &cmd_rx, &event_tx)
-                {
+                if let Err(e) = setup_pet_surface(
+                    &model_dir,
+                    model_format,
+                    click_through,
+                    zoom_scale,
+                    &cmd_rx,
+                    &event_tx,
+                ) {
                     log::error!("[pet/wayland] setup error: {:?}", e);
                     let _ = event_tx.send(PetEvent::Error(format!("{:#}", e)));
                 }

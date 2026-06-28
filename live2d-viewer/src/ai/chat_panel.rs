@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
-use crate::app::AppState;
 use crate::ai::types::ChatRole;
+use crate::app::AppState;
 use egui::{Color32, Grid, Window};
 
 fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
@@ -20,10 +20,7 @@ fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
 /// Handles paragraphs, bold, inline code, code blocks, headings, lists,
 /// rules, tables — the common subset AI chat responses typically use.
 fn render_markdown(ui: &mut egui::Ui, text: &str) {
-    let parser = Parser::new_ext(
-        text,
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH,
-    );
+    let parser = Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH);
     let mut bold: u32 = 0;
     let mut plain = String::new();
 
@@ -150,9 +147,9 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                                     for cell in cells {
                                         if is_header {
                                             ui.label(
-                                                egui::RichText::new(cell).strong().color(
-                                                    Color32::from_rgb(180, 210, 255),
-                                                ),
+                                                egui::RichText::new(cell)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(180, 210, 255)),
                                             );
                                         } else {
                                             ui.label(cell.as_str());
@@ -234,8 +231,8 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
 
-    let enter_triggered = app.ai_chat_open
-        && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+    let enter_triggered =
+        app.ai_chat_open && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
     let input_before = app.ai_input_buffer.clone();
     let pending = app.ai_pending;
 
@@ -291,7 +288,10 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                         .hint_text("输入消息...")
                         .desired_width(f32::INFINITY),
                 );
-                if ui.add_enabled(!pending, egui::Button::new("发送")).clicked() {
+                if ui
+                    .add_enabled(!pending, egui::Button::new("发送"))
+                    .clicked()
+                {
                     clicked_send = true;
                 }
             });

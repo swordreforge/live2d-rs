@@ -101,12 +101,10 @@ impl AppDb {
 
         rt().block_on(conn.execute_batch("PRAGMA journal_mode=WAL"))?;
         // Migration: add layout columns to existing model_history (no-op if already present)
-        let _ = rt().block_on(conn.execute(
-            "ALTER TABLE model_history ADD COLUMN layout_pan_x REAL", (),
-        ));
-        let _ = rt().block_on(conn.execute(
-            "ALTER TABLE model_history ADD COLUMN layout_pan_y REAL", (),
-        ));
+        let _ = rt()
+            .block_on(conn.execute("ALTER TABLE model_history ADD COLUMN layout_pan_x REAL", ()));
+        let _ = rt()
+            .block_on(conn.execute("ALTER TABLE model_history ADD COLUMN layout_pan_y REAL", ()));
         rt().block_on(conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS global_settings (
                 key    TEXT PRIMARY KEY,
@@ -362,10 +360,7 @@ impl AppDb {
 
     /// Store a pre-computed embedding vector for a model.
     pub fn set_model_embedding(&self, file_path: &str, embedding: &[f32]) -> Result<()> {
-        let bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
         rt().block_on(self.conn.execute(
             "INSERT INTO model_embeddings (file_path, embedding) VALUES (?1, ?2) \
              ON CONFLICT(file_path) DO UPDATE SET \
@@ -428,7 +423,11 @@ impl AppDb {
         }
 
         // Sort descending by similarity, take top-k
-        scored.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.truncate(limit);
         Ok(scored)
     }

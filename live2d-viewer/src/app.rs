@@ -71,7 +71,8 @@ fn is_generic_name(name: &str) -> bool {
     if let Some(pos) = name.find('_') {
         let before = &name[..pos];
         let after = &name[pos + 1..];
-        if !before.is_empty() && !after.is_empty()
+        if !before.is_empty()
+            && !after.is_empty()
             && before.len() <= 5
             && before.chars().next().map_or(false, |c| c.is_alphabetic())
             && before.chars().skip(1).all(|c| c.is_alphanumeric())
@@ -109,8 +110,8 @@ fn validate_model_dir(dir: &Path, format: ModelFormat) -> Result<(), String> {
             Ok(())
         }
         ModelFormat::V2 => {
-            let model_json = find_v2_model_json(dir)
-                .ok_or_else(|| "no V2 model JSON".to_string())?;
+            let model_json =
+                find_v2_model_json(dir).ok_or_else(|| "no V2 model JSON".to_string())?;
             let json_text = std::fs::read_to_string(&model_json)
                 .map_err(|e| format!("read model.json: {e}"))?;
             serde_json::from_str::<serde_json::Value>(&json_text)
@@ -356,10 +357,20 @@ pub struct AppState {
     pub ai_settings_open: bool,
     pub ai_test_result: Option<(String, bool)>,
     pub ai_result_rx: Option<std::sync::mpsc::Receiver<crate::ai::types::AiStreamEvent>>,
+    /// Timestamp (user_time_seconds) until which the current AI emotion persists.
+    pub ai_emotion_until: Option<f64>,
+    // ── TTS ──
+    /// Cached voice list from the TTS API.
+    pub tts_voices_cache: Vec<crate::ai::tts::TtsVoice>,
+    /// Receiver for completed TTS audio file paths.
+    pub tts_result_rx: Option<std::sync::mpsc::Receiver<std::path::PathBuf>>,
+    /// Set to true to trigger a TTS voice list refresh on the next frame.
+    pub tts_refresh_requested: bool,
 }
 
 impl AppState {
     pub fn new(db: Option<db::AppDb>) -> Self {
+        let ai_config = crate::ai::config::load_config(db.as_ref());
         Self {
             model_list: Vec::new(),
             current_idx: None,
@@ -451,12 +462,16 @@ impl AppState {
             ai_messages: Vec::new(),
             ai_pending: false,
             ai_error: None,
-            ai_config: crate::ai::config::load_config(),
+            ai_config,
             ai_input_buffer: String::new(),
             ai_chat_open: false,
             ai_settings_open: false,
             ai_test_result: None,
             ai_result_rx: None,
+            ai_emotion_until: None,
+            tts_voices_cache: Vec::new(),
+            tts_result_rx: None,
+            tts_refresh_requested: false,
         }
     }
 
@@ -482,15 +497,20 @@ impl AppState {
             (Some(ModelFormat::V3), Some(f)) => f.trim_end_matches(".model3.json").to_string(),
             (Some(ModelFormat::V3), None) => {
                 if let Ok(entries) = std::fs::read_dir(&path) {
-                    entries.flatten()
+                    entries
+                        .flatten()
                         .find_map(|e| {
                             let n = e.file_name().to_string_lossy().to_string();
                             if n.ends_with(".model3.json") {
                                 Some(n.trim_end_matches(".model3.json").to_string())
-                            } else { None }
+                            } else {
+                                None
+                            }
                         })
                         .unwrap_or_else(|| fallback_name(&path))
-                } else { fallback_name(&path) }
+                } else {
+                    fallback_name(&path)
+                }
             }
             _ => fallback_name(&path),
         };
@@ -577,9 +597,10 @@ impl AppState {
                         // V2: one entry per directory (V2 has no sub-model concept)
                         let dir_str = dir.to_string_lossy().to_string();
                         let already = self.model_list.iter().any(|e| e.dir == dir)
-                            || self.db.as_ref().map_or(false, |d| {
-                                d.get_model(&dir_str).ok().flatten().is_some()
-                            });
+                            || self
+                                .db
+                                .as_ref()
+                                .map_or(false, |d| d.get_model(&dir_str).ok().flatten().is_some());
                         if already {
                             skipped += 1;
                         } else if let Err(e) = validate_model_dir(&dir, ModelFormat::V2) {
@@ -601,11 +622,7 @@ impl AppState {
     /// Load scan directories from DB into scan_dirs field.
     pub fn load_scan_dirs(&mut self) {
         if let Some(ref db) = self.db {
-            self.scan_dirs = db
-                .get_scan_dirs()
-                .into_iter()
-                .map(PathBuf::from)
-                .collect();
+            self.scan_dirs = db.get_scan_dirs().into_iter().map(PathBuf::from).collect();
         }
     }
 
@@ -877,9 +894,10 @@ impl AppState {
                 AiStreamEvent::Error(e) => {
                     self.ai_error = Some(e);
                     done = true;
-                    // Remove the empty placeholder
                     if let Some(last) = self.ai_messages.last() {
-                        if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
+                        if last.role == crate::ai::types::ChatRole::Assistant
+                            && last.content.is_empty()
+                        {
                             self.ai_messages.pop();
                         }
                     }
@@ -888,15 +906,246 @@ impl AppState {
         }
         if done {
             self.ai_pending = false;
-            // Remove empty trailing message if no tokens arrived
-            if let Some(last) = self.ai_messages.last() {
-                if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
-                    self.ai_messages.pop();
+            let should_pop = self.ai_messages.last().is_some_and(|m| {
+                m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
+            });
+            let emotion = self
+                .ai_messages
+                .last_mut()
+                .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
+                .and_then(|m| extract_emotion_tag(&mut m.content));
+            if should_pop {
+                self.ai_messages.pop();
+            }
+            if let Some(emotion) = emotion {
+                self.apply_emotion(&emotion);
+            }
+            // Auto-speak the response via TTS
+            if self.ai_config.tts_enabled
+                && !self.ai_config.tts_key.is_empty()
+                && !self.ai_config.tts_voice.is_empty()
+            {
+                let tts_config = self.ai_config.clone();
+                let text = self
+                    .ai_messages
+                    .last()
+                    .map(|m| m.content.clone())
+                    .unwrap_or_default();
+                let text = crate::ai::tts::sanitize_text_for_tts(&text);
+                if !text.is_empty() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.tts_result_rx = Some(rx);
+                    std::thread::spawn(move || {
+                        let result =
+                            crate::ai::tts::synthesize(&tts_config, &text, &tts_config.tts_voice);
+                        match result {
+                            Ok(mp3_bytes) => {
+                                let tmp_dir = std::env::temp_dir();
+                                let path = tmp_dir.join(format!(
+                                    "live2d-tts-{}.mp3",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_nanos()
+                                ));
+                                if std::fs::write(&path, &mp3_bytes).is_ok() {
+                                    let _ = tx.send(path);
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("[tts] synthesis failed: {e}");
+                            }
+                        }
+                    });
                 }
             }
         } else {
-            // Put the receiver back for next frame's poll
             self.ai_result_rx = Some(rx);
+        }
+    }
+
+    /// Map detected emotion to Live2D expression/parameters.
+    fn apply_emotion(&mut self, emotion: &str) {
+        use crate::motion::json::{ExpressionBlendMode, ParsedExp3Param, ParsedExpression};
+        use crate::motion::ExpressionMotion;
+
+        // Priority 1: use a loaded .exp3.json expression if it exists
+        if self.loaded_expressions.contains_key(emotion) {
+            if let Some(expr) = self.loaded_expressions.get(emotion).cloned() {
+                self.expression_manager
+                    .start_expression(expr, self.motion_queue.user_time_seconds);
+                self.ai_emotion_until = Some(self.motion_queue.user_time_seconds as f64 + 5.0);
+                return;
+            }
+        }
+
+        // Priority 2: synthetic expression from built-in parameter map
+        const EMOTION_MAP: &[(&str, &[(&str, f32)])] = &[
+            (
+                "happy",
+                &[
+                    ("ParamMouthForm", 0.5),
+                    ("ParamMouthOpenY", 0.3),
+                    ("ParamBrowLY", 0.3),
+                    ("ParamBrowRY", 0.3),
+                ],
+            ),
+            (
+                "sad",
+                &[
+                    ("ParamMouthForm", -0.3),
+                    ("ParamBrowLY", -0.3),
+                    ("ParamBrowRY", -0.3),
+                    ("ParamEyeLOpen", 0.5),
+                    ("ParamEyeROpen", 0.5),
+                ],
+            ),
+            (
+                "angry",
+                &[
+                    ("ParamMouthForm", -0.5),
+                    ("ParamBrowLY", -0.5),
+                    ("ParamBrowRY", -0.5),
+                    ("ParamBrowLX", -0.3),
+                    ("ParamBrowRX", 0.3),
+                ],
+            ),
+            (
+                "surprised",
+                &[
+                    ("ParamMouthOpenY", 0.8),
+                    ("ParamEyeLOpen", 1.0),
+                    ("ParamEyeROpen", 1.0),
+                    ("ParamBrowLY", 0.8),
+                    ("ParamBrowRY", 0.8),
+                ],
+            ),
+            (
+                "neutral",
+                &[
+                    ("ParamMouthForm", 0.0),
+                    ("ParamMouthOpenY", 0.0),
+                    ("ParamEyeLOpen", 0.8),
+                    ("ParamEyeROpen", 0.8),
+                    ("ParamBrowLY", 0.0),
+                    ("ParamBrowRY", 0.0),
+                ],
+            ),
+            (
+                "thinking",
+                &[
+                    ("ParamMouthForm", 0.2),
+                    ("ParamEyeLOpen", 0.6),
+                    ("ParamEyeROpen", 0.6),
+                    ("ParamBrowLY", 0.3),
+                    ("ParamBrowRY", 0.3),
+                    ("ParamBrowLX", -0.2),
+                    ("ParamBrowRX", 0.2),
+                ],
+            ),
+            (
+                "tired",
+                &[
+                    ("ParamMouthForm", -0.2),
+                    ("ParamEyeLOpen", 0.4),
+                    ("ParamEyeROpen", 0.4),
+                    ("ParamBrowLY", -0.2),
+                    ("ParamBrowRY", -0.2),
+                ],
+            ),
+            (
+                "satisfied",
+                &[
+                    ("ParamMouthForm", 0.3),
+                    ("ParamMouthOpenY", 0.2),
+                    ("ParamEyeLOpen", 0.7),
+                    ("ParamEyeROpen", 0.7),
+                    ("ParamBrowLY", 0.1),
+                    ("ParamBrowRY", 0.1),
+                ],
+            ),
+            (
+                "embarrassed",
+                &[
+                    ("ParamMouthForm", 0.3),
+                    ("ParamMouthOpenY", 0.1),
+                    ("ParamEyeLOpen", 0.5),
+                    ("ParamEyeROpen", 0.5),
+                    ("ParamBrowLY", 0.1),
+                    ("ParamBrowRY", 0.1),
+                ],
+            ),
+        ];
+
+        let params = EMOTION_MAP
+            .iter()
+            .find(|(name, _)| *name == emotion)
+            .map(|(_, params)| params);
+
+        if let Some(params) = params {
+            let parsed = ParsedExpression {
+                parameters: params
+                    .iter()
+                    .map(|(id, val)| ParsedExp3Param {
+                        id: id.to_string(),
+                        value: *val,
+                        blend: ExpressionBlendMode::Override,
+                    })
+                    .collect(),
+            };
+            let expr = ExpressionMotion::new(parsed);
+            self.expression_manager
+                .start_expression(expr, self.motion_queue.user_time_seconds);
+            self.ai_emotion_until = Some(self.motion_queue.user_time_seconds as f64 + 5.0);
+        }
+    }
+
+    /// Auto-reset expression back to neutral after the timeout elapses.
+    pub fn tick_emotion_timeout(&mut self) {
+        if let Some(until) = self.ai_emotion_until {
+            let now = self.motion_queue.user_time_seconds as f64;
+            if now >= until {
+                self.expression_manager.clear();
+                self.ai_emotion_until = None;
+            }
+        }
+    }
+
+    /// Fetch available TTS voices into the cache.
+    pub fn refresh_tts_voices(&mut self) {
+        let config = self.ai_config.clone();
+        if config.tts_key.is_empty() {
+            return;
+        }
+        match crate::ai::tts::list_voices(&config) {
+            Ok(voices) => {
+                self.tts_voices_cache = voices;
+            }
+            Err(e) => {
+                log::warn!("[tts] failed to list voices: {e}");
+            }
+        }
+    }
+
+    /// Poll the TTS result channel for completed audio files and play them.
+    pub fn poll_tts_result(&mut self) {
+        let rx = match self.tts_result_rx.take() {
+            Some(rx) => rx,
+            None => return,
+        };
+        if let Ok(path) = rx.recv_timeout(std::time::Duration::from_millis(0)) {
+            if let Some(ref player) = self.audio_player {
+                player.play(&path);
+            }
+            // Clean up temp file after a short delay (best-effort)
+            let path_clone = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let _ = std::fs::remove_file(&path_clone);
+            });
+        } else {
+            // Still pending — put the receiver back
+            self.tts_result_rx = Some(rx);
         }
     }
 
@@ -918,15 +1167,16 @@ impl AppState {
             return self.switch_to(idx);
         }
 
-    // V3: clear current model state immediately, spawn background thread
-    let dir = entry.dir.clone();
-    let model3_file = entry.model3_file.clone();
-    let _ = entry;
-    self.clear_model_state();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        tx.send(load_v3_background(&dir, idx, model3_file.as_deref())).ok();
-    });
+        // V3: clear current model state immediately, spawn background thread
+        let dir = entry.dir.clone();
+        let model3_file = entry.model3_file.clone();
+        let _ = entry;
+        self.clear_model_state();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            tx.send(load_v3_background(&dir, idx, model3_file.as_deref()))
+                .ok();
+        });
         self.pending_load = PendingLoad::V3Loading(rx);
         log::info!("Started background load for idx={idx}");
         Ok(())
@@ -1527,7 +1777,10 @@ impl AppState {
         let json = match crate::model_loader::UserData3Json::from_file(&user_data_path) {
             Ok(j) => j,
             Err(e) => {
-                log::warn!("Failed to load userdata3.json {}: {e}", user_data_path.display());
+                log::warn!(
+                    "Failed to load userdata3.json {}: {e}",
+                    user_data_path.display()
+                );
                 return;
             }
         };
@@ -1941,6 +2194,37 @@ impl AppState {
     }
 }
 
+/// Scan the end of `content` for an emotion marker like `[happy]`.
+/// If found, remove it from content and return the emotion name.
+fn extract_emotion_tag(content: &mut String) -> Option<String> {
+    let text = std::mem::take(content);
+    let trimmed = text.trim();
+    if let Some(start) = trimmed.rfind('[') {
+        if let Some(end) = trimmed[start..].find(']') {
+            let tag = &trimmed[start + 1..start + end];
+            const VALID: &[&str] = &[
+                "happy",
+                "sad",
+                "angry",
+                "surprised",
+                "neutral",
+                "thinking",
+                "tired",
+                "satisfied",
+                "embarrassed",
+            ];
+            if VALID.contains(&tag) {
+                let before = &trimmed[..start];
+                let after = &trimmed[start + end + 1..];
+                *content = format!("{}{}", before.trim(), after.trim());
+                return Some(tag.to_string());
+            }
+        }
+    }
+    *content = text;
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 fn point_in_triangle(
     px: f32,
@@ -1961,7 +2245,11 @@ fn point_in_triangle(
 }
 
 /// Background thread: read all V3 model files from disk.
-fn load_v3_background(dir: &Path, idx: usize, model3_file: Option<&str>) -> Result<V3RawData, String> {
+fn load_v3_background(
+    dir: &Path,
+    idx: usize,
+    model3_file: Option<&str>,
+) -> Result<V3RawData, String> {
     use crate::model_loader;
 
     let model3_path = if let Some(f) = model3_file {

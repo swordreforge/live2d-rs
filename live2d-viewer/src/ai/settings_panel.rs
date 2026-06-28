@@ -1,7 +1,7 @@
 use crate::app::AppState;
 use egui::Window;
 
-/// Draw the AI settings panel (provider config).
+/// Draw the AI settings panel (provider config + TTS config).
 pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
     if !app.ai_settings_open {
         return;
@@ -63,11 +63,62 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 }
             }
 
+            ui.add_space(16.0);
+            ui.separator();
+            ui.heading("语音合成 (TTS)");
+
+            ui.checkbox(&mut app.ai_config.tts_enabled, "启用语音合成");
+
+            if app.ai_config.tts_enabled {
+                ui.add_space(4.0);
+                ui.label("TTS API 地址");
+                ui.text_edit_singleline(&mut app.ai_config.tts_api_url);
+
+                ui.label("TTS Key");
+                ui.text_edit_singleline(&mut app.ai_config.tts_key);
+
+                ui.add_space(4.0);
+                if ui.button("刷新音色列表").clicked() {
+                    app.tts_refresh_requested = true;
+                }
+
+                if app.tts_voices_cache.is_empty() {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "点击刷新获取可用音色列表（需先填写 TTS Key）",
+                    );
+                } else {
+                    let current = &app.ai_config.tts_voice;
+                    let mut selected = current.clone();
+                    egui::ComboBox::from_id_source("tts_voice_selector")
+                        .selected_text(
+                            app.tts_voices_cache
+                                .iter()
+                                .find(|v| v.voice_id == *current)
+                                .map(|v| format!("{} ({})", v.voice_name, v.gender))
+                                .unwrap_or_else(|| current.clone()),
+                        )
+                        .show_ui(ui, |ui| {
+                            for voice in &app.tts_voices_cache {
+                                let label = format!(
+                                    "{} - {} ({}) [{}]",
+                                    voice.voice_name, voice.voice_id, voice.gender, voice.language
+                                );
+                                ui.selectable_value(&mut selected, voice.voice_id.clone(), label);
+                            }
+                        });
+                    if selected != *current {
+                        app.ai_config.tts_voice = selected;
+                        *dirty = true;
+                    }
+                }
+            }
+
             ui.add_space(8.0);
 
-            // Save button
+            // Save button — write to DB + JSON file
             if ui.button("保存设置").clicked() {
-                crate::ai::config::save_config(&app.ai_config);
+                crate::ai::config::save_config(&app.ai_config, app.db.as_ref());
             }
         });
 }

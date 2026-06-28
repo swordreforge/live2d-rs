@@ -117,7 +117,9 @@ impl AiChatClient {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().unwrap_or_default();
-            let _ = tx.send(AiStreamEvent::Error(format!("API error {status}: {body_text}")));
+            let _ = tx.send(AiStreamEvent::Error(format!(
+                "API error {status}: {body_text}"
+            )));
             return;
         }
 

@@ -310,7 +310,10 @@ impl ToolbarOverlay {
                         icon_cy - bw / 2.0,
                         bl * 2.0,
                         bw,
-                        ic[0], ic[1], ic[2], ic[3],
+                        ic[0],
+                        ic[1],
+                        ic[2],
+                        ic[3],
                     );
                 }
                 ToolbarAction::Search => {
@@ -326,9 +329,13 @@ impl ToolbarOverlay {
                         let a1 = start_rad + step * j as f32;
                         let a2 = start_rad + step * (j + 1) as f32;
                         Self::push_tri(
-                            &mut verts, cx, cy,
-                            cx + a1.cos() * r, cy + a1.sin() * r,
-                            cx + a2.cos() * r, cy + a2.sin() * r,
+                            &mut verts,
+                            cx,
+                            cy,
+                            cx + a1.cos() * r,
+                            cy + a1.sin() * r,
+                            cx + a2.cos() * r,
+                            cy + a2.sin() * r,
                             ic,
                         );
                     }
@@ -424,9 +431,15 @@ impl ToolbarOverlay {
         gl.delete_buffer(self.vbo);
     }
 
-    pub fn program_id(&self) -> NativeProgram { self.program }
-    pub fn vao_id(&self) -> NativeVertexArray { self.vao }
-    pub fn vbo_id(&self) -> NativeBuffer { self.vbo }
+    pub fn program_id(&self) -> NativeProgram {
+        self.program
+    }
+    pub fn vao_id(&self) -> NativeVertexArray {
+        self.vao
+    }
+    pub fn vbo_id(&self) -> NativeBuffer {
+        self.vbo
+    }
 
     // ──── Geometry helpers (screen space, 6 f32 per vertex) ────
 

@@ -34,6 +34,15 @@ pub struct AiConfig {
     pub context_length: usize,
     /// System prompt / character card
     pub system_prompt: String,
+    // ── TTS (Text-to-Speech) ──
+    /// Whether to auto-speak AI responses.
+    pub tts_enabled: bool,
+    /// TTS API key (separate from chat API key).
+    pub tts_key: String,
+    /// TTS API base URL (e.g. "https://api.hewoyi.com/api/ai/audio/speech").
+    pub tts_api_url: String,
+    /// Selected voice ID (e.g. "zh-CN-XiaoxiaoNeural").
+    pub tts_voice: String,
 }
 
 /// Events sent from the background streaming thread to the UI thread.
@@ -58,8 +67,16 @@ impl Default for AiConfig {
             context_length: 20,
             system_prompt: "You are a cute anime girl living on the user's desktop. \
                            Be friendly, playful, and occasionally cheeky. \
-                           Keep responses concise (1-3 sentences)."
+                           Keep responses concise (1-3 sentences). \
+                           At the end of your response, include exactly one \
+                           emotion tag: [happy], [sad], [angry], [surprised], \
+                           [neutral], [thinking], [tired], [satisfied], or \
+                           [embarrassed]."
                 .into(),
+            tts_enabled: false,
+            tts_key: String::new(),
+            tts_api_url: "https://api.hewoyi.com/api/ai/audio/speech".into(),
+            tts_voice: "zh-CN-XiaoxiaoNeural".into(),
         }
     }
 }

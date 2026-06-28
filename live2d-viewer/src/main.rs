@@ -1,6 +1,6 @@
-mod app;
 #[cfg(feature = "ai")]
 mod ai;
+mod app;
 mod audio;
 mod camera;
 mod data_dir;
@@ -9,11 +9,11 @@ mod gui;
 mod model_loader;
 pub mod motion;
 mod renderer;
+mod text_renderer;
 mod texture;
 mod toolbar;
 mod tray;
 mod v2_motion_sound;
-mod text_renderer;
 #[cfg(target_os = "linux")]
 pub mod wayland_pet;
 
@@ -1146,8 +1146,8 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                // Save AI config
-                crate::ai::config::save_config(&app.ai_config);
+                // Save AI config (to DB + JSON file)
+                crate::ai::config::save_config(&app.ai_config, app.db.as_ref());
                 painter.destroy();
             }
             Event::AboutToWait => {

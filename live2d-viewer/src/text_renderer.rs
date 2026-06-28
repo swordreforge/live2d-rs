@@ -142,8 +142,7 @@ impl TextRenderer {
     /// Requires an active GL context.
     pub unsafe fn new(gl: &Context, px_size: f32) -> Result<Self, String> {
         let font_data = find_monospace_font()?;
-        let font =
-            FontVec::try_from_vec(font_data).map_err(|e| format!("parse font: {e:?}"))?;
+        let font = FontVec::try_from_vec(font_data).map_err(|e| format!("parse font: {e:?}"))?;
 
         let font_scaled = font.as_scaled(PxScale::from(px_size));
         let line_h = font_scaled.height() + font_scaled.line_gap();
@@ -174,12 +173,8 @@ impl TextRenderer {
         let program = compile_program(gl)?;
 
         // --- VAO / VBO ---
-        let vao = gl
-            .create_vertex_array()
-            .map_err(|e| format!("vao: {e}"))?;
-        let vbo = gl
-            .create_buffer()
-            .map_err(|e| format!("vbo: {e}"))?;
+        let vao = gl.create_vertex_array().map_err(|e| format!("vao: {e}"))?;
+        let vbo = gl.create_buffer().map_err(|e| format!("vbo: {e}"))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
@@ -223,10 +218,7 @@ impl TextRenderer {
 
         let w = bounds.width().ceil() as u32;
         let h = bounds.height().ceil() as u32;
-        let advance = self
-            .font
-            .as_scaled(scale)
-            .h_advance(glyph_id);
+        let advance = self.font.as_scaled(scale).h_advance(glyph_id);
 
         if w == 0 || h == 0 {
             let slot = GlyphSlot {
@@ -252,10 +244,18 @@ impl TextRenderer {
         // If atlas is full, just skip new glyphs
         if self.cursor_y + h + GLYPH_PAD * 2 > ATLAS_SIZE {
             log::warn!("[text_renderer] atlas full — skipping glyph '{}'", ch);
-            self.cache.insert(ch, GlyphSlot {
-                atlas_x: 0, atlas_y: 0, width: 0, height: 0,
-                advance, bearing_x: 0.0, bearing_y: 0.0,
-            });
+            self.cache.insert(
+                ch,
+                GlyphSlot {
+                    atlas_x: 0,
+                    atlas_y: 0,
+                    width: 0,
+                    height: 0,
+                    advance,
+                    bearing_x: 0.0,
+                    bearing_y: 0.0,
+                },
+            );
             return None;
         }
 
@@ -373,15 +373,13 @@ impl TextRenderer {
 
             // Triangle 1: TL, TR, BL
             verts.extend_from_slice(&[
-                tlx, tly, u0, v0, color[0], color[1], color[2], a,
-                trx, try_, u1, v0, color[0], color[1], color[2], a,
-                blx, bly, u0, v1, color[0], color[1], color[2], a,
+                tlx, tly, u0, v0, color[0], color[1], color[2], a, trx, try_, u1, v0, color[0],
+                color[1], color[2], a, blx, bly, u0, v1, color[0], color[1], color[2], a,
             ]);
             // Triangle 2: TR, BR, BL
             verts.extend_from_slice(&[
-                trx, try_, u1, v0, color[0], color[1], color[2], a,
-                brx, bry, u1, v1, color[0], color[1], color[2], a,
-                blx, bly, u0, v1, color[0], color[1], color[2], a,
+                trx, try_, u1, v0, color[0], color[1], color[2], a, brx, bry, u1, v1, color[0],
+                color[1], color[2], a, blx, bly, u0, v1, color[0], color[1], color[2], a,
             ]);
 
             x += slot.advance;
@@ -393,8 +391,7 @@ impl TextRenderer {
 
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(ARRAY_BUFFER, Some(self.vbo));
-        let bytes =
-            std::slice::from_raw_parts(verts.as_ptr() as *const u8, verts.len() * 4);
+        let bytes = std::slice::from_raw_parts(verts.as_ptr() as *const u8, verts.len() * 4);
         gl.buffer_data_u8_slice(ARRAY_BUFFER, bytes, STREAM_DRAW);
 
         gl.use_program(Some(self.program));

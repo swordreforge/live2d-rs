@@ -14,8 +14,22 @@ fn config_path() -> PathBuf {
     config_dir().join("ai-config.json")
 }
 
-/// Load AI config from disk. Returns `Default` if the file doesn't exist or is corrupt.
-pub fn load_config() -> AiConfig {
+/// Load AI config from DB (preferred) or JSON file (fallback).
+///
+/// When a database connection is available, reads from the `global_settings`
+/// table (key `"ai_config"`).  Falls back to the JSON file on disk for
+/// backward compatibility.
+pub fn load_config(db: Option<&crate::db::AppDb>) -> AiConfig {
+    // Try DB first
+    if let Some(db) = db {
+        if let Some(json) = db.get_setting("ai_config") {
+            if let Ok(config) = serde_json::from_str(&json) {
+                return config;
+            }
+            log::warn!("Failed to parse AI config from DB, falling back to file");
+        }
+    }
+    // Fallback to JSON file on disk
     let path = config_path();
     match std::fs::read_to_string(&path) {
         Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
@@ -26,8 +40,18 @@ pub fn load_config() -> AiConfig {
     }
 }
 
-/// Save AI config to disk atomically (write temp, then rename).
-pub fn save_config(config: &AiConfig) {
+/// Save AI config to DB (if available) and JSON file (backup).
+///
+/// Writes to both the `global_settings` SQLite table and the JSON file on
+/// disk so the config survives a missing/corrupt database.
+pub fn save_config(config: &AiConfig, db: Option<&crate::db::AppDb>) {
+    // Save to DB if available
+    if let Some(db) = db {
+        if let Ok(json) = serde_json::to_string(config) {
+            let _ = db.set_setting("ai_config", &json);
+        }
+    }
+    // Also keep JSON file as backup (atomic write via temp + rename)
     let dir = config_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = config_path();

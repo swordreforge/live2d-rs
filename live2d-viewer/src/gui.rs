@@ -5,6 +5,15 @@ use std::path::PathBuf;
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     // Poll for AI response (non-blocking, receives from background thread)
     app.poll_ai_result();
+    // Play completed TTS audio
+    app.poll_tts_result();
+    // Auto-reset AI emotion timeout (runs every frame regardless of AI stream)
+    app.tick_emotion_timeout();
+    // Handle deferred TTS voice refresh (outside any window closure to avoid borrow conflict)
+    if app.tts_refresh_requested {
+        app.tts_refresh_requested = false;
+        app.refresh_tts_voices();
+    }
 
     if app.minimized_to_float {
         draw_floating_ui(ctx, app);
@@ -43,7 +52,11 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if app.ai_enabled && app.pet_mode == PetMode::Off {
-                    let chat_label = if app.ai_chat_open { "\u{1F4AC}" } else { "\u{1F4AD}" };
+                    let chat_label = if app.ai_chat_open {
+                        "\u{1F4AC}"
+                    } else {
+                        "\u{1F4AD}"
+                    };
                     if ui.button(chat_label).clicked() {
                         app.ai_chat_open = !app.ai_chat_open;
                     }
@@ -98,75 +111,82 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             let mut switched_idx = None;
 
             let row_h = 24.0;
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show_rows(ui, row_h, model_names.len(), |ui, range| {
+            egui::ScrollArea::vertical().max_height(400.0).show_rows(
+                ui,
+                row_h,
+                model_names.len(),
+                |ui, range| {
                     for i in range {
                         let name = &model_names[i];
-                let selected = current_idx == Some(i);
-                let is_renaming = app.renaming_idx == Some(i);
+                        let selected = current_idx == Some(i);
+                        let is_renaming = app.renaming_idx == Some(i);
 
-                ui.horizontal(|ui| {
-                    ui.set_max_width(250.0);
-                    ui.set_min_height(22.0);
+                        ui.horizontal(|ui| {
+                            ui.set_max_width(250.0);
+                            ui.set_min_height(22.0);
 
-                    if is_renaming {
-                        let resp = ui.add_sized(
-                            egui::vec2(140.0, 20.0),
-                            egui::TextEdit::singleline(&mut app.renaming_buffer)
-                                .desired_width(140.0),
-                        );
-                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            let new_name = app.renaming_buffer.trim().to_string();
-                            if !new_name.is_empty() && new_name != *name {
-                                if let Some(ref db) = app.db {
-                                    if let Some(entry) = app.model_list.get(i) {
-                                        let path = entry.dir.to_string_lossy().to_string();
-                                        let _ = db.rename_model(&path, &new_name);
+                            if is_renaming {
+                                let resp = ui.add_sized(
+                                    egui::vec2(140.0, 20.0),
+                                    egui::TextEdit::singleline(&mut app.renaming_buffer)
+                                        .desired_width(140.0),
+                                );
+                                if resp.lost_focus()
+                                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    let new_name = app.renaming_buffer.trim().to_string();
+                                    if !new_name.is_empty() && new_name != *name {
+                                        if let Some(ref db) = app.db {
+                                            if let Some(entry) = app.model_list.get(i) {
+                                                let path = entry.dir.to_string_lossy().to_string();
+                                                let _ = db.rename_model(&path, &new_name);
+                                            }
+                                        }
+                                        app.model_list[i].name = new_name;
                                     }
+                                    app.renaming_idx = None;
                                 }
-                                app.model_list[i].name = new_name;
+                            } else {
+                                let short_name = if name.chars().count() > 24 {
+                                    let truncated: String = name.chars().take(23).collect();
+                                    format!("{truncated}…")
+                                } else {
+                                    name.clone()
+                                };
+                                let label = format!(
+                                    "{} {}",
+                                    if selected { "\u{25cf}" } else { "\u{25cb}" },
+                                    short_name,
+                                );
+                                let resp = ui.add_sized(
+                                    egui::vec2(190.0, 20.0),
+                                    egui::SelectableLabel::new(selected, label),
+                                );
+                                if resp.clicked() {
+                                    switched_idx = Some(i);
+                                }
+                                if resp.double_clicked() {
+                                    app.renaming_idx = Some(i);
+                                    app.renaming_buffer = name.clone();
+                                }
                             }
-                            app.renaming_idx = None;
-                        }
-                    } else {
-                        let short_name = if name.chars().count() > 24 {
-                            let truncated: String = name.chars().take(23).collect();
-                            format!("{truncated}…")
-                        } else {
-                            name.clone()
-                        };
-                        let label = format!(
-                            "{} {}",
-                            if selected { "\u{25cf}" } else { "\u{25cb}" },
-                            short_name,
-                        );
-                        let resp = ui.add_sized(
-                            egui::vec2(190.0, 20.0),
-                            egui::SelectableLabel::new(selected, label),
-                        );
-                        if resp.clicked() {
-                            switched_idx = Some(i);
-                        }
-                        if resp.double_clicked() {
-                            app.renaming_idx = Some(i);
-                            app.renaming_buffer = name.clone();
-                        }
-                    }
 
-                    let btn = egui::Button::new("\u{270f}").min_size(egui::vec2(18.0, 18.0));
-                    if !is_renaming && ui.add(btn).clicked() {
-                        app.renaming_idx = Some(i);
-                        app.renaming_buffer = name.clone();
-                    }
+                            let btn =
+                                egui::Button::new("\u{270f}").min_size(egui::vec2(18.0, 18.0));
+                            if !is_renaming && ui.add(btn).clicked() {
+                                app.renaming_idx = Some(i);
+                                app.renaming_buffer = name.clone();
+                            }
 
-                    let del = egui::Button::new("\u{2716}").min_size(egui::vec2(18.0, 18.0));
-                    if ui.add(del).clicked() {
-                        deleted_idx = Some(i);
+                            let del =
+                                egui::Button::new("\u{2716}").min_size(egui::vec2(18.0, 18.0));
+                            if ui.add(del).clicked() {
+                                deleted_idx = Some(i);
+                            }
+                        });
                     }
-                });
-            }
-            });
+                },
+            );
 
             // Deferred: process outside the loop to avoid borrow conflict with model_list
             if let Some(i) = deleted_idx {
@@ -350,8 +370,7 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 ui.horizontal(|ui| {
                     ui.add_sized(
                         [120.0, 0.0],
-                        egui::TextEdit::singleline(&mut app.preset_name_input)
-                            .hint_text("预设名"),
+                        egui::TextEdit::singleline(&mut app.preset_name_input).hint_text("预设名"),
                     );
                     if ui.button("保存预设").clicked() {
                         let name = app.preset_name_input.trim().to_string();
@@ -401,9 +420,14 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     let mut px = app.camera.translate_x;
                     let mut py = app.camera.translate_y;
                     let mut zm = (app.camera.scale_x.abs() + app.camera.scale_y.abs()) / 2.0;
-                    let p_changed = ui.add(Slider::new(&mut px, -5.0..=5.0).text("X 偏移")).changed()
-                        | ui.add(Slider::new(&mut py, -5.0..=5.0).text("Y 偏移")).changed();
-                    let z_changed = ui.add(Slider::new(&mut zm, 0.1..=5.0).text("缩放")).changed();
+                    let p_changed = ui
+                        .add(Slider::new(&mut px, -5.0..=5.0).text("X 偏移"))
+                        .changed()
+                        | ui.add(Slider::new(&mut py, -5.0..=5.0).text("Y 偏移"))
+                            .changed();
+                    let z_changed = ui
+                        .add(Slider::new(&mut zm, 0.1..=5.0).text("缩放"))
+                        .changed();
                     if p_changed {
                         app.camera.translate_x = px;
                         app.camera.translate_y = py;
@@ -432,85 +456,83 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 egui::ScrollArea::vertical()
                     .max_height(400.0)
                     .show(ui, |ui| {
-                for i in 0..app.parameter_names.len() {
-                    let name = &app.parameter_names[i];
-                    let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);
-                    let max = app.parameter_maxs.get(i).copied().unwrap_or(1.0);
-                    let mut val = app.parameter_values[i];
-                    if ui
-                        .add(Slider::new(&mut val, min..=max).text(name))
-                        .changed()
-                    {
-                        app.parameter_values[i] = val;
-                        app.update_parameters();
-                    }
-                }
-            });
-        }); // close Window::show
-
+                        for i in 0..app.parameter_names.len() {
+                            let name = &app.parameter_names[i];
+                            let min = app.parameter_mins.get(i).copied().unwrap_or(-1.0);
+                            let max = app.parameter_maxs.get(i).copied().unwrap_or(1.0);
+                            let mut val = app.parameter_values[i];
+                            if ui
+                                .add(Slider::new(&mut val, min..=max).text(name))
+                                .changed()
+                            {
+                                app.parameter_values[i] = val;
+                                app.update_parameters();
+                            }
+                        }
+                    });
+            }); // close Window::show
     } // close if app.current_model.is_some()
 
     // ── Search window ──
     let has_query = !app.search_query.is_empty();
-    Window::new("搜索")
-        .default_width(260.0)
-        .show(ctx, |ui| {
-            let prev = app.search_query.clone();
-            ui.add(
-                egui::TextEdit::singleline(&mut app.search_query)
-                    .hint_text("输入关键词搜索模型...")
-                    .desired_width(240.0),
-            );
+    Window::new("搜索").default_width(260.0).show(ctx, |ui| {
+        let prev = app.search_query.clone();
+        ui.add(
+            egui::TextEdit::singleline(&mut app.search_query)
+                .hint_text("输入关键词搜索模型...")
+                .desired_width(240.0),
+        );
 
-            // Trigger search when query changes
-            let query_changed = app.search_query != prev;
-            if query_changed {
-                if app.search_query.is_empty() {
-                    app.search_results.clear();
-                } else if let Some(ref db) = app.db {
-                    let q = app.search_query.trim().to_string();
-                    if !q.is_empty() {
-                        app.search_results = db.search_models(&q, 20).unwrap_or_default();
+        // Trigger search when query changes
+        let query_changed = app.search_query != prev;
+        if query_changed {
+            if app.search_query.is_empty() {
+                app.search_results.clear();
+            } else if let Some(ref db) = app.db {
+                let q = app.search_query.trim().to_string();
+                if !q.is_empty() {
+                    app.search_results = db.search_models(&q, 20).unwrap_or_default();
+                }
+            }
+        }
+
+        ui.separator();
+
+        if app.search_results.is_empty() && has_query {
+            ui.label("无匹配结果");
+        }
+
+        let mut switch_idx: Option<usize> = None;
+        let results_clone = app.search_results.clone();
+        egui::ScrollArea::vertical().max_height(350.0).show_rows(
+            ui,
+            24.0,
+            results_clone.len(),
+            |ui, range| {
+                for i in range {
+                    let result = &results_clone[i];
+                    let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
+                    let label = format!("{}  ({:.0}%)", result.name, pct,);
+                    if ui.selectable_label(false, &label).clicked() {
+                        // Find the model in model_list by file_path
+                        if let Some(idx) = app
+                            .model_list
+                            .iter()
+                            .position(|e| e.dir.to_string_lossy() == result.file_path)
+                        {
+                            switch_idx = Some(idx);
+                        }
                     }
                 }
-            }
+            },
+        );
 
-            ui.separator();
-
-            if app.search_results.is_empty() && has_query {
-                ui.label("无匹配结果");
+        if let Some(i) = switch_idx {
+            if let Err(e) = app.begin_switch(i) {
+                app.error_message = Some(e);
             }
-
-            let mut switch_idx: Option<usize> = None;
-            let results_clone = app.search_results.clone();
-            egui::ScrollArea::vertical()
-                .max_height(350.0)
-                .show_rows(ui, 24.0, results_clone.len(), |ui, range| {
-                    for i in range {
-                        let result = &results_clone[i];
-                let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
-                let label = format!(
-                    "{}  ({:.0}%)",
-                    result.name,
-                    pct,
-                );
-                if ui.selectable_label(false, &label).clicked() {
-                    // Find the model in model_list by file_path
-                    if let Some(idx) = app.model_list.iter().position(|e| {
-                        e.dir.to_string_lossy() == result.file_path
-                    }) {
-                        switch_idx = Some(idx);
-                    }
-                }
-            }
-            });
-
-            if let Some(i) = switch_idx {
-                if let Err(e) = app.begin_switch(i) {
-                    app.error_message = Some(e);
-                }
-            }
-        });
+        }
+    });
 }
 
 fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
@@ -690,33 +712,39 @@ fn draw_pet_ui(ctx: &Context, app: &mut AppState) {
 
                     if !app.search_results.is_empty() {
                         let results = app.search_results.clone();
-                        egui::ScrollArea::vertical()
-                            .max_height(300.0)
-                            .show_rows(ui, 24.0, results.len(), |ui, range| {
+                        egui::ScrollArea::vertical().max_height(300.0).show_rows(
+                            ui,
+                            24.0,
+                            results.len(),
+                            |ui, range| {
                                 for i in range {
                                     let result = &results[i];
-                            let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
-                            let label = format!("{}  ({:.0}%)", result.name, pct);
-                            if ui
-                                .add(egui::Button::new(&label).min_size(egui::vec2(228.0, 22.0)))
-                                .clicked()
-                            {
-                                if let Some(idx) = app.model_list.iter().position(|e| {
-                                    e.dir.to_string_lossy() == result.file_path
-                                }) {
-                                    app.pet_search_open = false;
-                                    if let Err(e) = app.begin_switch(idx) {
-                                        app.error_message = Some(e);
+                                    let pct = (result.similarity * 100.0).clamp(0.0, 100.0);
+                                    let label = format!("{}  ({:.0}%)", result.name, pct);
+                                    if ui
+                                        .add(
+                                            egui::Button::new(&label)
+                                                .min_size(egui::vec2(228.0, 22.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        if let Some(idx) = app.model_list.iter().position(|e| {
+                                            e.dir.to_string_lossy() == result.file_path
+                                        }) {
+                                            app.pet_search_open = false;
+                                            if let Err(e) = app.begin_switch(idx) {
+                                                app.error_message = Some(e);
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        });
+                            },
+                        );
                     } else if !app.search_query.is_empty() {
                         ui.label("无匹配结果");
                     }
                 });
-        });
+            });
     }
 }
 
