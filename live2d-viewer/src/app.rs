@@ -1325,14 +1325,38 @@ impl AppState {
                 tool_name,
                 args,
             } => {
+                // Sync SafetyConfig from user-configured AiConfig
+                self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();
+                self.safety_config.max_tool_rounds = self.ai_config.max_tool_rounds;
+
+                let start = std::time::Instant::now();
                 let result = self
                     .tool_registry
                     .execute(&tool_name, &args, &self.safety_config);
+                let duration_ms = start.elapsed().as_millis() as u64;
 
-                let content = match result {
-                    Ok(out) => out,
+                let content = match &result {
+                    Ok(out) => out.clone(),
                     Err(e) => format!("Error: {e}"),
                 };
+
+                // Audit log
+                let fp = self
+                    .current_model_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if let Some(ref db) = self.db {
+                    let args_json = serde_json::to_string(&args).unwrap_or_default();
+                    let success = result.is_ok();
+                    let _ = db.save_tool_execution(
+                        &fp,
+                        &tool_name,
+                        &args_json,
+                        &content,
+                        success,
+                        duration_ms,
+                    );
+                }
 
                 self.ai_messages.push(ChatMessage {
                     role: ChatRole::Tool,
@@ -1356,7 +1380,21 @@ impl AppState {
     pub fn reject_tool(&mut self) {
         use crate::ai::types::{AiState, ChatMessage, ChatRole};
         let state = std::mem::replace(&mut self.ai_state, AiState::Idle);
-        if let AiState::PendingTool { tool_call_id, .. } = state {
+        if let AiState::PendingTool {
+            tool_call_id,
+            tool_name,
+            ref args,
+        } = state
+        {
+            let fp = self
+                .current_model_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if let Some(ref db) = self.db {
+                let args_json = serde_json::to_string(args).unwrap_or_default();
+                let _ = db.save_tool_execution(&fp, &tool_name, &args_json, "rejected", false, 0);
+            }
+
             self.ai_messages.push(ChatMessage {
                 role: ChatRole::Tool,
                 content: "Operation rejected by user".to_string(),
@@ -1474,16 +1512,44 @@ impl AppState {
     fn execute_tools_and_continue(&mut self, tool_calls: Vec<crate::ai::types::ToolCall>) {
         use crate::ai::types::{ChatMessage, ChatRole};
 
+        // Sync SafetyConfig from user-configured AiConfig
+        self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();
+        self.safety_config.max_tool_rounds = self.ai_config.max_tool_rounds;
+
+        let fp = self
+            .current_model_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
         for tc in tool_calls {
             let args: serde_json::Value =
                 serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+
+            let start = std::time::Instant::now();
             let result = self
                 .tool_registry
                 .execute(&tc.function.name, &args, &self.safety_config);
-            let content = match result {
-                Ok(out) => out,
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            let content = match &result {
+                Ok(out) => out.clone(),
                 Err(e) => format!("Error: {e}"),
             };
+
+            // Audit log
+            if let Some(ref db) = self.db {
+                let args_json = serde_json::to_string(&args).unwrap_or_default();
+                let success = result.is_ok();
+                let _ = db.save_tool_execution(
+                    &fp,
+                    &tc.function.name,
+                    &args_json,
+                    &content,
+                    success,
+                    duration_ms,
+                );
+            }
+
             self.ai_messages.push(ChatMessage {
                 role: ChatRole::Tool,
                 content,

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::safety::{sanitize_path, truncate_result, SafetyConfig};
+use super::safety::{is_command_allowed, sanitize_path, truncate_result, SafetyConfig};
 
 const MAX_RESULT_CHARS: usize = 4096;
 
@@ -16,7 +16,7 @@ const MAX_RESULT_CHARS: usize = 4096;
 /// Arguments (from JSON):
 ///   cmd: string — the command to run.
 ///   timeout_secs: number (optional, default 5) — timeout in seconds.
-pub fn exec_cmd(args: &Value, _safety: &SafetyConfig) -> Result<String, String> {
+pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
     let cmd = args["cmd"]
         .as_str()
         .ok_or_else(|| "missing 'cmd' argument".to_string())?;
@@ -25,6 +25,14 @@ pub fn exec_cmd(args: &Value, _safety: &SafetyConfig) -> Result<String, String> 
         .and_then(|v| v.as_u64())
         .unwrap_or(5)
         .min(30);
+
+    // Check if the command is in the allowed list
+    if !is_command_allowed(cmd, &safety.allowed_commands) {
+        return Err(format!(
+            "command '{}' is not in the allowed commands list",
+            cmd.split_whitespace().next().unwrap_or(cmd)
+        ));
+    }
 
     let cmd_owned = cmd.to_string();
     let (tx, rx) = mpsc::channel();
