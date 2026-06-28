@@ -331,6 +331,10 @@ pub struct AppState {
     pub pet_wayland_event_rx: Option<()>,
     #[cfg(not(target_os = "linux"))]
     pub pet_wayland_thread: Option<()>,
+    /// Parameter presets for current model
+    pub preset_list: Vec<String>,
+    /// Text buffer for naming a new preset
+    pub preset_name_input: String,
     /// Search tab state
     pub search_query: String,
     pub search_results: Vec<db::SearchResult>,
@@ -421,6 +425,8 @@ impl AppState {
             pet_events_scratch: Vec::new(),
             #[cfg(not(target_os = "linux"))]
             pet_events_scratch: Vec::new(),
+            preset_list: Vec::new(),
+            preset_name_input: String::new(),
             search_query: String::new(),
             search_results: Vec::new(),
             pet_search_open: false,
@@ -610,6 +616,117 @@ impl AppState {
         if let Some(ref db) = self.db {
             let _ = db.set_zoom(&path, zoom);
         }
+    }
+
+    // ──────── Parameter presets ────────
+
+    /// Refresh the preset list from the database for the current model.
+    pub fn refresh_presets(&mut self) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => {
+                self.preset_list.clear();
+                return;
+            }
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => {
+                self.preset_list.clear();
+                return;
+            }
+        };
+        self.preset_list = match self.db {
+            Some(ref db) => db.list_presets(&path).unwrap_or_default(),
+            None => Vec::new(),
+        };
+    }
+
+    /// Save current parameter values as a named preset for the current model.
+    pub fn save_preset(&mut self, name: &str) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        if name.is_empty() {
+            return;
+        }
+        // Serialize parameter names + values as JSON
+        let pairs: Vec<(&str, f32)> = self
+            .parameter_names
+            .iter()
+            .zip(self.parameter_values.iter())
+            .map(|(n, v)| (n.as_str(), *v))
+            .collect();
+        let bytes = serde_json::to_vec(&pairs).unwrap_or_default();
+        if bytes.is_empty() {
+            return;
+        }
+        if let Some(ref db) = self.db {
+            let _ = db.save_preset(&path, name, &bytes);
+        }
+        self.refresh_presets();
+    }
+
+    /// Load a named preset for the current model.
+    pub fn load_preset(&mut self, name: &str) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        let bytes = match self.db {
+            Some(ref db) => match db.load_preset(&path, name) {
+                Ok(Some(b)) => b,
+                _ => return,
+            },
+            None => return,
+        };
+        let pairs: Vec<(String, f32)> = match serde_json::from_slice(&bytes) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        // Overwrite parameter_values by matching names
+        for (name, val) in &pairs {
+            if let Some(&i) = self.param_lookup.get(name) {
+                if i < self.parameter_values.len() {
+                    self.parameter_values[i] = *val;
+                }
+            }
+        }
+        self.update_parameters();
+
+        // Also apply to V2 model
+        if self.is_v2 {
+            if let Some(ref mut v2) = self.v2_model {
+                for (name, val) in &pairs {
+                    v2.set_param_value(name, *val, 1.0);
+                }
+            }
+        }
+    }
+
+    /// Delete a named preset for the current model.
+    pub fn delete_preset(&mut self, name: &str) {
+        let idx = match self.current_idx {
+            Some(i) => i,
+            None => return,
+        };
+        let path = match self.model_list.get(idx) {
+            Some(e) => e.dir.to_string_lossy().to_string(),
+            None => return,
+        };
+        if let Some(ref db) = self.db {
+            let _ = db.delete_preset(&path, name);
+        }
+        self.refresh_presets();
     }
 
     /// Start switching to model at `idx` asynchronously.
@@ -858,6 +975,9 @@ impl AppState {
             }
         }
 
+        // Refresh parameter presets for this model
+        self.refresh_presets();
+
         // Start idle motion
         if self.auto_play_idle {
             self.try_start_idle_motion();
@@ -926,16 +1046,24 @@ impl AppState {
             let ch = m.canvas_height();
             self.canvas_pixel_size = (cw, ch);
 
-            // Fill basic parameter names for GUI display
+            // Fill basic parameter names, values, ranges for GUI display
             let nparams = m.param_count();
             self.parameter_names.clear();
+            self.parameter_mins.clear();
+            self.parameter_maxs.clear();
+            self.parameter_defaults.clear();
             self.param_lookup.clear();
             self.param_lookup.reserve(nparams as usize);
+            self.parameter_values = Vec::with_capacity(nparams as usize);
             for i in 0..nparams {
                 if let Ok(id) = m.param_id(i) {
                     self.param_lookup
                         .insert(id.clone(), self.parameter_names.len());
                     self.parameter_names.push(id);
+                    self.parameter_values.push(m.param_value(i));
+                    self.parameter_mins.push(m.param_min(i));
+                    self.parameter_maxs.push(m.param_max(i));
+                    self.parameter_defaults.push(m.param_default(i));
                 }
             }
 
@@ -997,6 +1125,9 @@ impl AppState {
                     }
                 }
             }
+
+            // Refresh parameter presets for this model
+            self.refresh_presets();
 
             // Opening animation: play a random motion on model load
             if let Some(ref mut v2) = self.v2_model {
@@ -1360,7 +1491,15 @@ impl AppState {
     }
 
     pub fn update_parameters(&mut self) {
-        if let Some(ref mut model) = self.current_model {
+        if self.is_v2 {
+            if let Some(ref mut v2) = self.v2_model {
+                for (i, v) in self.parameter_values.iter().enumerate() {
+                    if let Some(name) = self.parameter_names.get(i) {
+                        v2.set_param_value(name, *v, 1.0);
+                    }
+                }
+            }
+        } else if let Some(ref mut model) = self.current_model {
             let mut params = model.parameters();
             let mut vals = params.values_mut();
             for (i, &v) in self.parameter_values.iter().enumerate() {

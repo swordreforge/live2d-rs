@@ -332,6 +332,48 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     ui.separator();
                 }
 
+                // ── Parameter presets ──
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [120.0, 0.0],
+                        egui::TextEdit::singleline(&mut app.preset_name_input)
+                            .hint_text("预设名"),
+                    );
+                    if ui.button("保存预设").clicked() {
+                        let name = app.preset_name_input.trim().to_string();
+                        if !name.is_empty() {
+                            app.save_preset(&name);
+                            app.preset_name_input.clear();
+                        }
+                    }
+                });
+                if !app.preset_list.is_empty() {
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            let mut to_delete: Option<String> = None;
+                            let mut to_load: Option<String> = None;
+                            for name in &app.preset_list {
+                                ui.horizontal(|ui| {
+                                    ui.label(name);
+                                    if ui.button("→").clicked() {
+                                        to_load = Some(name.clone());
+                                    }
+                                    if ui.button("✕").clicked() {
+                                        to_delete = Some(name.clone());
+                                    }
+                                });
+                            }
+                            if let Some(n) = to_load {
+                                app.load_preset(&n);
+                            }
+                            if let Some(n) = to_delete {
+                                app.delete_preset(&n);
+                            }
+                        });
+                }
+
                 ui.separator();
 
                 // Parameter sliders in scroll area

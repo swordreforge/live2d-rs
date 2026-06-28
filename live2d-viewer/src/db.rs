@@ -117,6 +117,15 @@ impl AppDb {
                 file_path    TEXT PRIMARY KEY REFERENCES model_history(file_path) ON DELETE CASCADE,
                 embedding    BLOB NOT NULL,
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS parameter_presets (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path    TEXT NOT NULL REFERENCES model_history(file_path) ON DELETE CASCADE,
+                name         TEXT NOT NULL,
+                parameters   BLOB NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(file_path, name)
             );",
         ))?;
 
@@ -216,6 +225,54 @@ impl AppDb {
         rt().block_on(self.conn.execute(
             "UPDATE model_history SET zoom_scale = ?1 WHERE file_path = ?2",
             libsql::params![zoom, file_path],
+        ))?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    //  Parameter presets
+    // ------------------------------------------------------------------
+
+    /// Save a named parameter preset for a model. Overwrites if name exists.
+    pub fn save_preset(&self, file_path: &str, name: &str, params: &[u8]) -> Result<()> {
+        rt().block_on(self.conn.execute(
+            "INSERT INTO parameter_presets (file_path, name, parameters) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(file_path, name) DO UPDATE SET parameters=?3, created_at=datetime('now')",
+            libsql::params![file_path, name, params.to_vec()],
+        ))?;
+        Ok(())
+    }
+
+    /// Load a named preset's parameter data for a model.
+    pub fn load_preset(&self, file_path: &str, name: &str) -> Result<Option<Vec<u8>>> {
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT parameters FROM parameter_presets WHERE file_path = ?1 AND name = ?2",
+            libsql::params![file_path, name],
+        ))?;
+        match rt().block_on(rows.next())? {
+            Some(row) => Ok(Some(row.get::<Vec<u8>>(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// List all preset names for a model, ordered by creation time.
+    pub fn list_presets(&self, file_path: &str) -> Result<Vec<String>> {
+        let mut rows = rt().block_on(self.conn.query(
+            "SELECT name FROM parameter_presets WHERE file_path = ?1 ORDER BY created_at ASC",
+            libsql::params![file_path],
+        ))?;
+        let mut names = Vec::new();
+        while let Some(row) = rt().block_on(rows.next())? {
+            names.push(row.get::<String>(0)?);
+        }
+        Ok(names)
+    }
+
+    /// Delete a named preset for a model.
+    pub fn delete_preset(&self, file_path: &str, name: &str) -> Result<()> {
+        rt().block_on(self.conn.execute(
+            "DELETE FROM parameter_presets WHERE file_path = ?1 AND name = ?2",
+            libsql::params![file_path, name],
         ))?;
         Ok(())
     }

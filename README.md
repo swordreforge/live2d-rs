@@ -317,7 +317,7 @@ Order: `fmt → clippy → test`. No custom `rustfmt.toml` or `clippy.toml`. Som
 | ❌ | **AI chat companion** (planned — see `docs/superpowers/`) |
 | (✅) | HitAreas + tap-to-motion — hit-testing from `model3.json` HitAreas (V3) and C++ hitTest (V2); tap triggers body motions. **Done.** |
 | ✅ | UserData (`userdata3.json`) — parsed into ID→description lookup map; shown in GUI on tap |
-| ❌ | Save/Load parameter presets per model |
+| ✅ | Save/Load parameter presets — named snapshots stored in DB per model; restore via GUI |
 | ❌ | Layout settings (model canvas position/scale) |
 
 ## License
