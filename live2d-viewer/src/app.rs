@@ -1149,6 +1149,12 @@ impl AppState {
 
         // ── Normal completion (text response) ──
         self.ai_state = AiState::Idle;
+        // Remove trailing empty assistant placeholder (no content arrived)
+        if self.ai_messages.last().is_some_and(|m| {
+            m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
+        }) {
+            self.ai_messages.pop();
+        }
         // For tool-calling responses, the last message may be a Tool result.
         // Find the last Assistant message to extract emotion from.
         let last_assistant_idx = self.ai_messages.iter().rposition(|m| {
@@ -1582,6 +1588,18 @@ impl AppState {
         let (tx, rx) = std::sync::mpsc::channel();
         self.ai_result_rx = Some(rx);
         self.ai_state = AiState::Waiting;
+
+        // Push empty assistant placeholder so streaming tokens land in the right message
+        self.ai_messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: String::new(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
+            tool_call_id: None,
+            tool_calls: None,
+        });
 
         std::thread::spawn(move || {
             let client = crate::ai::client::AiChatClient::new();
