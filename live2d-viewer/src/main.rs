@@ -41,6 +41,15 @@ use winit::window::WindowLevel;
 #[cfg(target_os = "linux")]
 use std::sync::mpsc;
 
+#[cfg(feature = "capture")]
+fn rgba_vec_to_color32(mut rgba: Vec<u8>) -> Vec<egui::Color32> {
+    let len = rgba.len() / 4;
+    let cap = rgba.capacity() / 4;
+    let ptr = rgba.as_mut_ptr() as *mut egui::Color32;
+    std::mem::forget(rgba);
+    unsafe { Vec::from_raw_parts(ptr, len, cap) }
+}
+
 fn main() -> anyhow::Result<()> {
     // Prefer X11 backend on Wayland — winit's X11 backend supports
     // window control features (name, transparency) used below.
@@ -756,12 +765,13 @@ fn main() -> anyhow::Result<()> {
 
                         // Upload latest capture frame as egui texture (before egui frame)
                         #[cfg(feature = "capture")]
-                        if let Some(ref frame) = app.capture_latest_frame {
+                        if let Some(frame) = app.capture_latest_frame.take() {
                             if frame.width > 0 && frame.height > 0 {
-                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                    [frame.width as usize, frame.height as usize],
-                                    &frame.data,
-                                );
+                                let pixels = rgba_vec_to_color32(frame.data);
+                                let color_image = egui::ColorImage {
+                                    size: [frame.width as usize, frame.height as usize],
+                                    pixels,
+                                };
                                 if let Some(ref mut tex) = app.capture_texture {
                                     tex.set(color_image, egui::TextureOptions::LINEAR);
                                 } else {
