@@ -1,9 +1,9 @@
-//! Wayland screen capture via xdg-desktop-portal + PipeWire.
+//! Wayland screen capture via wlr-screencopy-unstable-v1 protocol.
 //!
 //! Feature-gated behind `capture` (off by default).
 
 mod frame;
-mod portal_pipewire;
+mod wlr_screencopy;
 
 pub use frame::{CapturedFrame, FrameSender};
 
@@ -20,8 +20,7 @@ pub struct CaptureSession {
 }
 
 impl CaptureSession {
-    /// Spawn the capture thread.  The portal permission dialog appears on
-    /// the first call.
+    /// Spawn the capture thread.
     pub fn start(tx: FrameSender) -> Result<Self> {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let flag = stop_flag.clone();
@@ -29,7 +28,7 @@ impl CaptureSession {
         let handle = thread::Builder::new()
             .name("capture".into())
             .spawn(move || {
-                if let Err(e) = portal_pipewire::run(tx, flag) {
+                if let Err(e) = wlr_screencopy::run(tx, flag) {
                     log::error!("Capture thread failed: {e:#}");
                 }
             })
