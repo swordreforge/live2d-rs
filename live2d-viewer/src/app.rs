@@ -364,6 +364,12 @@ pub struct AppState {
     pub tool_round_counter: u32,
     /// Tools approved for the entire session (skip approval dialog).
     pub session_approved_tools: std::collections::HashSet<String>,
+    /// Raw text input buffer for tool-calling allowed commands setting.
+    pub tool_calling_cmds_input: String,
+    /// Raw text input buffer for tool-calling allowed paths setting.
+    pub tool_calling_paths_input: String,
+    /// Previous frame's settings panel visibility (for detecting open transition).
+    pub settings_panel_was_open: bool,
     /// Timestamp (user_time_seconds) until which the current AI emotion persists.
     pub ai_emotion_until: Option<f64>,
     // ── TTS ──
@@ -509,6 +515,9 @@ impl AppState {
             safety_config,
             tool_round_counter: 0,
             session_approved_tools: std::collections::HashSet::new(),
+            tool_calling_cmds_input: String::new(),
+            tool_calling_paths_input: String::new(),
+            settings_panel_was_open: false,
             ai_emotion_until: None,
             tts_voices_cache: Vec::new(),
             tts_result_rx: None,

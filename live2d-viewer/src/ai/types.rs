@@ -31,6 +31,8 @@ pub enum ChatRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
     pub function: ToolCallFunction,
 }
 

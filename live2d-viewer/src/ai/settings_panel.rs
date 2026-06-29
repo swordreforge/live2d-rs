@@ -4,8 +4,16 @@ use egui::Window;
 /// Draw the AI settings panel (provider config + TTS config).
 pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
     if !app.ai_settings_open {
+        app.settings_panel_was_open = false;
         return;
     }
+
+    // Sync input buffers from config when panel first opens
+    if !app.settings_panel_was_open {
+        app.tool_calling_cmds_input = app.ai_config.allowed_commands.join(", ");
+        app.tool_calling_paths_input = app.ai_config.allowed_read_paths.join(", ");
+    }
+    app.settings_panel_was_open = true;
 
     Window::new("AI 设置")
         .default_width(360.0)
@@ -142,10 +150,18 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 }
 
                 ui.add_space(4.0);
-                ui.label("允许的命令（英文逗号分隔，留空=全部需审批）");
-                let mut cmds = app.ai_config.allowed_commands.join(",");
-                if ui.text_edit_singleline(&mut cmds).changed() {
-                    app.ai_config.allowed_commands = cmds
+                ui.label("允许的命令（逗号分隔，留空=全部需审批）");
+                let mut cmds = app.tool_calling_cmds_input.clone();
+                let cmds_resp = ui.text_edit_singleline(&mut cmds);
+                if cmds_resp.changed() {
+                    app.tool_calling_cmds_input = cmds;
+                }
+                if cmds_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    // parse on Enter
+                }
+                if cmds_resp.lost_focus() {
+                    app.ai_config.allowed_commands = app
+                        .tool_calling_cmds_input
                         .split(',')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
@@ -154,10 +170,15 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 }
 
                 ui.add_space(4.0);
-                ui.label("允许读取的路径前缀（英文逗号分隔，留空=不限制）");
-                let mut paths = app.ai_config.allowed_read_paths.join(",");
-                if ui.text_edit_singleline(&mut paths).changed() {
-                    app.ai_config.allowed_read_paths = paths
+                ui.label("允许读取的路径前缀（逗号分隔，留空=不限制）");
+                let mut paths = app.tool_calling_paths_input.clone();
+                let paths_resp = ui.text_edit_singleline(&mut paths);
+                if paths_resp.changed() {
+                    app.tool_calling_paths_input = paths;
+                }
+                if paths_resp.lost_focus() {
+                    app.ai_config.allowed_read_paths = app
+                        .tool_calling_paths_input
                         .split(',')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())

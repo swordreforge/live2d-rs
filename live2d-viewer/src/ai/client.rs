@@ -50,11 +50,15 @@ impl AiChatClient {
                 }
             }
             ChatRole::Assistant => {
-                obj["content"] = serde_json::Value::String(m.content.clone());
                 if let Some(ref tool_calls) = m.tool_calls {
                     if !tool_calls.is_empty() {
+                        obj["content"] = serde_json::Value::Null;
                         obj["tool_calls"] = serde_json::to_value(tool_calls).unwrap_or_default();
+                    } else {
+                        obj["content"] = serde_json::Value::String(m.content.clone());
                     }
+                } else {
+                    obj["content"] = serde_json::Value::String(m.content.clone());
                 }
             }
             _ => {
@@ -207,6 +211,7 @@ impl AiChatClient {
             if let (Some(id), Some(name)) = (id, name) {
                 let _ = tx.send(AiStreamEvent::ToolCall(ToolCall {
                     id,
+                    type_: "function".to_string(),
                     function: ToolCallFunction {
                         name,
                         arguments: args,
@@ -249,6 +254,7 @@ impl AiChatClient {
                     .filter_map(|tc| {
                         Some(ToolCall {
                             id: tc["id"].as_str()?.to_string(),
+                            type_: "function".to_string(),
                             function: ToolCallFunction {
                                 name: tc["function"]["name"].as_str()?.to_string(),
                                 arguments: tc["function"]["arguments"].as_str()?.to_string(),
