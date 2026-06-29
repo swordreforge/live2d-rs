@@ -2406,6 +2406,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
+ "ashpd 0.13.12",
  "dirs 5.0.1",
  "egui",
  "egui-winit",

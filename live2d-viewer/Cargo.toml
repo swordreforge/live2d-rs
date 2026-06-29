@@ -8,7 +8,7 @@ rust-version = "1.75"
 default = ["static-link", "ai"]
 static-link = ["live2d-core-sys/static-link"]
 ai = []
-capture = ["lamco-portal", "pipewire", "libspa"]
+capture = ["lamco-portal", "ashpd", "pipewire", "libspa"]
 
 [dependencies]
 live2d-core = { path = "../live2d-core" }
@@ -35,6 +35,7 @@ libsql = { version = "0.9", default-features = false, features = ["core"] }
 ab_glyph = "0.2"
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread"] }
 lamco-portal = { version = "0.4", optional = true }
+ashpd = { version = "0.13", optional = true }
 pipewire = { version = "0.10", optional = true }
 libspa = { version = "0.10", optional = true }
 dirs = "5"

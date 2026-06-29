@@ -1,17 +1,16 @@
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use pipewire as pw;
 
 use crate::capture::frame::{CapturedFrame, FrameSender};
 
-/// Holds the portal session alive for the entire capture duration.
 struct PortalSession {
-    _manager: lamco_portal::PortalManager,
-    _handle: lamco_portal::PortalSessionHandle,
+    _session: ashpd::desktop::Session<Screencast>,
     fd: OwnedFd,
     node_id: u32,
 }
@@ -30,28 +29,49 @@ fn portal_handshake() -> Result<PortalSession> {
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
     rt.block_on(async {
-        let manager = lamco_portal::PortalManager::with_default()
-            .await
-            .context("failed to create PortalManager")?;
+        let proxy = Screencast::new().await?;
 
-        let (handle, _restore_token) = manager
-            .create_session("live2d-capture".to_string(), None)
-            .await
-            .context("failed to create portal session")?;
+        let session = proxy.create_session(Default::default()).await?;
 
-        let raw_fd = handle.pipewire_fd();
-        // Safety: the raw fd is owned by the session handle which lives on,
-        // so the fd is valid for the entire session lifetime.
+        let source_types = SourceType::Monitor | SourceType::Window;
+        let select_options = ashpd::desktop::screencast::SelectSourcesOptions::default()
+            .set_cursor_mode(CursorMode::Embedded)
+            .set_sources(source_types)
+            .set_multiple(true)
+            .set_persist_mode(ashpd::desktop::PersistMode::ExplicitlyRevoked);
+
+        proxy
+            .select_sources(&session, select_options)
+            .await
+            .context("portal select_sources failed (user may have cancelled)")?;
+
+        log::info!("ScreenCast portal dialog should appear now");
+
+        let streams = proxy
+            .start(
+                &session,
+                None,
+                ashpd::desktop::screencast::StartCastOptions::default(),
+            )
+            .await?;
+
+        let response = streams.response()?;
+
+        let pw_fd = proxy
+            .open_pipe_wire_remote(&session, Default::default())
+            .await?;
+
+        let raw_fd = pw_fd.into_raw_fd();
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        let node_id = handle
+
+        let node_id = response
             .streams()
-            .last()
-            .map(|s| s.node_id)
+            .first()
+            .map(|s| s.pipe_wire_node_id())
             .ok_or_else(|| anyhow::anyhow!("portal returned no streams"))?;
 
         Ok(PortalSession {
-            _manager: manager,
-            _handle: handle,
+            _session: session,
             fd,
             node_id,
         })
@@ -89,7 +109,6 @@ fn pipewire_capture(
                     let offset = data.chunk().offset() as usize;
                     if size > 0 {
                         if let Some(slice) = data.data() {
-                            // slice is the full maxsize buffer; frame data starts at offset
                             if offset + size <= slice.len() {
                                 let frame_bytes = &slice[offset..offset + size];
                                 let n_pixels = frame_bytes.len() / 4;
@@ -132,8 +151,6 @@ fn pipewire_capture(
     Ok(())
 }
 
-/// Convert BGRx (32 bpp, B = byte 0, G = byte 1, R = byte 2, x = byte 3)
-/// to RGBA (R = byte 0, G = byte 1, B = byte 2, A = 255).
 fn bgrx_to_rgba(bgrx: &[u8], rgba: &mut [u8]) {
     for (src, dst) in bgrx.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
         dst[0] = src[2];
