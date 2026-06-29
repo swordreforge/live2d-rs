@@ -387,6 +387,12 @@ pub struct AppState {
     /// Frame counter to detect new frames (avoids redundant texture uploads).
     #[cfg(feature = "capture")]
     pub capture_frame_count: u64,
+    /// Active capture session (None = not capturing).
+    #[cfg(feature = "capture")]
+    pub(crate) capture_session: Option<crate::capture::CaptureSession>,
+    /// Receiver for captured frames from the capture thread.
+    #[cfg(feature = "capture")]
+    pub(crate) capture_rx: Option<std::sync::mpsc::Receiver<crate::capture::CapturedFrame>>,
 }
 
 impl AppState {
@@ -511,6 +517,10 @@ impl AppState {
             capture_window_open: true,
             #[cfg(feature = "capture")]
             capture_frame_count: 0,
+            #[cfg(feature = "capture")]
+            capture_session: None,
+            #[cfg(feature = "capture")]
+            capture_rx: None,
         }
     }
 
@@ -1635,6 +1645,50 @@ impl AppState {
         } else {
             // Still pending — put the receiver back
             self.tts_result_rx = Some(rx);
+        }
+    }
+
+    /// Start screen capture.  Spawns the capture thread and stores the receiver.
+    #[cfg(feature = "capture")]
+    pub fn start_capture(&mut self) {
+        if self.capture_session.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        match crate::capture::CaptureSession::start(tx) {
+            Ok(session) => {
+                log::info!("Screen capture started");
+                self.capture_session = Some(session);
+                self.capture_rx = Some(rx);
+            }
+            Err(e) => log::error!("Failed to start capture: {e:#}"),
+        }
+    }
+
+    /// Stop screen capture and clean up resources.
+    #[cfg(feature = "capture")]
+    pub fn stop_capture(&mut self) {
+        self.capture_session.take();
+        self.capture_rx.take();
+        self.capture_latest_frame.take();
+        self.capture_texture.take();
+        log::info!("Screen capture stopped");
+    }
+
+    /// Returns true if capture is currently active.
+    #[cfg(feature = "capture")]
+    pub fn is_capturing(&self) -> bool {
+        self.capture_session.is_some()
+    }
+
+    /// Drain all pending captured frames into `capture_latest_frame`.
+    #[cfg(feature = "capture")]
+    pub fn drain_capture_frames(&mut self) {
+        if let Some(ref rx) = self.capture_rx {
+            while let Ok(frame) = rx.try_recv() {
+                self.capture_frame_count += 1;
+                self.capture_latest_frame = Some(frame);
+            }
         }
     }
 

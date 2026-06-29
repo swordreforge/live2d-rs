@@ -419,24 +419,9 @@ fn main() -> anyhow::Result<()> {
 
     // ── Capture mode initialization ──────────────────────────────────────
     #[cfg(feature = "capture")]
-    let (_capture_session, capture_rx): (
-        Option<capture::CaptureSession>,
-        Option<std::sync::mpsc::Receiver<capture::CapturedFrame>>,
-    ) = if arg_capture {
-        let (tx, rx) = std::sync::mpsc::channel();
-        match capture::CaptureSession::start(tx) {
-            Ok(s) => {
-                log::info!("Screen capture started — portal dialog should appear");
-                (Some(s), Some(rx))
-            }
-            Err(e) => {
-                log::error!("Failed to start capture: {e:#}");
-                (None, None)
-            }
-        }
-    } else {
-        (None, None)
-    };
+    if arg_capture {
+        app.start_capture();
+    }
 
     event_loop.run(move |event, target| {
         match event {
@@ -1074,6 +1059,14 @@ fn main() -> anyhow::Result<()> {
                                                     let _ = app.begin_switch(idx + 1);
                                                 }
                                             }
+                                            #[cfg(feature = "capture")]
+                                            if code == KeyCode::F9 {
+                                                if app.is_capturing() {
+                                                    app.stop_capture();
+                                                } else {
+                                                    app.start_capture();
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1291,13 +1284,7 @@ fn main() -> anyhow::Result<()> {
 
                 // Drain captured frames from the capture thread, keep only the latest
                 #[cfg(feature = "capture")]
-                if let Some(ref rx) = capture_rx {
-                    while let Ok(frame) = rx.try_recv() {
-                        app.capture_frame_count += 1;
-                        log::debug!("capture frame #{}: {}x{}", app.capture_frame_count, frame.width, frame.height);
-                        app.capture_latest_frame = Some(frame);
-                    }
-                }
+                app.drain_capture_frames();
 
                 window.request_redraw();
             }
