@@ -79,7 +79,8 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
                 s.pool.take();
                 s.buf.take();
                 if let Some(ref shm) = s.shm {
-                    if let Ok(fd) = ensure_memfd(&mut s.pool_fd, size) {
+                    let _ = ensure_memfd(&mut s.pool_fd, size);
+                    if let Some(ref fd) = s.pool_fd {
                         let pool = shm.create_pool(fd.as_fd(), size as i32, qh, ());
                         let buf = pool.create_buffer(0, width as i32, height as i32, stride as i32, wl_shm::Format::Xrgb8888, qh, ());
                         s.pool = Some(pool);
@@ -96,12 +97,12 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
     }
 }
 
-fn ensure_memfd(fd_slot: &mut Option<OwnedFd>, size: usize) -> std::io::Result<OwnedFd> {
+fn ensure_memfd(fd_slot: &mut Option<OwnedFd>, size: usize) -> std::io::Result<()> {
     use std::os::fd::FromRawFd;
 
-    if let Some(fd) = fd_slot {
+    if let Some(ref fd) = fd_slot {
         if unsafe { libc::ftruncate(fd.as_raw_fd(), size as _) } == 0 {
-            return Ok(unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) });
+            return Ok(());
         }
         fd_slot.take();
     }
@@ -112,9 +113,8 @@ fn ensure_memfd(fd_slot: &mut Option<OwnedFd>, size: usize) -> std::io::Result<O
     if unsafe { libc::ftruncate(fd.as_raw_fd(), size as _) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    let new_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
     *fd_slot = Some(fd);
-    Ok(new_fd)
+    Ok(())
 }
 
 fn read_pixels(fd: &OwnedFd, w: u32, h: u32, stride: u32, dst: &mut Vec<u8>) {
