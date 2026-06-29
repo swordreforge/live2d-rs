@@ -17,6 +17,9 @@ mod v2_motion_sound;
 #[cfg(target_os = "linux")]
 pub mod wayland_pet;
 
+#[cfg(feature = "capture")]
+mod capture;
+
 use app::PetMode;
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
@@ -58,6 +61,8 @@ fn main() -> anyhow::Result<()> {
     let mut overlay_mode = false;
     let mut arg_click_through = false;
     let mut arg_pet_mode: Option<String> = None;
+    #[allow(unused_mut)]
+    let mut arg_capture = false;
     args.retain(|a| {
         if a == "--overlay" {
             overlay_mode = true;
@@ -67,6 +72,13 @@ fn main() -> anyhow::Result<()> {
             false
         } else if let Some(val) = a.strip_prefix("--pet-mode=") {
             arg_pet_mode = Some(val.to_string());
+            false
+        } else if a == "--capture" {
+            if !cfg!(feature = "capture") {
+                eprintln!("error: --capture requires the 'capture' feature");
+                std::process::exit(1);
+            }
+            arg_capture = true;
             false
         } else {
             true
@@ -403,6 +415,27 @@ fn main() -> anyhow::Result<()> {
         }
         let _ = app.pet_wayland_thread.take();
         app.pet_wayland_event_rx = None;
+    };
+
+    // ── Capture mode initialization ──────────────────────────────────────
+    #[cfg(feature = "capture")]
+    let (_capture_session, capture_rx): (
+        Option<capture::CaptureSession>,
+        Option<std::sync::mpsc::Receiver<capture::CapturedFrame>>,
+    ) = if arg_capture {
+        let (tx, rx) = std::sync::mpsc::channel();
+        match capture::CaptureSession::start(tx) {
+            Ok(s) => {
+                log::info!("Screen capture started — portal dialog should appear");
+                (Some(s), Some(rx))
+            }
+            Err(e) => {
+                log::error!("Failed to start capture: {e:#}");
+                (None, None)
+            }
+        }
+    } else {
+        (None, None)
     };
 
     event_loop.run(move |event, target| {
@@ -1234,6 +1267,19 @@ fn main() -> anyhow::Result<()> {
                     }
                     // Return the (now-empty) buffer to app for reuse next frame
                     app.pet_events_scratch = pet_events;
+                }
+
+                // Drain captured frames from the capture thread
+                #[cfg(feature = "capture")]
+                if let Some(ref rx) = capture_rx {
+                    while let Ok(frame) = rx.try_recv() {
+                        log::info!(
+                            "Captured frame: {}x{} ({} bytes)",
+                            frame.width,
+                            frame.height,
+                            frame.data.len(),
+                        );
+                    }
                 }
 
                 window.request_redraw();
