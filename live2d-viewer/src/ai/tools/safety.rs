@@ -16,6 +16,9 @@ pub struct SafetyConfig {
     pub allowed_read_paths: Vec<String>,
     /// Maximum tool call rounds per conversation turn.
     pub max_tool_rounds: u32,
+    /// Whether the current tool call was explicitly approved by the user.
+    /// When true, the command whitelist check is bypassed.
+    pub user_approved: bool,
 }
 
 /// Check if the first token of `cmd` is in the allowed commands list.

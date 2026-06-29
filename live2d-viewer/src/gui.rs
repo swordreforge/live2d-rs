@@ -869,7 +869,17 @@ fn draw_capture_preview(ctx: &egui::Context, app: &mut AppState) {
                     .min(1.0);
                 let display_size = egui::vec2(img_size.x * scale, img_size.y * scale);
                 ui.add(egui::Image::new((tex_id, display_size)));
-                ui.label(format!("{}x{} · F9 to stop", app.capture_latest_frame.as_ref().map(|f| f.width).unwrap_or(0), app.capture_latest_frame.as_ref().map(|f| f.height).unwrap_or(0)));
+                ui.label(format!(
+                    "{}x{} · F9 to stop",
+                    app.capture_latest_frame
+                        .as_ref()
+                        .map(|f| f.width)
+                        .unwrap_or(0),
+                    app.capture_latest_frame
+                        .as_ref()
+                        .map(|f| f.height)
+                        .unwrap_or(0)
+                ));
             } else {
                 ui.label("Waiting for capture data...");
                 ui.label("F9 to start capture");

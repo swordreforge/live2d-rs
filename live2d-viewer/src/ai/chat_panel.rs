@@ -250,6 +250,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     let mut clicked_send = false;
     let mut approve_clicked = false;
     let mut reject_clicked = false;
+    let mut remember_clicked = false;
 
     Window::new("AI 聊天 💬")
         .default_width(320.0)
@@ -317,6 +318,9 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                             reject_clicked = true;
                         }
                     });
+                    if ui.button("📌 记住本次会话（自动批准此工具）").clicked() {
+                        remember_clicked = true;
+                    }
                 });
                 ui.separator();
             }
@@ -345,5 +349,12 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     }
     if reject_clicked {
         app.reject_tool();
+    }
+    if remember_clicked {
+        if let AiState::PendingTool { ref tool_name, .. } = app.ai_state {
+            let name = tool_name.clone();
+            app.session_approved_tools.insert(name);
+            app.approve_tool();
+        }
     }
 }

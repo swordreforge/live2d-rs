@@ -26,8 +26,8 @@ pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
         .unwrap_or(5)
         .min(30);
 
-    // Check if the command is in the allowed list
-    if !is_command_allowed(cmd, &safety.allowed_commands) {
+    // Check if the command is in the allowed list (skip if user explicitly approved)
+    if !safety.user_approved && !is_command_allowed(cmd, &safety.allowed_commands) {
         return Err(format!(
             "command '{}' is not in the allowed commands list",
             cmd.split_whitespace().next().unwrap_or(cmd)
@@ -175,9 +175,10 @@ mod tests {
 
     fn safe_cfg() -> SafetyConfig {
         SafetyConfig {
-            allowed_commands: vec![],
+            allowed_commands: vec!["echo".to_string(), "sleep".to_string()],
             allowed_read_paths: vec![],
             max_tool_rounds: 10,
+            user_approved: false,
         }
     }
 

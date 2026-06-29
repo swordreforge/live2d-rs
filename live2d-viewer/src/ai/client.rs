@@ -81,6 +81,7 @@ impl AiChatClient {
         if let Some(tools) = tools {
             body["tools"] = serde_json::to_value(tools).unwrap_or_default();
             body["tool_choice"] = serde_json::json!("auto");
+            body["parallel_tool_calls"] = serde_json::json!(false);
         }
         body
     }

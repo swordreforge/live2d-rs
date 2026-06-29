@@ -360,6 +360,10 @@ pub struct AppState {
     pub ai_result_rx: Option<std::sync::mpsc::Receiver<crate::ai::types::AiStreamEvent>>,
     pub tool_registry: crate::ai::tools::registry::ToolRegistry,
     pub safety_config: crate::ai::tools::safety::SafetyConfig,
+    /// Counter for tool calling rounds in the current conversation turn.
+    pub tool_round_counter: u32,
+    /// Tools approved for the entire session (skip approval dialog).
+    pub session_approved_tools: std::collections::HashSet<String>,
     /// Timestamp (user_time_seconds) until which the current AI emotion persists.
     pub ai_emotion_until: Option<f64>,
     // ── TTS ──
@@ -402,6 +406,7 @@ impl AppState {
             allowed_commands: ai_config.allowed_commands.clone(),
             allowed_read_paths: ai_config.allowed_read_paths.clone(),
             max_tool_rounds: ai_config.max_tool_rounds,
+            user_approved: false,
         };
         Self {
             model_list: Vec::new(),
@@ -502,6 +507,8 @@ impl AppState {
             ai_result_rx: None,
             tool_registry: crate::ai::tools::registry::ToolRegistry::builtin(),
             safety_config,
+            tool_round_counter: 0,
+            session_approved_tools: std::collections::HashSet::new(),
             ai_emotion_until: None,
             tts_voices_cache: Vec::new(),
             tts_result_rx: None,
@@ -899,6 +906,7 @@ impl AppState {
             tool_call_id: None,
             tool_calls: None,
         });
+        self.tool_round_counter = 0;
 
         let mut api_messages = Vec::new();
 
@@ -1078,22 +1086,30 @@ impl AppState {
             });
 
             // Check safety: all tool calls must be approved
-            let all_safe = tool_calls.iter().all(|tc| {
+            let all_safe_or_session_approved = tool_calls.iter().all(|tc| {
                 self.tool_registry
                     .safety_level(&tc.function.name)
                     .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
+                    || self.session_approved_tools.contains(&tc.function.name)
             });
 
-            if all_safe {
-                // Auto-execute all safe tools then re-request
+            if all_safe_or_session_approved {
+                // Auto-execute all safe / session-approved tools then re-request
+                for tc in &tool_calls {
+                    if self.session_approved_tools.contains(&tc.function.name) {
+                        self.safety_config.user_approved = true;
+                    }
+                }
                 self.execute_tools_and_continue(tool_calls);
+                self.safety_config.user_approved = false;
             } else {
-                // First dangerous tool → enter PendingTool
+                // First non-approved dangerous tool → enter PendingTool
                 let tc = tool_calls.into_iter().find(|tc| {
-                    !self
+                    !(self
                         .tool_registry
                         .safety_level(&tc.function.name)
                         .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
+                        || self.session_approved_tools.contains(&tc.function.name))
                 });
                 if let Some(tc) = tc {
                     match serde_json::from_str(&tc.function.arguments) {
@@ -1359,9 +1375,21 @@ impl AppState {
                 tool_name,
                 args,
             } => {
+                // Enforce max tool rounds
+                self.tool_round_counter += 1;
+                if self.tool_round_counter > self.ai_config.max_tool_rounds {
+                    self.ai_state = AiState::Idle;
+                    self.ai_error = Some(format!(
+                        "工具调用轮次已达上限 ({})，强制终止",
+                        self.ai_config.max_tool_rounds
+                    ));
+                    return;
+                }
+
                 // Sync SafetyConfig from user-configured AiConfig
                 self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();
                 self.safety_config.max_tool_rounds = self.ai_config.max_tool_rounds;
+                self.safety_config.user_approved = true;
 
                 let start = std::time::Instant::now();
                 let result = self
@@ -1402,6 +1430,7 @@ impl AppState {
                     tool_call_id: Some(tool_call_id),
                     tool_calls: None,
                 });
+                self.safety_config.user_approved = false;
                 self.continue_with_tool_result();
             }
             _ => {
@@ -1545,6 +1574,17 @@ impl AppState {
     /// Auto-execute a set of safe tool calls and continue.
     fn execute_tools_and_continue(&mut self, tool_calls: Vec<crate::ai::types::ToolCall>) {
         use crate::ai::types::{ChatMessage, ChatRole};
+
+        // Enforce max tool rounds
+        self.tool_round_counter += 1;
+        if self.tool_round_counter > self.ai_config.max_tool_rounds {
+            self.ai_state = crate::ai::types::AiState::Idle;
+            self.ai_error = Some(format!(
+                "工具调用轮次已达上限 ({})，强制终止",
+                self.ai_config.max_tool_rounds
+            ));
+            return;
+        }
 
         // Sync SafetyConfig from user-configured AiConfig
         self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();

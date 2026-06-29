@@ -174,6 +174,7 @@ mod tests {
             allowed_commands: vec![],
             allowed_read_paths: vec![],
             max_tool_rounds: 10,
+            user_approved: false,
         };
         let result = reg.execute("nonexistent", &serde_json::json!({}), &safety);
         assert!(result.is_err());
