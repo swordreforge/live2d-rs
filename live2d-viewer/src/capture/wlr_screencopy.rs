@@ -196,7 +196,7 @@ pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
 
         s.frame.take();
         conn.flush().ok();
-        while eq.dispatch_pending(&mut s).is_ok() {}
+        eq.roundtrip(&mut s).context("roundtrip after destroy")?;
     }
 
     log::info!("wlr-screencopy stopped");
