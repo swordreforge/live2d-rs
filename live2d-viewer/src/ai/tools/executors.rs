@@ -1,5 +1,5 @@
+use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -11,11 +11,12 @@ const MAX_RESULT_CHARS: usize = 4096;
 
 /// Execute a shell command and return its stdout + stderr.
 ///
-/// Runs in a separate thread with a configurable timeout.
+/// Spawns the process in its own process group so we can kill all children on timeout.
+/// stdout/stderr are captured via pipe readers to avoid pipe buffer deadlocks.
 ///
 /// Arguments (from JSON):
 ///   cmd: string — the command to run.
-///   timeout_secs: number (optional, default 5) — timeout in seconds.
+///   timeout_secs: number (optional, default 5) — timeout in seconds (max 30).
 pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
     let cmd = args["cmd"]
         .as_str()
@@ -26,7 +27,6 @@ pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
         .unwrap_or(5)
         .min(30);
 
-    // Check if the command is in the allowed list (skip if user explicitly approved)
     if !safety.user_approved && !is_command_allowed(cmd, &safety.allowed_commands) {
         return Err(format!(
             "command '{}' is not in the allowed commands list",
@@ -34,43 +34,134 @@ pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
         ));
     }
 
-    let cmd_owned = cmd.to_string();
-    let (tx, rx) = mpsc::channel();
-    let handle = thread::spawn(move || {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&cmd_owned)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-        let _ = tx.send(output);
+    let mut cmd_builder = Command::new("sh");
+    cmd_builder.arg("-c").arg(cmd).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    // Create a new process group so we can kill all children on timeout
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd_builder.process_group(0);
+    }
+
+    let mut child = cmd_builder
+        .spawn()
+        .map_err(|e| format!("failed to spawn command: {e}"))?;
+
+    let pid = child.id();
+
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        buf
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf);
+        buf
     });
 
     let timeout_dur = Duration::from_secs(timeout);
-    let output = match rx.recv_timeout(timeout_dur) {
-        Ok(Ok(out)) => {
-            let _ = handle.join();
-            let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-            if !out.stderr.is_empty() {
-                text.push_str(&format!(
-                    "\nstderr:\n{}",
-                    String::from_utf8_lossy(&out.stderr)
-                ));
-            }
-            Ok(truncate_result(&text, MAX_RESULT_CHARS))
-        }
-        Ok(Err(e)) => {
-            let _ = handle.join();
-            Err(format!("command failed: {e}"))
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            // Thread still running; we can't easily kill it, but return timeout
-            Err(format!("command timed out after {timeout}s"))
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err("command thread crashed".to_string()),
-    };
+    let start = std::time::Instant::now();
 
-    output
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout_text = stdout_handle.join().unwrap_or_default();
+                let stderr_text = stderr_handle.join().unwrap_or_default();
+                return build_result(&stdout_text, &stderr_text, status.code());
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout_dur {
+                    kill_process_tree(pid);
+                    // Give children a moment to die, then collect output
+                    thread::sleep(Duration::from_millis(100));
+                    let stdout_text = stdout_handle.join().unwrap_or_default();
+                    let stderr_text = stderr_handle.join().unwrap_or_default();
+                    let mut result = truncate_smart(&stdout_text, MAX_RESULT_CHARS);
+                    if !stderr_text.is_empty() {
+                        if !result.is_empty() {
+                            result.push('\n');
+                        }
+                        result.push_str("stderr:\n");
+                        result.push_str(&truncate_smart(&stderr_text, MAX_RESULT_CHARS / 2));
+                    }
+                    if !result.is_empty() {
+                        result.push('\n');
+                    }
+                    result.push_str(&format!("⚠ 命令超时（{timeout}s），进程已终止"));
+                    return Ok(result);
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => {
+                kill_process_tree(pid);
+                return Err(format!("failed to wait for command: {e}"));
+            }
+        }
+    }
+}
+
+/// Kill a process group by PGID (negative PID = kill group).
+fn kill_process_tree(pid: u32) {
+    let pgid = pid as i32; // process_group(0) means PGID == PID
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    // SIGKILL after short grace period
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    });
+}
+
+/// Build the result string from stdout, stderr, and exit code.
+fn build_result(stdout: &str, stderr: &str, exit_code: Option<i32>) -> Result<String, String> {
+    let mut result = truncate_smart(stdout, MAX_RESULT_CHARS);
+
+    if !stderr.is_empty() {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str("stderr:\n");
+        result.push_str(&truncate_smart(stderr, MAX_RESULT_CHARS / 2));
+    }
+
+    match exit_code {
+        Some(0) => Ok(result),
+        Some(code) => {
+            if result.is_empty() {
+                Err(format!("command exited with code {code}"))
+            } else {
+                Ok(format!("{result}\n(exit code: {code})"))
+            }
+        }
+        None => {
+            if result.is_empty() {
+                Err("command terminated by signal".to_string())
+            } else {
+                Ok(result)
+            }
+        }
+    }
+}
+
+/// Smart truncation: keep first half + last half, show line count of removed middle.
+fn truncate_smart(s: &str, max_chars: usize) -> String {
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+    let half = max_chars / 2;
+    let start = &s[..half];
+    let end = &s[s.len() - half..];
+    let removed = &s[half..s.len() - half];
+    let removed_lines = removed.lines().count();
+    format!("{start}\n\n... [{removed_lines} lines truncated] ...\n\n{end}")
 }
 
 /// Read a text file and return its contents.
@@ -194,7 +285,9 @@ mod tests {
     fn exec_cmd_timeout() {
         let args = serde_json::json!({"cmd": "sleep 10", "timeout_secs": 1});
         let result = exec_cmd(&args, &safe_cfg());
-        assert!(result.is_err());
+        // Timeout returns Ok with partial output + warning (process killed)
+        let text = result.unwrap();
+        assert!(text.contains("超时") || text.contains("timed out"));
     }
 
     #[test]
