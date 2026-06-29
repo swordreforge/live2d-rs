@@ -281,6 +281,17 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     let mut reject_clicked = false;
     let mut remember_clicked = false;
 
+    // Extract card name before Window borrows app
+    let current_path = app
+        .current_model_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let card_name = app
+        .character_cards
+        .get(&current_path)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+
     Window::new("AI 聊天 💬")
         .default_width(320.0)
         .default_height(300.0)
@@ -290,6 +301,13 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(format!("模型: {}", app.ai_config.model));
+                if !card_name.is_empty() {
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(format!("角色: {card_name}"))
+                            .color(Color32::LIGHT_GREEN),
+                    );
+                }
                 if ui.button("📝").on_hover_text("编辑角色卡").clicked() {
                     app.character_card_editor_open = true;
                 }
