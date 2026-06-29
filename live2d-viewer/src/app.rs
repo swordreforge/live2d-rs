@@ -364,6 +364,8 @@ pub struct AppState {
     pub tool_round_counter: u32,
     /// Tools approved for the entire session (skip approval dialog).
     pub session_approved_tools: std::collections::HashSet<String>,
+    /// Queue of dangerous tool calls awaiting user approval (from same batch).
+    pub pending_tool_queue: Vec<crate::ai::types::ToolCall>,
     /// Raw text input buffer for tool-calling allowed commands setting.
     pub tool_calling_cmds_input: String,
     /// Raw text input buffer for tool-calling allowed paths setting.
@@ -413,6 +415,7 @@ impl AppState {
             allowed_read_paths: ai_config.allowed_read_paths.clone(),
             max_tool_rounds: ai_config.max_tool_rounds,
             user_approved: false,
+            working_dir: None,
         };
         Self {
             model_list: Vec::new(),
@@ -515,6 +518,7 @@ impl AppState {
             safety_config,
             tool_round_counter: 0,
             session_approved_tools: std::collections::HashSet::new(),
+            pending_tool_queue: Vec::new(),
             tool_calling_cmds_input: String::new(),
             tool_calling_paths_input: String::new(),
             settings_panel_was_open: false,
@@ -1094,46 +1098,49 @@ impl AppState {
                 tool_calls: Some(tool_calls.clone()),
             });
 
-            // Check safety: all tool calls must be approved
-            let all_safe_or_session_approved = tool_calls.iter().all(|tc| {
-                self.tool_registry
+            // Split into safe/session-approved and dangerous tool calls
+            let mut safe_tcs = Vec::new();
+            let mut dangerous_tcs = Vec::new();
+            for tc in tool_calls {
+                let is_safe = self
+                    .tool_registry
                     .safety_level(&tc.function.name)
                     .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
-                    || self.session_approved_tools.contains(&tc.function.name)
-            });
+                    || self.session_approved_tools.contains(&tc.function.name);
+                if is_safe {
+                    safe_tcs.push(tc);
+                } else {
+                    dangerous_tcs.push(tc);
+                }
+            }
 
-            if all_safe_or_session_approved {
-                // Auto-execute all safe / session-approved tools then re-request
-                for tc in &tool_calls {
+            // Auto-execute safe tools first
+            if !safe_tcs.is_empty() {
+                for tc in &safe_tcs {
                     if self.session_approved_tools.contains(&tc.function.name) {
                         self.safety_config.user_approved = true;
                     }
                 }
-                self.execute_tools_and_continue(tool_calls);
+                self.execute_tools_and_continue(safe_tcs);
                 self.safety_config.user_approved = false;
-            } else {
-                // First non-approved dangerous tool → enter PendingTool
-                let tc = tool_calls.into_iter().find(|tc| {
-                    !(self
-                        .tool_registry
-                        .safety_level(&tc.function.name)
-                        .is_some_and(|l| matches!(l, crate::ai::tools::safety::SafetyLevel::Safe))
-                        || self.session_approved_tools.contains(&tc.function.name))
-                });
-                if let Some(tc) = tc {
-                    match serde_json::from_str(&tc.function.arguments) {
-                        Ok(args) => {
-                            self.ai_state = AiState::PendingTool {
-                                tool_call_id: tc.id,
-                                tool_name: tc.function.name,
-                                args,
-                            };
-                        }
-                        Err(_) => {
-                            self.ai_state = AiState::Idle;
-                            self.ai_error =
-                                Some(format!("invalid tool args: {}", tc.function.arguments));
-                        }
+            }
+
+            // Queue dangerous tools and enter PendingTool for the first one
+            if !dangerous_tcs.is_empty() {
+                let first = dangerous_tcs.remove(0);
+                self.pending_tool_queue = dangerous_tcs;
+                match serde_json::from_str(&first.function.arguments) {
+                    Ok(args) => {
+                        self.ai_state = AiState::PendingTool {
+                            tool_call_id: first.id,
+                            tool_name: first.function.name,
+                            args,
+                        };
+                    }
+                    Err(_) => {
+                        self.ai_state = AiState::Idle;
+                        self.ai_error =
+                            Some(format!("invalid tool args: {}", first.function.arguments));
                     }
                 }
             }
@@ -1142,17 +1149,17 @@ impl AppState {
 
         // ── Normal completion (text response) ──
         self.ai_state = AiState::Idle;
-        let should_pop = self.ai_messages.last().is_some_and(|m| {
-            m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
+        // For tool-calling responses, the last message may be a Tool result.
+        // Find the last Assistant message to extract emotion from.
+        let last_assistant_idx = self.ai_messages.iter().rposition(|m| {
+            m.role == crate::ai::types::ChatRole::Assistant && !m.content.is_empty()
         });
-        let emotion = self
-            .ai_messages
-            .last_mut()
-            .filter(|m| m.role == crate::ai::types::ChatRole::Assistant)
-            .and_then(|m| extract_emotion_tag(&mut m.content));
-        if should_pop {
-            self.ai_messages.pop();
-        }
+        let emotion = last_assistant_idx
+            .and_then(|idx| {
+                self.ai_messages
+                    .get_mut(idx)
+                    .and_then(|m| extract_emotion_tag(&mut m.content))
+            });
         if let Some(emotion) = emotion {
             self.apply_emotion(&emotion);
         }
@@ -1399,6 +1406,7 @@ impl AppState {
                 self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();
                 self.safety_config.max_tool_rounds = self.ai_config.max_tool_rounds;
                 self.safety_config.user_approved = true;
+                self.safety_config.working_dir = self.current_model_dir().map(|p| p.to_path_buf());
 
                 let start = std::time::Instant::now();
                 let result = self
@@ -1440,7 +1448,7 @@ impl AppState {
                     tool_calls: None,
                 });
                 self.safety_config.user_approved = false;
-                self.continue_with_tool_result();
+                self.process_pending_tool_queue();
             }
             _ => {
                 self.ai_state = AiState::Idle;
@@ -1477,6 +1485,29 @@ impl AppState {
                 tool_call_id: Some(tool_call_id),
                 tool_calls: None,
             });
+            self.process_pending_tool_queue();
+        }
+    }
+
+    /// Process the next tool from the pending queue, or continue with the API.
+    fn process_pending_tool_queue(&mut self) {
+        if !self.pending_tool_queue.is_empty() {
+            let tc = self.pending_tool_queue.remove(0);
+            match serde_json::from_str(&tc.function.arguments) {
+                Ok(args) => {
+                    self.ai_state = crate::ai::types::AiState::PendingTool {
+                        tool_call_id: tc.id,
+                        tool_name: tc.function.name,
+                        args,
+                    };
+                }
+                Err(_) => {
+                    self.ai_error =
+                        Some(format!("invalid tool args: {}", tc.function.arguments));
+                    self.continue_with_tool_result();
+                }
+            }
+        } else {
             self.continue_with_tool_result();
         }
     }
@@ -1598,6 +1629,7 @@ impl AppState {
         // Sync SafetyConfig from user-configured AiConfig
         self.safety_config.allowed_commands = self.ai_config.allowed_commands.clone();
         self.safety_config.max_tool_rounds = self.ai_config.max_tool_rounds;
+        self.safety_config.working_dir = self.current_model_dir().map(|p| p.to_path_buf());
 
         let fp = self
             .current_model_dir()

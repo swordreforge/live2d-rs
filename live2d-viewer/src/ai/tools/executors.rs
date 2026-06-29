@@ -78,11 +78,11 @@ pub fn exec_cmd(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
 /// Arguments (from JSON):
 ///   path: string — path to the file.
 ///   max_lines: number (optional) — maximum lines to read.
-pub fn read_file(args: &Value, _safety: &SafetyConfig) -> Result<String, String> {
+pub fn read_file(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
     let raw_path = args["path"]
         .as_str()
         .ok_or_else(|| "missing 'path' argument".to_string())?;
-    let path = sanitize_path(raw_path, &_safety.allowed_read_paths)?;
+    let path = sanitize_path(raw_path, &safety.allowed_read_paths, safety.working_dir.as_deref())?;
     let max_lines = args.get("max_lines").and_then(|v| v.as_u64());
 
     let content = std::fs::read_to_string(&path)
@@ -103,11 +103,11 @@ pub fn read_file(args: &Value, _safety: &SafetyConfig) -> Result<String, String>
 /// Arguments:
 ///   path: string — directory path.
 ///   max_entries: number (optional, default 50).
-pub fn list_dir(args: &Value, _safety: &SafetyConfig) -> Result<String, String> {
+pub fn list_dir(args: &Value, safety: &SafetyConfig) -> Result<String, String> {
     let raw_path = args["path"]
         .as_str()
         .ok_or_else(|| "missing 'path' argument".to_string())?;
-    let path = sanitize_path(raw_path, &_safety.allowed_read_paths)?;
+    let path = sanitize_path(raw_path, &safety.allowed_read_paths, safety.working_dir.as_deref())?;
     let max_entries = args
         .get("max_entries")
         .and_then(|v| v.as_u64())
@@ -179,6 +179,7 @@ mod tests {
             allowed_read_paths: vec![],
             max_tool_rounds: 10,
             user_approved: false,
+            working_dir: None,
         }
     }
 

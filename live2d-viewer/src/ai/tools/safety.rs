@@ -19,6 +19,8 @@ pub struct SafetyConfig {
     /// Whether the current tool call was explicitly approved by the user.
     /// When true, the command whitelist check is bypassed.
     pub user_approved: bool,
+    /// Working directory for resolving relative paths in file tools.
+    pub working_dir: Option<std::path::PathBuf>,
 }
 
 /// Check if the first token of `cmd` is in the allowed commands list.
@@ -35,10 +37,15 @@ pub fn is_command_allowed(cmd: &str, allowed: &[String]) -> bool {
 /// Sanitize a path string:
 ///
 /// - Expands `~` to the user's home directory.
+/// - Resolves relative paths against `working_dir` when provided.
 /// - Rejects paths containing `..` components.
 /// - When `allowed_roots` is non-empty, rejects paths that don't start with
 ///   one of the allowed prefixes (after canonicalization).
-pub fn sanitize_path(raw: &str, allowed_roots: &[String]) -> Result<PathBuf, String> {
+pub fn sanitize_path(
+    raw: &str,
+    allowed_roots: &[String],
+    working_dir: Option<&std::path::Path>,
+) -> Result<PathBuf, String> {
     let expanded = if let Some(rest) = raw.strip_prefix('~') {
         let home = dirs::home_dir().ok_or_else(|| "cannot determine home directory".to_string())?;
         if rest.is_empty() || rest.starts_with('/') {
@@ -50,12 +57,23 @@ pub fn sanitize_path(raw: &str, allowed_roots: &[String]) -> Result<PathBuf, Str
         PathBuf::from(raw)
     };
 
-    if expanded.components().any(|c| c.as_os_str() == "..") {
+    // Resolve relative paths against working_dir
+    let resolved = if !expanded.is_absolute() {
+        if let Some(wd) = working_dir {
+            wd.join(&expanded)
+        } else {
+            expanded
+        }
+    } else {
+        expanded
+    };
+
+    if resolved.components().any(|c| c.as_os_str() == "..") {
         return Err("path contains '..' which is not allowed".to_string());
     }
 
     if !allowed_roots.is_empty() {
-        let canonical = expanded
+        let canonical = resolved
             .canonicalize()
             .map_err(|e| format!("cannot resolve path: {e}"))?;
         let allowed = allowed_roots.iter().any(|root| canonical.starts_with(root));
@@ -67,7 +85,7 @@ pub fn sanitize_path(raw: &str, allowed_roots: &[String]) -> Result<PathBuf, Str
         }
     }
 
-    Ok(expanded)
+    Ok(resolved)
 }
 
 /// Truncate a string to at most `max_chars` characters, appending a
@@ -100,19 +118,19 @@ mod tests {
 
     #[test]
     fn sanitize_path_rejects_double_dot() {
-        assert!(sanitize_path("/home/user/../../etc/passwd", &[]).is_err());
+        assert!(sanitize_path("/home/user/../../etc/passwd", &[], None).is_err());
     }
 
     #[test]
     fn sanitize_path_expands_tilde() {
-        let result = sanitize_path("~/test", &[]).unwrap();
+        let result = sanitize_path("~/test", &[], None).unwrap();
         assert!(result.starts_with(&dirs::home_dir().unwrap()));
     }
 
     #[test]
     fn sanitize_path_rejects_outside_allowed_roots() {
         let allowed = vec!["/home/user".to_string()];
-        let bad = sanitize_path("/tmp/foo", &allowed);
+        let bad = sanitize_path("/tmp/foo", &allowed, None);
         assert!(bad.is_err());
     }
 

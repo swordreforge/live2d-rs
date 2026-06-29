@@ -4,6 +4,35 @@ use crate::ai::types::{AiState, ChatRole};
 use crate::app::AppState;
 use egui::{Color32, Grid, Window};
 
+/// Strip `<system-reminder>...</system-reminder>` and similar HTML tags from content.
+fn strip_system_tags(text: &str) -> String {
+    let mut result = text.to_string();
+    // Strip <system-reminder>...</system-reminder> blocks (case-insensitive)
+    while let Some(start) = result.to_lowercase().find("<system-reminder") {
+        if let Some(tag_end) = result[start..].find('>') {
+            let content_start = start + tag_end + 1;
+            if let Some(end) = result[content_start..]
+                .to_lowercase()
+                .find("</system-reminder>")
+            {
+                let content_end = content_start + end;
+                result = format!(
+                    "{}{}",
+                    &result[..start],
+                    &result[content_end + "</system-reminder>".len()..]
+                );
+            } else {
+                // No closing tag — strip from opening tag to end
+                result = result[..start].to_string();
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    result
+}
+
 fn flush_plain(ui: &mut egui::Ui, buf: &mut String, bold: bool) {
     if !buf.is_empty() {
         let text = std::mem::take(buf);
@@ -279,10 +308,11 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                         };
                         ui.colored_label(color, format!("[{}]", prefix));
 
+                        let cleaned = strip_system_tags(&msg.content);
                         if msg.role == ChatRole::Assistant {
-                            render_markdown(ui, &msg.content);
+                            render_markdown(ui, &cleaned);
                         } else {
-                            ui.label(&msg.content);
+                            ui.label(&cleaned);
                         }
                         ui.add_space(4.0);
                     }
