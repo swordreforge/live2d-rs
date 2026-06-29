@@ -373,6 +373,20 @@ pub struct AppState {
     pub character_cards: HashMap<String, CharacterCard>,
     /// Character card editor window visibility.
     pub character_card_editor_open: bool,
+
+    // ── Screen Capture Preview ──
+    /// Latest captured frame from the capture thread (feature: capture).
+    #[cfg(feature = "capture")]
+    pub capture_latest_frame: Option<crate::capture::CapturedFrame>,
+    /// Egui texture handle for the capture preview.
+    #[cfg(feature = "capture")]
+    pub capture_texture: Option<egui::TextureHandle>,
+    /// Whether the capture preview window is visible.
+    #[cfg(feature = "capture")]
+    pub capture_window_open: bool,
+    /// Frame counter to detect new frames (avoids redundant texture uploads).
+    #[cfg(feature = "capture")]
+    pub capture_frame_count: u64,
 }
 
 impl AppState {
@@ -488,6 +502,15 @@ impl AppState {
             tts_refresh_requested: false,
             character_cards: HashMap::new(),
             character_card_editor_open: false,
+
+            #[cfg(feature = "capture")]
+            capture_latest_frame: None,
+            #[cfg(feature = "capture")]
+            capture_texture: None,
+            #[cfg(feature = "capture")]
+            capture_window_open: true,
+            #[cfg(feature = "capture")]
+            capture_frame_count: 0,
         }
     }
 

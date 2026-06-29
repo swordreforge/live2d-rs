@@ -48,6 +48,10 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     // Character card editor window
     crate::ai::character_card_panel::draw_character_card_panel(ctx, app);
 
+    // Screen capture preview window
+    #[cfg(feature = "capture")]
+    draw_capture_preview(ctx, app);
+
     // Toggle buttons in top-right corner
     egui::Area::new("toggle_btns".into())
         .fixed_pos(egui::pos2(ctx.screen_rect().right() - 76.0, 4.0))
@@ -813,4 +817,45 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
 
 fn small_btn(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(egui::Button::new(label).min_size(egui::vec2(24.0, 22.0)))
+}
+
+#[cfg(feature = "capture")]
+fn draw_capture_preview(ctx: &egui::Context, app: &mut AppState) {
+    if !app.capture_window_open {
+        return;
+    }
+
+    let default_size = if let Some(ref frame) = app.capture_latest_frame {
+        let screen = ctx.screen_rect();
+        let (sw, sh) = (screen.width(), screen.height());
+        let (cw, ch) = (frame.width as f32, frame.height as f32);
+        if cw > 0.0 && ch > 0.0 {
+            let scale = (sw / cw).max(sh / ch) * 0.25;
+            egui::vec2((cw * scale).max(160.0), (ch * scale).max(120.0))
+        } else {
+            egui::vec2(320.0, 240.0)
+        }
+    } else {
+        egui::vec2(320.0, 240.0)
+    };
+
+    egui::Window::new("Capture Preview")
+        .id("capture_preview_window".into())
+        .resizable(true)
+        .collapsible(true)
+        .default_size(default_size)
+        .show(ctx, |ui| {
+            if let Some(ref tex) = app.capture_texture {
+                let tex_id = tex.id();
+                let img_size = egui::vec2(tex.size()[0] as f32, tex.size()[1] as f32);
+                let available = ui.available_size();
+                let scale = (available.x / img_size.x)
+                    .min(available.y / img_size.y)
+                    .min(1.0);
+                let display_size = egui::vec2(img_size.x * scale, img_size.y * scale);
+                ui.add(egui::Image::new((tex_id, display_size)));
+            } else {
+                ui.label("Waiting for capture data...");
+            }
+        });
 }

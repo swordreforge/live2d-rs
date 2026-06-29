@@ -769,7 +769,27 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        // --- Egui frame (skipped when AlwaysOnTop minimized — 1×1 window crashes font.rs) ---
+                        // Upload latest capture frame as egui texture (before egui frame)
+                        #[cfg(feature = "capture")]
+                        if let Some(ref frame) = app.capture_latest_frame {
+                            if frame.width > 0 && frame.height > 0 {
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [frame.width as usize, frame.height as usize],
+                                    &frame.data,
+                                );
+                                if let Some(ref mut tex) = app.capture_texture {
+                                    tex.set(color_image, egui::TextureOptions::LINEAR);
+                                } else {
+                                    app.capture_texture = Some(egui_ctx.load_texture(
+                                        "capture_preview",
+                                        color_image,
+                                        egui::TextureOptions::LINEAR,
+                                    ));
+                                }
+                            }
+                        }
+
+                        // --- Egui frame (skipped when AlwaysOnTop minimized — 1×1 surface crashes font.rs) ---
                         if app.minimized_to_float && app.pet_mode == PetMode::AlwaysOnTop {
                             // No egui frame: 1×1 surface, model already skipped, we just clear to
                             // transparent and swap.  run_ui_animations still fires from event
@@ -1269,16 +1289,13 @@ fn main() -> anyhow::Result<()> {
                     app.pet_events_scratch = pet_events;
                 }
 
-                // Drain captured frames from the capture thread
+                // Drain captured frames from the capture thread, keep only the latest
                 #[cfg(feature = "capture")]
                 if let Some(ref rx) = capture_rx {
                     while let Ok(frame) = rx.try_recv() {
-                        log::info!(
-                            "Captured frame: {}x{} ({} bytes)",
-                            frame.width,
-                            frame.height,
-                            frame.data.len(),
-                        );
+                        app.capture_frame_count += 1;
+                        log::debug!("capture frame #{}: {}x{}", app.capture_frame_count, frame.width, frame.height);
+                        app.capture_latest_frame = Some(frame);
                     }
                 }
 

@@ -1,161 +1,199 @@
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
-use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
-use pipewire as pw;
+use wayland_client::{
+    protocol::{wl_output, wl_registry, wl_shm, wl_shm_pool},
+    Connection, Dispatch, QueueHandle,
+};
+use wayland_protocols_wlr::screencopy::v1::client::{
+    zwlr_screencopy_frame_v1, zwlr_screencopy_manager_v1,
+};
 
 use crate::capture::frame::{CapturedFrame, FrameSender};
 
-struct PortalSession {
-    _session: ashpd::desktop::Session<Screencast>,
-    fd: OwnedFd,
-    node_id: u32,
+macro_rules! noop {
+    ($ty:ty) => {
+        impl Dispatch<$ty, ()> for State {
+            fn event(_: &mut Self, _: &$ty, _: <$ty as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+        }
+    };
 }
 
-pub fn run(tx: FrameSender, stop_flag: Arc<AtomicBool>) -> Result<()> {
-    let portal = portal_handshake()?;
-    log::info!(
-        "Portal ready: node_id={}, fd={}",
-        portal.node_id,
-        portal.fd.as_raw_fd(),
-    );
-    pipewire_capture(tx, portal, stop_flag)
-}
-
-fn portal_handshake() -> Result<PortalSession> {
-    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-
-    rt.block_on(async {
-        let proxy = Screencast::new().await?;
-
-        let session = proxy.create_session(Default::default()).await?;
-
-        let source_types = SourceType::Monitor | SourceType::Window;
-        let select_options = ashpd::desktop::screencast::SelectSourcesOptions::default()
-            .set_cursor_mode(CursorMode::Embedded)
-            .set_sources(source_types)
-            .set_multiple(true)
-            .set_persist_mode(ashpd::desktop::PersistMode::ExplicitlyRevoked);
-
-        proxy
-            .select_sources(&session, select_options)
-            .await
-            .context("portal select_sources failed (user may have cancelled)")?;
-
-        log::info!("ScreenCast portal dialog should appear now");
-
-        let streams = proxy
-            .start(
-                &session,
-                None,
-                ashpd::desktop::screencast::StartCastOptions::default(),
-            )
-            .await?;
-
-        let response = streams.response()?;
-
-        let pw_fd = proxy
-            .open_pipe_wire_remote(&session, Default::default())
-            .await?;
-
-        let raw_fd = pw_fd.into_raw_fd();
-        let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-
-        let node_id = response
-            .streams()
-            .first()
-            .map(|s| s.pipe_wire_node_id())
-            .ok_or_else(|| anyhow::anyhow!("portal returned no streams"))?;
-
-        Ok(PortalSession {
-            _session: session,
-            fd,
-            node_id,
-        })
-    })
-}
-
-fn pipewire_capture(
+struct State {
+    shm: Option<wl_shm::WlShm>,
+    screencopy: Option<zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1>,
+    outputs: Vec<wl_output::WlOutput>,
+    frame: Option<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1>,
+    pool: Option<wl_shm_pool::WlShmPool>,
+    buf: Option<wayland_client::protocol::wl_buffer::WlBuffer>,
+    pool_fd: Option<OwnedFd>,
+    pool_size: usize,
+    w: u32,
+    h: u32,
+    stride: u32,
+    buffer_ready: bool,
+    copy_done: bool,
+    failed: bool,
     tx: FrameSender,
-    portal: PortalSession,
-    stop_flag: Arc<AtomicBool>,
-) -> Result<()> {
-    pw::init();
+    stop: Arc<AtomicBool>,
+}
 
-    let mainloop =
-        pw::main_loop::MainLoopRc::new(None).context("failed to create PipeWire mainloop")?;
-    let context = pw::context::ContextBox::new(mainloop.loop_(), None)
-        .context("failed to create PipeWire context")?;
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
+    fn event(
+        s: &mut Self, reg: &wl_registry::WlRegistry,
+        event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
+        _: &(), _: &Connection, qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            match &interface[..] {
+                "wl_shm" => s.shm = Some(reg.bind(name, 1, qh, ())),
+                "zwlr_screencopy_manager_v1" if version >= 3 => s.screencopy = Some(reg.bind(name, 3, qh, ())),
+                "wl_output" => s.outputs.push(reg.bind::<wl_output::WlOutput, _, _>(name, 1, qh, ())),
+                _ => {}
+            }
+        }
+    }
+}
 
-    let core = context
-        .connect_fd(portal.fd, None)
-        .context("failed to connect PipeWire core via portal fd")?;
+noop!(wl_shm::WlShm);
+noop!(wl_output::WlOutput);
+noop!(zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1);
+noop!(wl_shm_pool::WlShmPool);
+noop!(wayland_client::protocol::wl_buffer::WlBuffer);
 
-    let mut stream_props = pw::properties::PropertiesBox::new();
-    stream_props.insert("node.name", "live2d-capture-input");
-
-    let stream = pw::stream::StreamBox::new(&core, "live2d-capture", stream_props)
-        .context("failed to create PipeWire stream")?;
-
-    let _listener = stream
-        .add_local_listener_with_user_data(tx)
-        .process(move |s, user_tx| {
-            if let Some(mut buf) = s.dequeue_buffer() {
-                if let Some(data) = buf.datas_mut().first_mut() {
-                    let size = data.chunk().size() as usize;
-                    let offset = data.chunk().offset() as usize;
-                    if size > 0 {
-                        if let Some(slice) = data.data() {
-                            if offset + size <= slice.len() {
-                                let frame_bytes = &slice[offset..offset + size];
-                                let n_pixels = frame_bytes.len() / 4;
-                                let mut rgba = vec![0u8; n_pixels * 4];
-                                bgrx_to_rgba(frame_bytes, &mut rgba);
-                                let frame = CapturedFrame {
-                                    data: rgba,
-                                    width: 0,
-                                    height: 0,
-                                };
-                                let _ = user_tx.send(frame);
-                            }
-                        }
+impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
+    fn event(
+        s: &mut Self, _: &zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
+        event: <zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
+        _: &(), _: &Connection, qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_screencopy_frame_v1::Event::Buffer { width, height, stride, .. } => {
+                s.w = width;
+                s.h = height;
+                s.stride = stride;
+                let size = stride as usize * height as usize;
+                s.pool.take();
+                s.buf.take();
+                if let Some(ref shm) = s.shm {
+                    if let Ok(fd) = create_memfd(size) {
+                        let pool = shm.create_pool(fd.as_fd(), size as i32, qh, ());
+                        let buf = pool.create_buffer(0, width as i32, height as i32, stride as i32, wl_shm::Format::Xrgb8888, qh, ());
+                        s.pool = Some(pool);
+                        s.buf = Some(buf);
+                        s.pool_size = size;
+                        s.pool_fd = Some(fd);
                     }
                 }
+                s.buffer_ready = true;
             }
-        })
-        .register();
-
-    let timer = {
-        let stop = stop_flag.clone();
-        let ml = mainloop.clone();
-        mainloop.loop_().add_timer(move |_expirations| {
-            if stop.load(Ordering::Relaxed) {
-                ml.quit();
-            }
-        })
-    };
-    timer
-        .update_timer(
-            Some(Duration::from_millis(200)),
-            Some(Duration::from_millis(200)),
-        )
-        .into_result()
-        .context("failed to update timer")?;
-
-    log::info!("PipeWire capture loop starting");
-    mainloop.run();
-    log::info!("PipeWire capture loop exited");
-    Ok(())
+            zwlr_screencopy_frame_v1::Event::Ready { .. } => s.copy_done = true,
+            zwlr_screencopy_frame_v1::Event::Failed { .. } => s.failed = true,
+            _ => {}
+        }
+    }
 }
 
-fn bgrx_to_rgba(bgrx: &[u8], rgba: &mut [u8]) {
-    for (src, dst) in bgrx.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
-        dst[3] = 255;
+fn create_memfd(size: usize) -> std::io::Result<OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let raw = unsafe { libc::memfd_create(b"sc\0".as_ptr().cast(), 0) };
+    if raw < 0 { return Err(std::io::Error::last_os_error()); }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), size as _) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    Ok(fd)
+}
+
+fn mmap_read(fd: &OwnedFd, w: u32, h: u32, stride: u32) -> Vec<u8> {
+    let size = stride as usize * h as usize;
+    let mut rgba = vec![0u8; w as usize * h as usize * 4];
+    unsafe {
+        let ptr = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0);
+        if ptr != libc::MAP_FAILED {
+            let src = std::slice::from_raw_parts(ptr as *const u8, size);
+            for y in 0..h as usize {
+                let sr = y * stride as usize;
+                let dr = y * w as usize * 4;
+                for x in 0..w as usize {
+                    let si = sr + x * 4;
+                    let di = dr + x * 4;
+                    rgba[di] = src[si + 2];
+                    rgba[di + 1] = src[si + 1];
+                    rgba[di + 2] = src[si];
+                    rgba[di + 3] = 255;
+                }
+            }
+            libc::munmap(ptr, size);
+        }
+    }
+    rgba
+}
+
+pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
+    let conn = Connection::connect_to_env().context("Wayland connect")?;
+    let mut eq = conn.new_event_queue();
+    let qh = eq.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut s = State {
+        shm: None, screencopy: None, outputs: vec![],
+        frame: None, pool: None, buf: None, pool_fd: None, pool_size: 0,
+        w: 0, h: 0, stride: 0, buffer_ready: false, copy_done: false, failed: false,
+        tx, stop,
+    };
+
+    eq.roundtrip(&mut s).context("roundtrip")?;
+
+    let output = s.outputs.first().ok_or_else(|| anyhow::anyhow!("no outputs"))?.clone();
+    let sc = s.screencopy.take().ok_or_else(|| anyhow::anyhow!("no screencopy"))?;
+
+    log::info!("wlr-screencopy ready, capturing {}x{}...", s.w, s.h);
+
+    loop {
+        if s.stop.load(Ordering::Relaxed) { break; }
+
+        s.buffer_ready = false;
+        s.copy_done = false;
+        s.failed = false;
+
+        // 1. Request capture
+        s.frame = Some(sc.capture_output(1, &output, &qh, ()));
+        conn.flush().ok();
+
+        // 2. Wait for buffer event (format/size/stride)
+        while !s.buffer_ready && !s.failed {
+            eq.blocking_dispatch(&mut s).context("wait buffer")?;
+        }
+        if s.failed { s.frame.take(); continue; }
+
+        // 3. Copy to our buffer
+        if let (Some(ref frame), Some(ref buf)) = (&s.frame, &s.buf) {
+            frame.copy(buf);
+        }
+        conn.flush().ok();
+
+        // 4. Wait for ready
+        while !s.copy_done && !s.failed {
+            eq.blocking_dispatch(&mut s).context("wait ready")?;
+        }
+        if s.failed { s.frame.take(); continue; }
+
+        // 5. Read pixels
+        if let Some(ref fd) = s.pool_fd {
+            let rgba = mmap_read(fd, s.w, s.h, s.stride);
+            log::debug!("captured frame {}x{} ({} bytes)", s.w, s.h, rgba.len());
+            let _ = s.tx.send(CapturedFrame { data: rgba, width: s.w, height: s.h });
+        }
+
+        // 6. Destroy frame (start fresh next iteration)
+        s.frame.take();
+        conn.flush().ok();
+        eq.roundtrip(&mut s).context("roundtrip after destroy")?;
+    }
+
+    log::info!("wlr-screencopy stopped");
+    Ok(())
 }
