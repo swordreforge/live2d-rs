@@ -54,7 +54,7 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
     // Toggle buttons in top-right corner
     egui::Area::new("toggle_btns".into())
-        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 76.0, 4.0))
+        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 110.0, 4.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if app.ai_enabled && app.pet_mode == PetMode::Off {
@@ -65,6 +65,21 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
                     };
                     if ui.button(chat_label).clicked() {
                         app.ai_chat_open = !app.ai_chat_open;
+                    }
+                }
+                #[cfg(feature = "capture")]
+                {
+                    let cap_label = if app.is_capturing() {
+                        "\u{1F534}"
+                    } else {
+                        "\u{26AA}"
+                    };
+                    if ui.button(cap_label).clicked() {
+                        if app.is_capturing() {
+                            app.stop_capture();
+                        } else {
+                            app.start_capture();
+                        }
                     }
                 }
                 if ui.button("\u{2699}").clicked() {
