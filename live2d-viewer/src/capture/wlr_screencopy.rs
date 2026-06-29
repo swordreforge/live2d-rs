@@ -33,6 +33,7 @@ struct State {
     w: u32,
     h: u32,
     stride: u32,
+    rgba_buf: Vec<u8>,
     buffer_ready: bool,
     copy_done: bool,
     failed: bool,
@@ -78,13 +79,12 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
                 s.pool.take();
                 s.buf.take();
                 if let Some(ref shm) = s.shm {
-                    if let Ok(fd) = create_memfd(size) {
+                    if let Ok(fd) = ensure_memfd(&mut s.pool_fd, size) {
                         let pool = shm.create_pool(fd.as_fd(), size as i32, qh, ());
                         let buf = pool.create_buffer(0, width as i32, height as i32, stride as i32, wl_shm::Format::Xrgb8888, qh, ());
                         s.pool = Some(pool);
                         s.buf = Some(buf);
                         s.pool_size = size;
-                        s.pool_fd = Some(fd);
                     }
                 }
                 s.buffer_ready = true;
@@ -96,40 +96,50 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
     }
 }
 
-fn create_memfd(size: usize) -> std::io::Result<OwnedFd> {
+fn ensure_memfd(fd_slot: &mut Option<OwnedFd>, size: usize) -> std::io::Result<OwnedFd> {
     use std::os::fd::FromRawFd;
+
+    if let Some(fd) = fd_slot {
+        if unsafe { libc::ftruncate(fd.as_raw_fd(), size as _) } == 0 {
+            return Ok(unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) });
+        }
+        fd_slot.take();
+    }
+
     let raw = unsafe { libc::memfd_create(b"sc\0".as_ptr().cast(), 0) };
     if raw < 0 { return Err(std::io::Error::last_os_error()); }
     let fd = unsafe { OwnedFd::from_raw_fd(raw) };
     if unsafe { libc::ftruncate(fd.as_raw_fd(), size as _) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok(fd)
+    let new_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
+    *fd_slot = Some(fd);
+    Ok(new_fd)
 }
 
-fn mmap_read(fd: &OwnedFd, w: u32, h: u32, stride: u32) -> Vec<u8> {
+fn read_pixels(fd: &OwnedFd, w: u32, h: u32, stride: u32, dst: &mut Vec<u8>) {
     let size = stride as usize * h as usize;
-    let mut rgba = vec![0u8; w as usize * h as usize * 4];
+    let dst_len = w as usize * h as usize * 4;
+    dst.resize(dst_len, 0);
+
     unsafe {
         let ptr = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0);
-        if ptr != libc::MAP_FAILED {
-            let src = std::slice::from_raw_parts(ptr as *const u8, size);
-            for y in 0..h as usize {
-                let sr = y * stride as usize;
-                let dr = y * w as usize * 4;
-                for x in 0..w as usize {
-                    let si = sr + x * 4;
-                    let di = dr + x * 4;
-                    rgba[di] = src[si + 2];
-                    rgba[di + 1] = src[si + 1];
-                    rgba[di + 2] = src[si];
-                    rgba[di + 3] = 255;
-                }
+        if ptr == libc::MAP_FAILED { return; }
+
+        let src = std::slice::from_raw_parts(ptr as *const u32, size / 4);
+        let dst_u32 = std::slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u32, dst_len / 4);
+
+        for y in 0..h as usize {
+            let src_row = y * stride as usize / 4;
+            let dst_row = y * w as usize;
+            for x in 0..w as usize {
+                let pixel = src[src_row + x];
+                dst_u32[dst_row + x] = ((pixel & 0xFF) << 16) | (pixel & 0xFF00) | ((pixel >> 16) & 0xFF) | 0xFF00_0000;
             }
-            libc::munmap(ptr, size);
         }
+
+        libc::munmap(ptr, size);
     }
-    rgba
 }
 
 pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
@@ -141,7 +151,8 @@ pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
     let mut s = State {
         shm: None, screencopy: None, outputs: vec![],
         frame: None, pool: None, buf: None, pool_fd: None, pool_size: 0,
-        w: 0, h: 0, stride: 0, buffer_ready: false, copy_done: false, failed: false,
+        w: 0, h: 0, stride: 0, rgba_buf: Vec::new(),
+        buffer_ready: false, copy_done: false, failed: false,
         tx, stop,
     };
 
@@ -150,7 +161,7 @@ pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
     let output = s.outputs.first().ok_or_else(|| anyhow::anyhow!("no outputs"))?.clone();
     let sc = s.screencopy.take().ok_or_else(|| anyhow::anyhow!("no screencopy"))?;
 
-    log::info!("wlr-screencopy ready, capturing {}x{}...", s.w, s.h);
+    log::info!("wlr-screencopy ready");
 
     loop {
         if s.stop.load(Ordering::Relaxed) { break; }
@@ -159,39 +170,33 @@ pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
         s.copy_done = false;
         s.failed = false;
 
-        // 1. Request capture
         s.frame = Some(sc.capture_output(1, &output, &qh, ()));
         conn.flush().ok();
 
-        // 2. Wait for buffer event (format/size/stride)
         while !s.buffer_ready && !s.failed {
             eq.blocking_dispatch(&mut s).context("wait buffer")?;
         }
         if s.failed { s.frame.take(); continue; }
 
-        // 3. Copy to our buffer
         if let (Some(ref frame), Some(ref buf)) = (&s.frame, &s.buf) {
             frame.copy(buf);
         }
         conn.flush().ok();
 
-        // 4. Wait for ready
         while !s.copy_done && !s.failed {
             eq.blocking_dispatch(&mut s).context("wait ready")?;
         }
         if s.failed { s.frame.take(); continue; }
 
-        // 5. Read pixels
         if let Some(ref fd) = s.pool_fd {
-            let rgba = mmap_read(fd, s.w, s.h, s.stride);
-            log::debug!("captured frame {}x{} ({} bytes)", s.w, s.h, rgba.len());
-            let _ = s.tx.send(CapturedFrame { data: rgba, width: s.w, height: s.h });
+            read_pixels(fd, s.w, s.h, s.stride, &mut s.rgba_buf);
+            let frame = CapturedFrame { data: s.rgba_buf.clone(), width: s.w, height: s.h };
+            let _ = s.tx.send(frame);
         }
 
-        // 6. Destroy frame (start fresh next iteration)
         s.frame.take();
         conn.flush().ok();
-        eq.roundtrip(&mut s).context("roundtrip after destroy")?;
+        while eq.dispatch_pending(&mut s).is_ok() {}
     }
 
     log::info!("wlr-screencopy stopped");
