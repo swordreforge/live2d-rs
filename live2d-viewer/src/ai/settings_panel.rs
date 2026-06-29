@@ -17,8 +17,14 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
 
     Window::new("AI 设置")
         .default_width(360.0)
+        .default_height(500.0)
+        .resizable(true)
         .open(&mut app.ai_settings_open)
         .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(460.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             let dirty = &mut false;
 
             ui.label("API 基础地址");
@@ -193,5 +199,6 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
             if ui.button("保存设置").clicked() {
                 crate::ai::config::save_config(&app.ai_config, app.db.as_ref());
             }
+                }); // end ScrollArea
         });
 }

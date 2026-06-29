@@ -283,6 +283,8 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
     Window::new("AI 聊天 💬")
         .default_width(320.0)
+        .default_height(300.0)
+        .resizable(true)
         .default_pos([4.0, 100.0])
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
@@ -294,10 +296,12 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
             ui.separator();
 
-            let height = ui.available_height() - 60.0;
+            let scroll_height = (ui.available_height() - 40.0).max(80.0);
+
             egui::ScrollArea::vertical()
-                .max_height(height.max(100.0))
+                .max_height(scroll_height)
                 .auto_shrink([false, false])
+                .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
                         let (prefix, color) = match msg.role {
@@ -317,6 +321,29 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                         ui.add_space(4.0);
                     }
 
+                    // ── Tool approval UI (inside scroll area) ──
+                    if let Some((ref tool_name, ref args_str)) = pending_tool_info {
+                        let frame = egui::Frame::none()
+                            .fill(Color32::from_rgba_premultiplied(40, 0, 0, 200))
+                            .inner_margin(egui::Margin::symmetric(8.0, 4.0));
+                        frame.show(ui, |ui| {
+                            ui.colored_label(Color32::RED, "⚠️ 工具调用需要审批");
+                            ui.label(format!("工具: {tool_name}"));
+                            ui.label(format!("参数: {args_str}"));
+                            ui.horizontal(|ui| {
+                                if ui.button("✅ 批准").clicked() {
+                                    approve_clicked = true;
+                                }
+                                if ui.button("❌ 拒绝").clicked() {
+                                    reject_clicked = true;
+                                }
+                            });
+                            if ui.button("📌 记住本次会话（自动批准此工具）").clicked() {
+                                remember_clicked = true;
+                            }
+                        });
+                    }
+
                     if pending {
                         ui.colored_label(Color32::YELLOW, "思考中...");
                     }
@@ -329,32 +356,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                     }
                 });
 
-            ui.separator();
-
-            // ── Tool approval UI ──
-            if let Some((ref tool_name, ref args_str)) = pending_tool_info {
-                let frame = egui::Frame::none()
-                    .fill(Color32::from_rgba_premultiplied(40, 0, 0, 200))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0));
-                frame.show(ui, |ui| {
-                    ui.colored_label(Color32::RED, "⚠️ 工具调用需要审批");
-                    ui.label(format!("工具: {tool_name}"));
-                    ui.label(format!("参数: {args_str}"));
-                    ui.horizontal(|ui| {
-                        if ui.button("✅ 批准").clicked() {
-                            approve_clicked = true;
-                        }
-                        if ui.button("❌ 拒绝").clicked() {
-                            reject_clicked = true;
-                        }
-                    });
-                    if ui.button("📌 记住本次会话（自动批准此工具）").clicked() {
-                        remember_clicked = true;
-                    }
-                });
-                ui.separator();
-            }
-
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.add_sized(
                     egui::vec2(ui.available_width() - 60.0, 0.0),
