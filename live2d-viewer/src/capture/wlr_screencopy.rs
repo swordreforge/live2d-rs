@@ -190,8 +190,8 @@ pub fn run(tx: FrameSender, stop: Arc<AtomicBool>) -> Result<()> {
 
         if let Some(ref fd) = s.pool_fd {
             read_pixels(fd, s.w, s.h, s.stride, &mut s.rgba_buf);
-            let frame = CapturedFrame { data: s.rgba_buf.clone(), width: s.w, height: s.h };
-            let _ = s.tx.send(frame);
+            let data = std::mem::take(&mut s.rgba_buf);
+            let _ = s.tx.send(CapturedFrame { data, width: s.w, height: s.h });
         }
 
         s.frame.take();
