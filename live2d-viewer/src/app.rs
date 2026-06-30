@@ -1691,8 +1691,11 @@ impl AppState {
 
         for tc in tool_calls {
             if tc.function.name == "look_at_screen" {
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                 #[cfg(feature = "capture")]
-                self.trigger_vision_snapshot();
+                self.trigger_vision_snapshot_with_prompt(prompt);
                 self.ai_messages.push(ChatMessage {
                     role: ChatRole::Tool,
                     content: "Screen captured. Analyzing via vision model...".into(),
@@ -1856,6 +1859,10 @@ impl AppState {
     /// Trigger a vision snapshot: encode the latest frame and send to AI.
     #[cfg(feature = "capture")]
     pub fn trigger_vision_snapshot(&mut self) {
+        self.trigger_vision_snapshot_with_prompt(None);
+    }
+
+    pub fn trigger_vision_snapshot_with_prompt(&mut self, custom_prompt: Option<String>) {
         if self.ai_state != crate::ai::types::AiState::Idle {
             log::warn!("Vision snapshot skipped: AI is busy ({:?})", self.ai_state);
             return;
@@ -1886,7 +1893,9 @@ impl AppState {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let b64 = encoded.base64;
-        let prompt = "Describe what you see on this screen in one sentence.";
+        let prompt = custom_prompt.unwrap_or_else(|| {
+            "Describe what you see on this screen in one sentence.".into()
+        });
 
         let gguf_path = self.ai_config.vision_gguf_path.clone();
         let mmproj_path = self.ai_config.vision_mmproj_path.clone();

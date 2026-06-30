@@ -97,10 +97,12 @@ impl ToolRegistry {
         );
         reg.register(
             "look_at_screen",
-            "Capture a screenshot of the user's screen to see what they're doing. Use this when the user asks what you can see, when they ask you to look at something, or when you want to comment on their screen content.",
+            "Capture a screenshot and analyze it. Use the 'prompt' parameter to ask a specific question about the screen (e.g. 'What app is open?', 'Is there a code editor visible?').",
             serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "prompt": {"type": "string", "description": "What to ask about the screen. Default: describe what you see."}
+                },
                 "required": []
             }),
             noop_executor as fn(&Value, &SafetyConfig) -> Result<String, String>,
