@@ -1627,7 +1627,7 @@ impl AppState {
         let start = self
             .ai_messages
             .len()
-            .saturating_sub(self.ai_config.context_length);
+            .saturating_sub(self.ai_config.context_length.max(50));
         let api_messages: Vec<ChatMessage> = self.ai_messages[start..].to_vec();
 
         let current_path = self
@@ -1679,6 +1679,14 @@ impl AppState {
             });
         }
         full_messages.extend(api_messages);
+
+        let roles: Vec<&str> = full_messages.iter().map(|m| match m.role {
+            ChatRole::System => "system",
+            ChatRole::User => "user",
+            ChatRole::Assistant => if m.tool_calls.is_some() { "assistant(tools)" } else { "assistant" },
+            ChatRole::Tool => "tool",
+        }).collect();
+        log::info!("continue_with_tool_result: message roles = {roles:?}");
 
         let (tx, rx) = std::sync::mpsc::channel();
         self.ai_result_rx = Some(rx);
