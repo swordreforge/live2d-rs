@@ -130,6 +130,9 @@ pub struct AiConfig {
     /// Path to local vision GGUF model. Empty = use API fallback.
     #[serde(default)]
     pub vision_gguf_path: String,
+    /// Path to mmproj for multimodal models. Empty = skip (non-vision GGUF).
+    #[serde(default)]
+    pub vision_mmproj_path: String,
 }
 
 /// A single entry in the conversation memory store.
@@ -206,6 +209,7 @@ impl Default for AiConfig {
             vision_auto_enabled: false,
             vision_interval_secs: 120,
             vision_gguf_path: String::new(),
+            vision_mmproj_path: String::new(),
         }
     }
 }

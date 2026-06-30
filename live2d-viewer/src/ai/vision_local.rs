@@ -1,10 +1,6 @@
 use std::path::Path;
 use std::process::Command;
 
-pub fn is_gguf_available(gguf_path: &str) -> bool {
-    !gguf_path.is_empty() && Path::new(gguf_path).exists()
-}
-
 pub fn infer_with_image(
     gguf_path: &str,
     jpeg_base64: &str,

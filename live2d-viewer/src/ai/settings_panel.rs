@@ -227,6 +227,13 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 if path_changed {
                     *dirty = true;
                 }
+                ui.label("mmproj 路径（多模态投影，为空则跳过）");
+                let mmproj_changed = ui
+                    .text_edit_singleline(&mut app.ai_config.vision_mmproj_path)
+                    .changed();
+                if mmproj_changed {
+                    *dirty = true;
+                }
             }
 
             ui.add_space(8.0);
