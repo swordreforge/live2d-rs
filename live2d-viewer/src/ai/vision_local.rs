@@ -83,8 +83,14 @@ pub fn infer_with_image(
     }
 
     #[allow(deprecated)]
-    let result = model.tokens_to_str(&tokens, llama_cpp_2::model::Special::Plaintext);
-    result.map(|s| s.trim().to_string()).map_err(|e| format!("decode: {e}"))
+    let mut result = String::new();
+    for token in &tokens {
+        match model.token_to_str(*token, llama_cpp_2::model::Special::Plaintext) {
+            Ok(s) => result.push_str(&s),
+            Err(_) => {} // skip undecodable tokens
+        }
+    }
+    Ok(result.trim().to_string())
 }
 
 fn decode_base64(b64: &str) -> Result<Vec<u8>, String> {
