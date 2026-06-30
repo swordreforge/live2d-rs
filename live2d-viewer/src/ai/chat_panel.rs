@@ -296,6 +296,8 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .default_width(320.0)
         .default_height(300.0)
         .default_pos([4.0, 100.0])
+        .min_width(240.0)
+        .max_width(480.0)
         .resizable(true)
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
