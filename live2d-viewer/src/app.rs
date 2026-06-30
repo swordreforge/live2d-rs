@@ -424,6 +424,23 @@ pub struct AppState {
     pub(crate) vision_pending_result: Option<String>,
 }
 
+/// Find a safe starting index for context trimming that preserves tool call
+/// integrity. Advances past orphaned `Tool` messages and `Assistant` messages
+/// with `tool_calls` so the API never sees a tool_call without its response
+/// or vice versa.
+fn find_safe_context_start(messages: &[crate::ai::types::ChatMessage], desired: usize) -> usize {
+    let mut start = desired;
+    while start < messages.len() {
+        let m = &messages[start];
+        match m.role {
+            crate::ai::types::ChatRole::Tool => start += 1,
+            crate::ai::types::ChatRole::Assistant if m.tool_calls.is_some() => start += 1,
+            _ => break,
+        }
+    }
+    start
+}
+
 impl AppState {
     pub fn new(db: Option<db::AppDb>) -> Self {
         let ai_config = crate::ai::config::load_config(db.as_ref());
@@ -1027,10 +1044,11 @@ impl AppState {
             }
         }
 
-        let start = self
+        let desired = self
             .ai_messages
             .len()
             .saturating_sub(self.ai_config.context_length);
+        let start = find_safe_context_start(&self.ai_messages, desired);
         api_messages.extend_from_slice(&self.ai_messages[start..]);
 
         self.ai_state = crate::ai::types::AiState::Waiting;
@@ -1146,23 +1164,34 @@ impl AppState {
 
         // ── Handle tool calls ──
         if !tool_calls.is_empty() {
-            // Pop the empty placeholder assistant message
-            if let Some(last) = self.ai_messages.last() {
-                if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
-                    self.ai_messages.pop();
-                }
-            }
-            // Push assistant message with tool_calls for display
-            self.ai_messages.push(crate::ai::types::ChatMessage {
-                role: crate::ai::types::ChatRole::Assistant,
-                content: String::new(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0),
-                tool_call_id: None,
-                tool_calls: Some(tool_calls.clone()),
+            // If the last assistant message already has content from streaming
+            // tokens, attach tool_calls to it instead of creating a new message.
+            // This preserves the correct format: one assistant message with both
+            // content and tool_calls.
+            let last_has_content = self.ai_messages.last().is_some_and(|m| {
+                m.role == crate::ai::types::ChatRole::Assistant && !m.content.is_empty()
             });
+            if last_has_content {
+                self.ai_messages.last_mut().unwrap().tool_calls = Some(tool_calls.clone());
+            } else {
+                // Pop the empty placeholder assistant message
+                if let Some(last) = self.ai_messages.last() {
+                    if last.role == crate::ai::types::ChatRole::Assistant && last.content.is_empty() {
+                        self.ai_messages.pop();
+                    }
+                }
+                // Push assistant message with tool_calls for display
+                self.ai_messages.push(crate::ai::types::ChatMessage {
+                    role: crate::ai::types::ChatRole::Assistant,
+                    content: String::new(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
+                    tool_call_id: None,
+                    tool_calls: Some(tool_calls.clone()),
+                });
+            }
 
             // Split into safe/session-approved and dangerous tool calls
             let mut safe_tcs = Vec::new();
@@ -1204,11 +1233,28 @@ impl AppState {
                         };
                     }
                     Err(_) => {
-                        self.ai_state = AiState::Idle;
-                        self.ai_error =
-                            Some(format!("invalid tool args: {}", first.function.arguments));
+                        // Invalid args — push error tool response and skip
+                        self.ai_messages.push(crate::ai::types::ChatMessage {
+                            role: crate::ai::types::ChatRole::Tool,
+                            content: format!("Error: invalid tool arguments: {}", first.function.arguments),
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs_f64())
+                                .unwrap_or(0.0),
+                            tool_call_id: Some(first.id),
+                            tool_calls: None,
+                        });
+                        // Continue processing remaining dangerous tools
+                        if !self.pending_tool_queue.is_empty() {
+                            self.process_pending_tool_queue();
+                        } else {
+                            self.continue_with_tool_result();
+                        }
                     }
                 }
+            } else {
+                // No dangerous tools — continue conversation with all safe tool responses
+                self.continue_with_tool_result();
             }
             return;
         }
@@ -1608,17 +1654,24 @@ impl AppState {
                         tool_name: tc.function.name,
                         args,
                     };
+                    return;
                 }
                 Err(_) => {
-                    self.ai_error =
-                        Some(format!("invalid tool args: {}", tc.function.arguments));
-        #[cfg(feature = "capture")]
-        if self.vision_pending_tool.is_some() {
-            return; // wait for vision result before continuing tool flow
-        }
-        self.continue_with_tool_result();
+                    // Invalid args — push error tool response and skip this tool
+                    self.ai_messages.push(crate::ai::types::ChatMessage {
+                        role: crate::ai::types::ChatRole::Tool,
+                        content: format!("Error: invalid tool arguments: {}", tc.function.arguments),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0),
+                        tool_call_id: Some(tc.id),
+                        tool_calls: None,
+                    });
                 }
             }
+            // Fall through: process next pending tool or continue
+            self.process_pending_tool_queue();
         } else {
             self.continue_with_tool_result();
         }
@@ -1635,10 +1688,11 @@ impl AppState {
             None
         };
 
-        let start = self
+        let desired = self
             .ai_messages
             .len()
             .saturating_sub(self.ai_config.context_length.max(50));
+        let start = find_safe_context_start(&self.ai_messages, desired);
         let api_messages: Vec<ChatMessage> = self.ai_messages[start..].to_vec();
 
         let current_path = self
@@ -1770,23 +1824,29 @@ impl AppState {
 
         for tc in tool_calls {
             if tc.function.name == "look_at_screen" {
-                #[cfg(feature = "capture")]
-                {
-                    let args: serde_json::Value =
-                        serde_json::from_str(&tc.function.arguments).unwrap_or_default();
-                    let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let content = self.vision_tool_call_blocking(prompt);
-                    self.ai_messages.push(ChatMessage {
-                        role: ChatRole::Tool,
-                        content,
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs_f64())
-                            .unwrap_or(0.0),
-                        tool_call_id: Some(tc.id),
-                        tool_calls: None,
-                    });
-                }
+                let content = {
+                    #[cfg(feature = "capture")]
+                    {
+                        let args: serde_json::Value =
+                            serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                        let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        self.vision_tool_call_blocking(prompt)
+                    }
+                    #[cfg(not(feature = "capture"))]
+                    {
+                        "Vision capture not available in this build".into()
+                    }
+                };
+                self.ai_messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    content,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
+                    tool_call_id: Some(tc.id),
+                    tool_calls: None,
+                });
                 continue;
             }
 
@@ -1829,8 +1889,6 @@ impl AppState {
                 tool_calls: None,
             });
         }
-
-        self.continue_with_tool_result();
     }
 
     /// Auto-reset expression back to neutral after the timeout elapses.
