@@ -1706,7 +1706,7 @@ impl AppState {
                     serde_json::from_str(&tc.function.arguments).unwrap_or_default();
                 let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                 #[cfg(feature = "capture")]
-                self.trigger_vision_snapshot_with_prompt(prompt);
+                self.trigger_vision_snapshot_force(prompt);
                 self.ai_messages.push(ChatMessage {
                     role: ChatRole::Tool,
                     content: "Screen captured. Analyzing via vision model...".into(),
@@ -1870,11 +1870,15 @@ impl AppState {
     /// Trigger a vision snapshot: encode the latest frame and send to AI.
     #[cfg(feature = "capture")]
     pub fn trigger_vision_snapshot(&mut self) {
-        self.trigger_vision_snapshot_with_prompt(None);
+        self.trigger_vision_snapshot_with_prompt(None, false);
     }
 
-    pub fn trigger_vision_snapshot_with_prompt(&mut self, custom_prompt: Option<String>) {
-        if self.ai_state != crate::ai::types::AiState::Idle {
+    pub fn trigger_vision_snapshot_force(&mut self, prompt: Option<String>) {
+        self.trigger_vision_snapshot_with_prompt(prompt, true);
+    }
+
+    pub fn trigger_vision_snapshot_with_prompt(&mut self, custom_prompt: Option<String>, force: bool) {
+        if !force && self.ai_state != crate::ai::types::AiState::Idle {
             log::warn!("Vision snapshot skipped: AI is busy ({:?})", self.ai_state);
             return;
         }
