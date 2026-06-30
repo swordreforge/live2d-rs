@@ -314,8 +314,11 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
             ui.separator();
 
+            // Reserve space for input area below, then fill remaining height with ScrollArea
+            let input_height = 32.0;
+            let scroll_height = (ui.available_height() - input_height - 4.0).max(80.0);
             egui::ScrollArea::vertical()
-                .auto_shrink([true, true])
+                .max_height(scroll_height)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
