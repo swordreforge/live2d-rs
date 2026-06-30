@@ -1886,7 +1886,7 @@ impl AppState {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let b64 = encoded.base64;
-        let prompt = "Look at what's on the screen right now. Describe what you see in a short, conversational sentence.";
+        let prompt = "Describe what you see on this screen in one sentence.";
 
         let gguf_path = self.ai_config.vision_gguf_path.clone();
         let mmproj_path = self.ai_config.vision_mmproj_path.clone();
