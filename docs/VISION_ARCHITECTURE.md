@@ -1,441 +1,537 @@
-# Visual Model Integration — System Architecture & Implementation Plan
+# Visual Model Integration - Local-First Architecture
 
-## 1. Current System Overview
+## 1. Problem Statement
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        live2d-viewer                         │
-│                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐ │
-│  │ Renderer │  │   GUI    │  │  Motion  │  │ AI Chat     │ │
-│  │ (glow)   │  │ (egui)   │  │ System   │  │ System      │ │
-│  └──────────┘  └──────────┘  └──────────┘  └──────┬──────┘ │
-│                                                    │        │
-│  ┌──────────────────────┐               ┌─────────▼──────┐ │
-│  │ wlr-screencopy       │               │ AiChatClient    │ │
-│  │ (Capture Thread)     │               │ (blocking HTTP) │ │
-│  │ → mpsc → AppState    │               │ → OpenAI API    │ │
-│  └──────────────────────┘               └────────┬────────┘ │
-│                                                  │          │
-│  ┌──────────────────────┐               ┌───────▼────────┐ │
-│  │ Capture Preview      │               │ Tool Registry  │ │
-│  │ (egui sub-window)    │               │ exec_cmd, ...  │ │
-│  └──────────────────────┘               └────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+Extend the existing AI chat assistant with **local screen vision** using llama-cpp-rs.
+Primary inference runs locally from GGUF models in `model/`. Remote API (OpenAI/Ollama)
+serves as fallback when no local model is loaded.
 
-**Key data flows already in place:**
-- `wlr_screencopy::run()` → `mpsc::Sender<CapturedFrame>` → `AppState::capture_latest_frame`
-- `AppState::send_ai_message()` → `AiChatClient::send_stream()` → `AppState::ai_messages`
-- `AiConfig` with `model`, `base_url`, `api_key`, `system_prompt`, `context_length`
-- `CharacterCard` with `name`, `description`, `personality`, `scenario`, `system_prompt`
-- `ToolRegistry` with `exec_cmd`, `read_file`, `list_dir`, `get_env`, `read_proc`
-
-**Missing for vision integration:**
-- Frame → base64/image encoding
-- Vision-capable API message format (OpenAI `image_url` content blocks)
-- Trigger mechanisms (auto-periodic, user button, character-initiated)
-- Response routing (text → chat bubble / TTS / expression)
+**What we gain:**
+- Privacy: screenshots stay on device by default
+- Zero cost for local inference
+- Works offline (local models only)
+- Seamless integration with existing `ai_messages` chat UI
 
 ---
 
 ## 2. Target Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Vision-Enhanced Architecture                   │
-│                                                                   │
-│  Capture Thread                Main Thread                        │
-│  ┌─────────────┐              ┌──────────────────────────────┐   │
-│  │ wlr-scr.copy│──mpsc──►    │ AppState                     │   │
-│  │ (2880×1620) │              │  ├─ capture_latest_frame     │   │
-│  └─────────────┘              │  ├─ vision_snapshot: Option  │   │
-│                               │  ├─ vision_triggers: Vec    │   │
-│  Vision Trigger Sources       │  └─ ai_messages: Vec        │   │
-│  ┌──────────────────┐         │                              │   │
-│  │ 🕐 Auto Periodic  │────────►├─ timer: every N seconds     │   │
-│  │ 👆 User Tap       │────────►├─ F10 hotkey                │   │
-│  │ 💬 Character Init │────────►├─ LLM tool call "look"      │   │
-│  │ 🎯 Event Hook     │────────►├─ app focus change, etc.    │   │
-│  └──────────────────┘         └──────────────┬───────────────┘   │
-│                                              │                    │
-│                        ┌─────────────────────▼──────────────────┐ │
-│                        │        VisionPipeline                   │ │
-│                        │                                         │ │
-│                        │  frame → scale(512px) → base64 →        │ │
-│                        │  ChatMessage{ role:User,                │ │
-│                        │    content:[{type:"image_url",          │ │
-│                        │      image_url:{url:"data:image/        │ │
-│                        │      jpeg;base64,..."}}] }              │ │
-│                        │                                         │ │
-│                        │  → AiChatClient.send() → LLM response   │ │
-│                        │  → Route: text / TTS / expression /     │ │
-│                        │           motion trigger                │ │
-│                        └─────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
+live2d-viewer
+
+Capture Thread                  Main Thread
++-------------------+         +-------------------------------------+
+| wlr-screencopy    |--mpsc-->| AppState                            |
+| (2880x1620)       |         |  +- capture_latest_frame            |
++-------------------+         |  +- ai_messages: Vec<ChatMessage>   |
+                              |  +- ai_result_rx                    |
+                              |  +- model_manager: ModelManager     |
+                              +------------------+------------------+
+                                                 |
+                              +------------------v------------------+
+                              |     InferenceBackend (enum)          |
+                              |  +----------+    +---------------+  |
+                              |  |  Local   |    | Remote (API)  |  |
+                              |  | llama-cpp|    | reqwest HTTP  |  |
+                              |  +----+-----+    +-------+-------+  |
+                              |       |                  |           |
+                              |       v                  v           |
+                              |   AiStreamEvent (Token/Done/Error)  |
+                              |   -> push to ai_messages            |
+                              +-------------------------------------+
+
+model/
++-- text/
+|   +-- qwen2.5-7b-instruct-q4_k_m.gguf
+|   +-- config.json
++-- vision/
+|   +-- MiniCPM-V-2_6-Q4_K_M.gguf
+|   +-- config.json
++-- global_config.json
 ```
+
+### Data flow for screen vision
+
+```
+Trigger fires (F10 / auto-timer / tool call)
+    |
+    v
+1. Take Snapshot: capture_latest_frame.take()
+   if None -> skip
+    |
+    v
+2. Encode: CapturedFrame(RGBA) -> VisionEncoder -> VisionImage(RGB, 336px max)
+    |
+    v
+3. Build prompt: per-model chat template with image placeholder
+    |
+    v
+4. LocalInference::inference_vision(messages, image)
+   -> ModelManager.get_vision_session()
+   -> llama-cpp-rs processes image + text tokens
+   -> sends AiStreamEvent::Token through mpsc channel
+    |
+    v
+5. Same as text chat: tokens accumulate -> AiStreamEvent::Done
+   -> push ChatMessage{role: Assistant} into ai_messages
+   -> renders in existing chat panel + optional TTS/expression
+```
+
+Output is identical to the existing text chat flow -- ChatMessage +
+AiStreamEvent channel -> ai_messages -> chat panel UI. No new UI needed.
 
 ---
 
-## 3. Trigger Mechanisms
+## 3. Model Directory Structure
 
-### 3.1 Auto-Periodic Vision Trigger (`VisionTrigger::Periodic`)
-
-```rust
-struct VisionTimer {
-    interval: Duration,      // e.g., every 30s
-    last_trigger: Instant,
-    enabled: bool,
-}
+```
+model/
++-- text/                              # Text inference models
+|   +-- *.gguf                         # GGUF format model files
+|   +-- config.json                    # Per-model config
++-- vision/                            # Vision-language models
+|   +-- *.gguf                         # MiniCPM-V / LLaVA / Qwen-VL etc.
+|   +-- config.json                    # Per-model config
++-- global_config.json                 # Global AI config
 ```
 
-- Timer runs in the main event loop (checks on each frame)
-- When fired: takes `capture_latest_frame`, encodes as JPEG base64, sends to AI
-- Configurable interval via egui settings
-- Default: off (user must explicitly enable)
+### 3.1 Model Config Schema
 
-### 3.2 User Button / Hotkey (`VisionTrigger::Manual`)
+**model/text/config.json**
 
-- **F10** or dedicated egui button (📷) in top-right corner
-- One-shot: takes current frame, sends to AI
-- Character responds with observation about what's on screen
+    {
+      "name": "Qwen2.5-7B-Instruct",
+      "file": "qwen2.5-7b-instruct-q4_k_m.gguf",
+      "type": "text",
+      "n_ctx": 8192,
+      "n_gpu_layers": 35,
+      "n_threads": 4,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "repeat_penalty": 1.1
+    }
 
-### 3.3 Character-Initiated (`VisionTrigger::ToolCall`)
+**model/vision/config.json**
 
-- Character's system prompt includes a `look_at_screen` tool
-- When the LLM decides it wants to see, it calls the tool
-- Tool executor encodes current frame and returns it as the tool result
-- This is the most "natural" interaction — the character chooses when to look
+    {
+      "name": "MiniCPM-V-2.6",
+      "file": "MiniCPM-V-2_6-Q4_K_M.gguf",
+      "type": "vision",
+      "n_ctx": 4096,
+      "n_gpu_layers": 35,
+      "n_threads": 4,
+      "image_resolution": 336,
+      "patch_size": 14
+    }
 
-```json
-{
-  "name": "look_at_screen",
-  "description": "Take a screenshot and analyze what's on the user's screen. Use this when the user asks what you see, or when you're curious about what they're doing.",
-  "parameters": {
-    "type": "object",
-    "properties": {},
-    "required": []
-  }
-}
-```
+**model/global_config.json**
 
-### 3.4 Event Hook (`VisionTrigger::Event`)
+    {
+      "active_text_model": "qwen2.5-7b-instruct-q4_k_m.gguf",
+      "active_vision_model": "MiniCPM-V-2_6-Q4_K_M.gguf",
+      "auto_load": true,
+      "max_concurrent_inference": 1,
+      "vision": {
+        "auto_look_enabled": false,
+        "auto_look_interval_secs": 30,
+        "auto_look_prompt": "Describe what you see on the screen.",
+        "max_image_dimension": 336,
+        "jpeg_quality": 85
+      }
+    }
 
-- Application-level events trigger a vision snapshot:
-  - Window focus change
-  - User switches to a different model
-  - User opens/closes a specific application (via window title detection)
+### 3.2 Recommended Models
+
+| Type | Model | Size (Q4) | VRAM | Notes |
+|------|-------|-----------|------|-------|
+| Text | Qwen2.5-7B-Instruct-Q4_K_M | ~4.4 GB | ~5 GB | Good Chinese + tool calling |
+| Text | Qwen2.5-3B-Instruct-Q4_K_M | ~1.8 GB | ~2.5 GB | Lightweight, faster |
+| Vision | MiniCPM-V-2.6-Q4_K_M | ~5.0 GB | ~6 GB | Strong screen understanding |
+| Vision | Qwen2-VL-7B-Instruct-Q4_K_M | ~4.5 GB | ~5.5 GB | Alternative vision model |
+
 
 ---
 
-## 4. Data Flow: Vision Request → Response
+## 4. Core Components
 
-```
-Trigger fires
-    │
-    ▼
-┌─────────────────────────────┐
-│ 1. Take Snapshot            │
-│    frame = capture_latest   │
-│    if None → skip           │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ 2. Encode Frame             │
-│    scale to max 512px width │
-│    encode as JPEG (quality  │
-│    70) → base64             │
-│    (image crate already     │
-│     available)              │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ 3. Build Vision Message     │
-│    ChatMessage {            │
-│      role: User,            │
-│      content: [             │
-│        {type: "text",       │
-│         text: trigger_prompt│
-│        },                   │
-│        {type: "image_url",  │
-│         image_url: {        │
-│           url: "data:image/ │
-│             jpeg;base64,.." │
-│         }                   │
-│        }                    │
-│      ]                      │
-│    }                        │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ 4. Send to LLM              │
-│    AiChatClient.            │
-│      send_with_vision()     │
-│    → VisionResponse {       │
-│        text,                │
-│        expression,          │
-│        tool_calls           │
-│      }                      │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ 5. Route Response           │
-│    if text → chat bubble    │
-│    if tts_enabled → speak   │
-│    if expression → apply    │
-│    if tool_calls → execute  │
-└─────────────────────────────┘
-```
+### 4.1 ModelManager (`ai/model_manager.rs`)
 
----
+Owns loaded LlamaModel instances. Lives in AppState (not inside LocalInference).
+Scans model/ directory, loads GGUF files with full config parameters.
 
-## 5. Implementation Plan (4 Phases)
+    pub struct ModelManager {
+        base_dir: PathBuf,
+        text_model: Option<LlamaModel>,
+        vision_model: Option<LlamaModel>,
+        text_session: Option<LlamaSession>,
+        vision_session: Option<LlamaSession>,
+    }
 
-### Phase 1: Vision Pipeline Core (2-3 days)
+    impl ModelManager {
+        pub fn new(base_dir: PathBuf) -> Self;
 
-**Goal**: Single manual snapshot → LLM response → displayed in chat.
+        /// Load models declared in global_config.json,
+        /// reading n_ctx / n_gpu_layers from per-model config.json.
+        pub fn auto_load(&mut self) -> Result<(), ModelError>;
 
-#### 1.1 Frame Encoding (`capture/encoder.rs` or `ai/vision.rs`)
+        /// Load a specific model by filename.
+        /// Reads config.json from the same directory for n_ctx, n_gpu_layers, etc.
+        pub fn load_text_model(&mut self, name: &str) -> Result<(), ModelError>;
+        pub fn load_vision_model(&mut self, name: &str) -> Result<(), ModelError>;
 
-```rust
-// New module: ai/vision.rs
+        pub fn get_text_session(&mut self) -> Result<&mut LlamaSession, ModelError>;
+        pub fn get_vision_session(&mut self) -> Result<&mut LlamaSession, ModelError>;
 
-/// Encode a captured frame as a base64 JPEG for vision API consumption.
-pub fn encode_frame_for_vision(frame: &CapturedFrame) -> Option<String> {
-    // 1. Convert RGBA raw bytes → image::RgbaImage
-    // 2. Scale to max 512px wide (preserve aspect ratio)
-    // 3. Encode as JPEG (quality 70)
-    // 4. Base64 encode
-    // 5. Return "data:image/jpeg;base64,..."
-}
-```
+        pub fn has_text_model(&self) -> bool;
+        pub fn has_vision_model(&self) -> bool;
+        pub fn list_available_models(&self) -> Vec<ModelInfo>;
 
-Dependencies: `image` crate (already in Cargo.toml), `base64` (add to Cargo.toml).
+        /// Unload all models to free GPU memory
+        pub fn unload_all(&mut self);
+    }
 
-#### 1.2 Vision Client (`ai/client.rs` extension)
+    pub struct ModelInfo {
+        pub name: String,
+        pub model_type: ModelType,
+        pub path: PathBuf,
+        pub size_bytes: u64,
+    }
 
-```rust
-// Add to AiChatClient:
+    pub enum ModelType { Text, Vision }
 
-/// Send a chat request with a vision frame attached.
-pub fn send_vision(
-    &self,
-    messages: &[ChatMessage],    // conversation history
-    frame_base64: &str,           // encoded frame
-    prompt: &str,                 // "What's on my screen?"
-    config: &AiConfig,
-) -> Result<String, String> {
-    // Build message with image_url content block
-    // POST to {base_url}/chat/completions
-    // Return LLM text response
-}
-```
+    pub enum ModelError {
+        ModelNotFound(PathBuf),
+        LoadFailed(String),
+        ConfigError(String),
+        TextModelNotLoaded,
+        VisionModelNotLoaded,
+    }
 
-#### 1.3 Trigger Integration (`app.rs`)
 
-```rust
-// Add to AppState:
+### 4.2 InferenceBackend (`ai/backend.rs`)
 
-/// Take a vision snapshot and send to AI (F10 hotkey).
-pub fn trigger_vision_snapshot(&mut self) {
-    let frame = match self.capture_latest_frame.take() {
-        Some(f) => f,
-        None => return,
-    };
-    let encoded = ai::vision::encode_frame_for_vision(&frame);
-    // Spawn background thread to send to LLM
-    // Store response in ai_messages
-}
-```
+Unified interface that routes to local llama-cpp-rs or remote API.
+Both backends produce the same AiStreamEvent channel output, so AppState
+needs no changes to the streaming pipeline.
 
-#### 1.4 UI Button (gui.rs)
+    pub enum InferenceBackend {
+        Local(LocalInference),
+        Remote(AiChatClient),
+    }
 
-- Add 📷 button next to 🔴⚪ in top-right corner
-- Grayed out when capture is inactive
-- Shows spinner while LLM is processing
+    impl InferenceBackend {
+        /// Create: prefer local if model/ has .gguf, else remote API.
+        pub fn auto_detect(model_manager: &mut ModelManager, config: &AiConfig) -> Self;
 
-**Deliverable**: Press F10 → character describes what's on screen in chat.
+        /// Text chat: send messages, stream tokens via tx.
+        pub fn send_stream(
+            &mut self,
+            messages: &[ChatMessage],
+            config: &AiConfig,
+            tools: Option<&[ToolDefinition]>,
+            tx: Sender<AiStreamEvent>,
+        );
 
----
+        /// Vision: send messages + image, stream tokens via tx.
+        pub fn send_vision_stream(
+            &mut self,
+            messages: &[ChatMessage],
+            image: &VisionImage,
+            config: &AiConfig,
+            tx: Sender<AiStreamEvent>,
+        );
+    }
 
-### Phase 2: Auto-Periodic Trigger (1-2 days)
+For Local variant: calls LocalInference methods directly.
+For Remote variant: calls existing AiChatClient.send_stream()
+with OpenAI image_url format for vision (base64 JPEG).
 
-**Goal**: Character periodically looks at screen and comments.
 
-#### 2.1 Vision Config (`ai/config.rs`)
+### 4.3 LocalInference (`ai/local_inference.rs`)
 
-```rust
-// Add to AiConfig:
-pub struct VisionConfig {
-    pub auto_look_enabled: bool,
-    pub auto_look_interval_secs: u64,  // default 120
-    pub auto_look_prompt: String,      // custom prompt for auto-look
-    pub max_image_dimension: u32,      // default 512
-    pub jpeg_quality: u8,             // default 70
-}
-```
+Borrows ModelManager (does not own it). Formats prompts per model type.
+Produces AiStreamEvent tokens through the same channel as remote API.
 
-#### 2.2 Periodic Timer (`app.rs`)
+    pub struct LocalInference {
+        model_manager: *mut ModelManager,  // non-owning, safe via single-threaded access
+    }
 
-```rust
-// In AppState:
-vision_timer: Option<Instant>,
+    impl LocalInference {
+        pub fn new(model_manager: &mut ModelManager) -> Self;
 
-// Called every frame in event loop:
-fn tick_vision_timer(&mut self) {
-    if !self.ai_config.vision.auto_look_enabled { return; }
-    if self.vision_timer.elapsed() < self.vision_interval { return; }
-    self.trigger_vision_snapshot("Take a look at what's on screen.");
-    self.vision_timer = Some(Instant::now());
-}
-```
+        /// Text inference, streaming tokens to tx.
+        pub fn inference_text_stream(
+            &mut self,
+            messages: &[ChatMessage],
+            config: &AiConfig,
+            tx: Sender<AiStreamEvent>,
+        );
 
-#### 2.3 Settings UI (`ai/settings_panel.rs`)
+        /// Vision inference, streaming tokens to tx.
+        pub fn inference_vision_stream(
+            &mut self,
+            messages: &[ChatMessage],
+            image: &VisionImage,
+            config: &AiConfig,
+            tx: Sender<AiStreamEvent>,
+        );
+    }
 
-- Toggle: "Auto Look" on/off
-- Slider: interval (30s – 10min)
-- Text input: custom auto-look prompt
+Output format: identical to remote API. Sends AiStreamEvent::Token,
+AiStreamEvent::ToolCall, AiStreamEvent::Done, AiStreamEvent::Error.
+AppState::complete_pending_switch() processes these the same way.
 
-**Deliverable**: Character spontaneously comments on screen every N seconds.
 
----
+### 4.4 VisionEncoder (`ai/vision_encoder.rs`)
 
-### Phase 3: Character-Initiated Vision (2-3 days)
+Single source for VisionImage type and frame encoding.
+Used by both local and remote backends (remote needs base64 JPEG).
 
-**Goal**: The LLM itself decides when to look, via tool calling.
+    pub struct VisionImage {
+        pub width: u32,
+        pub height: u32,
+        pub data: Vec<u8>,  // RGB pixels, no alpha
+    }
 
-#### 3.1 `look_at_screen` Tool (`ai/tools/registry.rs`)
+    impl VisionImage {
+        /// Encode to base64 JPEG (for Remote backend / OpenAI API).
+        pub fn to_base64_jpeg(&self, quality: u8) -> String;
+    }
 
-```rust
-// Register new tool:
-reg.register(
-    "look_at_screen",
-    "Capture and analyze the user's screen. Use when asked 'what do you see' or when curious about screen content.",
-    serde_json::json!({
-        "type": "object",
-        "properties": {},
-        "required": []
-    }),
-    exec_look_at_screen,
-    SafetyLevel::Safe,
-);
-```
+    /// Convert CapturedFrame (RGBA) to VisionImage (RGB, resized).
+    pub fn encode_frame_for_vision(
+        frame: &CapturedFrame,
+        max_dimension: u32,
+    ) -> Result<VisionImage, EncodingError> {
+        // 1. RGBA bytes -> RgbaImage
+        // 2. Resize so longest side = max_dimension (preserve aspect ratio)
+        // 3. Convert RGBA -> RGB (drop alpha channel)
+        // 4. Return VisionImage { width, height, data }
+    }
 
-#### 3.2 Tool Executor (`ai/tools/executors.rs`)
+Local backend passes raw RGB to llama-cpp-rs.
+Remote backend calls vision_image.to_base64_jpeg() for the API.
 
-```rust
-fn exec_look_at_screen(
-    _args: &Value,
-    _safety: &SafetyConfig,
-) -> Result<String, String> {
-    // Access AppState::capture_latest_frame
-    // Encode as base64 JPEG
-    // Return as inline image (or description)
-    // For MVP: return "Screen captured: [dimensions], processing..."
-    // For full: the LLM's next turn will have the image
-}
-```
 
-**Challenge**: Tool executor needs access to `capture_latest_frame`, which lives in `AppState`. Options:
-1. Pass `Arc<Mutex<CapturedFrame>>` to tool context
-2. Send frame as tool result directly (the LLM processes it in the same turn)
+### 4.5 Prompt Formatting (`ai/prompt_format.rs`)
 
-#### 3.3 System Prompt Integration
+Different models expect different chat templates.
+The prompt formatter reads model type from config.json.
 
-The character card already has a `system_prompt` field. Add vision-awareness:
+    trait PromptFormatter {
+        fn format_chat(&self, messages: &[ChatMessage], has_image: bool) -> String;
+    }
 
-```
-You have access to a `look_at_screen` tool. Use it when the user asks
-what you can see, or when you want to comment on what's happening on
-their screen. After using it, describe what you see in a natural,
-conversational way — as if you're looking over their shoulder.
-```
+    struct MiniCPMVFormatter;   // image + system/user tags
+    struct LLaVAFormatter;      // USER/ASSISTANT roles with image token
+    struct ChatMLFormatter;     // for Qwen text models (im_start/im_end)
 
-**Deliverable**: Character uses `look_at_screen` tool autonomously when appropriate.
+The exact template must match the GGUF model card.
+
 
 ---
 
-### Phase 4: Polish & Production (1-2 days)
+## 5. Trigger Mechanisms
 
-#### 4.1 Response Routing
+### 5.1 Auto-Periodic Vision Trigger
 
-When the LLM responds to a vision query, route appropriately:
+Timer runs in the main event loop (checks on each frame).
+When fired: takes capture_latest_frame, encodes as RGB, sends to vision model.
+Configurable interval via egui settings. Default: off.
 
-```rust
-enum VisionResponseAction {
-    ChatBubble(String),           // show in chat
-    Speak(String),                // TTS voice output
-    Expression(String, f32),      // character expression
-    Motion(String),               // trigger named motion
-    ToolCalls(Vec<ToolCall>),     // execute tools
-}
-```
+    struct VisionTimer {
+        interval: Duration,      // default: 30s (matches global_config.json)
+        last_trigger: Instant,
+        enabled: bool,
+    }
+
+### 5.2 User Hotkey (F10)
+
+One-shot: takes current frame, sends to vision model.
+Character responds with observation about what is on screen.
+
+### 5.3 Character-Initiated (Tool Call)
+
+Flow: text model (e.g. Qwen2.5) calls look_at_screen tool
+  -> AppState tool executor captures current frame
+  -> InferenceBackend.send_vision_stream() with the frame
+  -> vision model (e.g. MiniCPM-V) analyzes the image
+  -> result pushed to ai_messages as assistant response
+
+The text model decides WHEN to look. The vision model analyzes WHAT it sees.
+This requires both a text model AND a vision model loaded simultaneously.
+If only text model is loaded, look_at_screen returns a text-only error.
+
+### 5.4 Event Hook
+
+Application-level events trigger a vision snapshot:
+- Window focus change
+- User switches to a different model
+- User opens/closes a specific application
+
+
+---
+
+## 6. Implementation Plan
+
+### Phase 1: Local Text Inference (2-3 days)
+
+Goal: Local model produces chat responses via same AiStreamEvent channel.
+
+#### 1.1 Add dependencies
+
+    [dependencies]
+    llama-cpp-2 = "0.1"
+
+#### 1.2 ModelManager (ai/model_manager.rs)
+
+- Scan model/text/ and model/vision/ for .gguf files
+- Read per-model config.json for n_ctx, n_gpu_layers, n_threads
+- Load active models from global_config.json
+- Create LlamaSession for each loaded model
+- GPU layer offloading via n_gpu_layers config
+
+#### 1.3 InferenceBackend (ai/backend.rs)
+
+- InferenceBackend::auto_detect(): if .gguf exists -> Local, else -> Remote
+- send_stream(): delegates to LocalInference or AiChatClient
+- Same AiStreamEvent output for both paths
+
+#### 1.4 Integration into AppState
+
+- Replace direct AiChatClient usage with InferenceBackend
+- AppState::send_ai_message() calls backend.send_stream()
+- complete_pending_switch() unchanged (processes AiStreamEvent)
+
+Deliverable: Type a message -> local model responds -> appears in chat panel.
+
+### Phase 2: Vision Pipeline (3-4 days)
+
+Goal: Screen capture -> vision model -> character describes what it sees.
+Output goes through same AiStreamEvent -> ai_messages pipeline.
+
+#### 2.1 VisionEncoder (ai/vision_encoder.rs)
+
+- VisionImage struct + encode_frame_for_vision()
+- to_base64_jpeg() for remote API fallback
+- Use image crate (already in Cargo.toml)
+
+#### 2.2 PromptFormatter (ai/prompt_format.rs)
+
+- PromptFormatter trait with per-model implementations
+- MiniCPMVFormatter, LLaVAFormatter, ChatMLFormatter
+- Reads model type from config.json to select formatter
+
+#### 2.3 Local Vision Inference
+
+- InferenceBackend::send_vision_stream()
+- Local: LocalInference::inference_vision_stream()
+- Remote: build OpenAI image_url message, call AiChatClient
+- Both produce identical AiStreamEvent output
+
+#### 2.4 Trigger Integration
+
+- F10 hotkey -> take snapshot -> encode -> vision -> display in chat
+- VisionTimer for periodic auto-look
+- look_at_screen tool for character-initiated vision
+
+Deliverable: Press F10 -> character describes what is on screen.
+
+### Phase 3: Model Management UI (2-3 days)
+
+Goal: User can browse, load, switch models from egui settings panel.
+
+#### 3.1 Model Browser (ai/model_panel.rs)
+
+- List available GGUF files in model/text/ and model/vision/
+- Show model name, size, type
+- Load/unload button per model
+- Active model indicator
+
+#### 3.2 Auto-Download (Optional)
+
+- Download recommended models from HuggingFace on first run
+- Progress bar in egui
+- Verify checksum after download
+
+#### 3.3 Settings Panel Update
+
+- GPU layers slider (0 = CPU only, max = full GPU offload)
+- Context length selector
+- Thread count selector
+- Temperature / top_p / repeat_penalty sliders
+- Backend mode selector: Local / Remote / Auto
+
+Deliverable: User selects model -> model loads -> chat works locally.
+
+### Phase 4: Polish (1-2 days)
+
+#### 4.1 Hybrid Mode
+
+- Local model for text chat (primary)
+- Local vision model for screen analysis
+- Remote API fallback when no local model is available
+- Configurable in settings: which backend for text, which for vision
 
 #### 4.2 Frame Cache
 
-Avoid re-encoding the same frame:
-
-```rust
-struct FrameCache {
-    last_frame_hash: u64,
-    last_encoded: Option<String>,
-}
-```
+    struct FrameCache {
+        last_frame_hash: u64,
+        last_encoded: Option<VisionImage>,
+    }
 
 #### 4.3 Error Handling
 
-- Capture not active → message: "Start capture first (F9)"
-- Frame too old (>5s) → skip, don't send stale data
-- LLM timeout → graceful error in chat
+- No model loaded -> InferenceBackend falls back to Remote
+- No local vision model -> look_at_screen returns error text
+- Model too large for GPU -> fall back to CPU with warning
+- Frame too old (>5s) -> skip, do not analyze stale data
+- Remote API unreachable -> error message in chat
 
-#### 4.4 Event Hooks
-
-```rust
-// Example: auto-look when user switches apps
-// (detect via window title changes in the capture)
-fn on_screen_change(&mut self) {
-    if self.ai_config.vision.auto_look_on_change {
-        self.trigger_vision_snapshot("Something changed on screen. What happened?");
-    }
-}
-```
 
 ---
 
-## 6. Key Design Decisions
+## 7. Key Design Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Image format | JPEG, quality 70 | 512px width → ~30KB, well within API limits |
-| Encoding location | Capture thread? Main thread? | **Main thread** (simpler, avoids Send constraints on image crate) |
-| Frame access model | `take()` from `capture_latest_frame` | Zero-copy, frame is consumed by vision |
-| LLM client | Extend existing `AiChatClient` | Reuse auth, error handling, streaming |
-| Tool executor context | `Arc<Mutex<Option<CapturedFrame>>>` | Shared state between event loop and tool executor |
-| Character card integration | `system_prompt` field + `look_at_screen` tool | No new config format needed |
+| Inference backend | Local-first + Remote fallback | Privacy by default, graceful degradation |
+| Model format | GGUF | Standard quantized format, wide model availability |
+| Image encoding | Raw RGB (local) / base64 JPEG (remote) | Optimal per backend |
+| Image resolution | 336px max | Balances quality vs VRAM usage |
+| Model loading | On-demand from config | Avoid loading unused models, save VRAM |
+| Prompt format | Per-model PromptFormatter trait | Different models use different chat formats |
+| Concurrency | Single inference at a time | Avoids GPU memory contention |
+| Output pipeline | Same AiStreamEvent channel | Zero changes to chat UI and message history |
+| VisionImage | Single type in vision_encoder.rs | Shared by local (raw RGB) and remote (base64 JPEG) |
+| ModelManager | Owned by AppState, borrowed by LocalInference | No ownership conflicts, accessible to UI |
+| Text+Vision tool | Text model calls tool -> scheduler triggers vision | Two models collaborate via tool calling |
 
-## 7. Configuration Schema
-
-```json
-{
-  "vision": {
-    "auto_look_enabled": false,
-    "auto_look_interval_secs": 120,
-    "auto_look_prompt": "Take a moment to observe what's on the screen. Comment on anything interesting.",
-    "max_image_dimension": 512,
-    "jpeg_quality": 70
-  }
-}
-```
+---
 
 ## 8. File Changes Summary
 
 | Phase | New Files | Modified Files |
 |---|---|---|
-| 1 | `ai/vision.rs` | `ai/client.rs`, `app.rs`, `gui.rs`, `main.rs` |
-| 2 | — | `ai/config.rs`, `ai/settings_panel.rs`, `app.rs` |
-| 3 | — | `ai/tools/registry.rs`, `ai/tools/executors.rs` |
-| 4 | — | `ai/vision.rs`, `app.rs` |
+| 1 | ai/model_manager.rs, ai/backend.rs | ai/mod.rs, ai/client.rs, ai/types.rs, Cargo.toml, app.rs |
+| 2 | ai/vision_encoder.rs, ai/prompt_format.rs, ai/local_inference.rs | ai/mod.rs, ai/backend.rs, app.rs |
+| 3 | ai/model_panel.rs | ai/mod.rs, gui.rs, ai/settings_panel.rs |
+| 4 | - | ai/backend.rs, ai/vision_encoder.rs, app.rs, ai/settings_panel.rs |
+
+---
+
+## 9. Model Setup Instructions
+
+1. Create model directory structure:
+   mkdir -p model/text model/vision
+
+2. Download text model (e.g., Qwen2.5):
+   wget -O model/text/qwen2.5-7b-instruct-q4_k_m.gguf      https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf
+
+3. Download vision model (e.g., MiniCPM-V):
+   wget -O model/vision/MiniCPM-V-2_6-Q4_K_M.gguf      https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/MiniCPM-V-2_6-Q4_K_M.gguf
+
+4. Create model/global_config.json with active model names.
+
+5. Run the viewer -- models auto-load on startup.
+   If no local model found, falls back to remote API (configure in Settings -> AI).
