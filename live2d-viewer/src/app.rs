@@ -408,6 +408,9 @@ pub struct AppState {
     /// Last time a vision auto-look was triggered.
     #[cfg(feature = "capture")]
     pub(crate) vision_last_look: Option<std::time::Instant>,
+    /// Hash of latest frame for dedup.
+    #[cfg(feature = "capture")]
+    pub(crate) vision_frame_hash: u64,
 }
 
 impl AppState {
@@ -546,6 +549,8 @@ impl AppState {
             capture_rx: None,
             #[cfg(feature = "capture")]
             vision_last_look: None,
+            #[cfg(feature = "capture")]
+            vision_frame_hash: 0,
         }
     }
 
@@ -1893,6 +1898,7 @@ impl AppState {
         if let Some(ref rx) = self.capture_rx {
             while let Ok(frame) = rx.try_recv() {
                 self.capture_frame_count += 1;
+                crate::ai::vision::store_frame_snapshot(&frame);
                 self.capture_latest_frame = Some(frame);
             }
         }
