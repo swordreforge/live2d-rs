@@ -297,11 +297,9 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .default_height(300.0)
         .default_pos([4.0, 100.0])
         .min_width(240.0)
-        .max_width(480.0)
         .resizable(true)
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
-            ui.set_min_height(200.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("模型: {}", app.ai_config.model)).text_style(egui::TextStyle::Small));
                 if !card_name.is_empty() {
@@ -318,7 +316,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             ui.separator();
 
             egui::ScrollArea::vertical()
-                .auto_shrink([true, true])
+                .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
