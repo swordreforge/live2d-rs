@@ -765,9 +765,24 @@ fn main() -> anyhow::Result<()> {
 
                         // Upload latest capture frame as egui texture (before egui frame)
                         #[cfg(feature = "capture")]
-                        if let Some(frame) = app.capture_latest_frame.take() {
+                        if let Some(ref frame) = app.capture_latest_frame {
                             if frame.width > 0 && frame.height > 0 {
-                                let pixels = rgba_vec_to_color32(frame.data);
+                                let pixels = rgba_vec_to_color32(frame.data.clone());
+                                let color_image = egui::ColorImage {
+                                    size: [frame.width as usize, frame.height as usize],
+                                    pixels,
+                                };
+                                if let Some(ref mut tex) = app.capture_texture {
+                                    tex.set(color_image, egui::TextureOptions::LINEAR);
+                                } else {
+                                    app.capture_texture = Some(egui_ctx.load_texture(
+                                        "capture_preview",
+                                        color_image,
+                                        egui::TextureOptions::LINEAR,
+                                    ));
+                                }
+                            }
+                        }
                                 let color_image = egui::ColorImage {
                                     size: [frame.width as usize, frame.height as usize],
                                     pixels,
