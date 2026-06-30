@@ -315,7 +315,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             ui.separator();
 
             egui::ScrollArea::vertical()
-                .auto_shrink([true, true])
+                .auto_shrink([true, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
