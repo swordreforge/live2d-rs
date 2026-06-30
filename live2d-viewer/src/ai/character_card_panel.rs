@@ -51,7 +51,9 @@ pub fn draw_character_card_panel(ctx: &egui::Context, app: &mut AppState) {
     // ── Window ──
     Window::new("角色卡编辑器")
         .default_width(400.0)
+        .default_height(420.0)
         .default_pos([100.0, 100.0])
+        .scroll2([false, true])
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label(format!("模型: {model_name}"));
