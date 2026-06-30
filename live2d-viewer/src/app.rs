@@ -1086,7 +1086,7 @@ impl AppState {
                     } else {
                         #[cfg(feature = "capture")]
                         if self.vision_pending_tool.is_some() {
-                            // Vision result for tool call — store for later Tool message
+                            log::info!("Vision Token: routing to vision_pending_result (tool flow)");
                             self.vision_pending_result = Some(t);
                             continue;
                         }
