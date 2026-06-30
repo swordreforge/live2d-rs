@@ -1827,20 +1827,21 @@ impl AppState {
     #[cfg(feature = "capture")]
     pub fn trigger_vision_snapshot(&mut self) {
         if self.ai_state != crate::ai::types::AiState::Idle {
+            log::warn!("Vision snapshot skipped: AI is busy ({:?})", self.ai_state);
             return;
         }
 
         let frame = match self.capture_latest_frame.take() {
             Some(f) => f,
             None => {
-                log::warn!("No capture frame available for vision snapshot");
+                log::warn!("Vision snapshot skipped: no capture frame (start capture with F9 first)");
                 return;
             }
         };
         let encoded = match crate::ai::vision::encode_frame(&frame) {
             Some(e) => e,
             None => {
-                log::error!("Failed to encode frame for vision");
+                log::error!("Vision: failed to encode frame");
                 return;
             }
         };
@@ -1861,6 +1862,7 @@ impl AppState {
         if !gguf_path.is_empty()
             && std::path::Path::new(&gguf_path).exists()
         {
+            log::info!("Vision: using local model {gguf_path}");
             let p = prompt.to_string();
             std::thread::spawn(move || {
                 match crate::ai::vision_local::infer_with_image(
@@ -1879,6 +1881,7 @@ impl AppState {
                 }
             });
         } else {
+            log::warn!("Vision: no GGUF configured (path={gguf_path})");
             let _ = tx.send(crate::ai::types::AiStreamEvent::Error(
                 "No local vision model configured. Set vision GGUF path in AI settings.".into(),
             ));
