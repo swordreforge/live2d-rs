@@ -128,7 +128,7 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
                 s.buffer_ready = true;
             }
             zwlr_screencopy_frame_v1::Event::Ready { .. } => s.copy_done = true,
-            zwlr_screencopy_frame_v1::Event::Failed { .. } => s.failed = true,
+            zwlr_screencopy_frame_v1::Event::Failed => s.failed = true,
             _ => {}
         }
     }

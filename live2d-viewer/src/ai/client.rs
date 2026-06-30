@@ -271,8 +271,7 @@ impl AiChatClient {
         })
     }
 
-    /// Send a vision request with a base64-encoded image frame.
-    /// The frame is attached as an `image_url` content block in the last user message.
+    #[cfg(feature = "capture")]
     pub fn send_vision(
         &self,
         messages: &[ChatMessage],
