@@ -339,6 +339,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
     if app.current_model.is_some() {
         Window::new("Parameters")
             .default_width(300.0)
+            .default_height(400.0)
+            .scroll2([false, true])
             .show(ctx, |ui| {
                 ui.label(format!("Parameters: {}", app.parameter_names.len()));
 
