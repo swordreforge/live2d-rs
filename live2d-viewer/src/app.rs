@@ -405,6 +405,9 @@ pub struct AppState {
     /// Receiver for captured frames from the capture thread.
     #[cfg(feature = "capture")]
     pub(crate) capture_rx: Option<std::sync::mpsc::Receiver<crate::capture::CapturedFrame>>,
+    /// Last time a vision auto-look was triggered.
+    #[cfg(feature = "capture")]
+    pub(crate) vision_last_look: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -541,6 +544,8 @@ impl AppState {
             capture_session: None,
             #[cfg(feature = "capture")]
             capture_rx: None,
+            #[cfg(feature = "capture")]
+            vision_last_look: None,
         }
     }
 
@@ -1780,18 +1785,42 @@ impl AppState {
         self.capture_session.is_some()
     }
 
-    /// Trigger a vision snapshot: encode the latest frame and send to AI.
+    /// Called every frame to check if auto-look should fire.
     #[cfg(feature = "capture")]
-    pub fn trigger_vision_snapshot(&mut self) {
-        if self.capture_latest_frame.is_none() {
-            log::warn!("No capture frame available for vision snapshot");
+    pub fn tick_vision_timer(&mut self) {
+        if !self.ai_config.vision_auto_enabled {
             return;
         }
         if self.ai_state != crate::ai::types::AiState::Idle {
             return;
         }
+        let interval = std::time::Duration::from_secs(
+            self.ai_config.vision_interval_secs.max(10),
+        );
+        let should_fire = match self.vision_last_look {
+            Some(t) => t.elapsed() >= interval,
+            None => true,
+        };
+        if should_fire && self.capture_latest_frame.is_some() {
+            self.vision_last_look = Some(std::time::Instant::now());
+            self.trigger_vision_snapshot();
+        }
+    }
 
-        let frame = self.capture_latest_frame.take().unwrap();
+    /// Trigger a vision snapshot: encode the latest frame and send to AI.
+    #[cfg(feature = "capture")]
+    pub fn trigger_vision_snapshot(&mut self) {
+        if self.ai_state != crate::ai::types::AiState::Idle {
+            return;
+        }
+
+        let frame = match self.capture_latest_frame.take() {
+            Some(f) => f,
+            None => {
+                log::warn!("No capture frame available for vision snapshot");
+                return;
+            }
+        };
         let encoded = match crate::ai::vision::encode_frame(&frame) {
             Some(e) => e,
             None => {

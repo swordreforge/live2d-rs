@@ -193,6 +193,32 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                 }
             }
 
+            #[cfg(feature = "capture")]
+            {
+                ui.add_space(16.0);
+                ui.separator();
+                ui.heading("视觉 (Vision)");
+
+                ui.checkbox(
+                    &mut app.ai_config.vision_auto_enabled,
+                    "自动观察屏幕（定时截图发给 AI 分析）",
+                );
+
+                if app.ai_config.vision_auto_enabled {
+                    ui.add_space(4.0);
+                    ui.label("观察间隔（秒）");
+                    let interval_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut app.ai_config.vision_interval_secs)
+                                .clamp_range(10..=600),
+                        )
+                        .changed();
+                    if interval_changed {
+                        *dirty = true;
+                    }
+                }
+            }
+
             ui.add_space(8.0);
 
             // Save button — write to DB + JSON file

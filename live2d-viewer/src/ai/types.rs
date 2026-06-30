@@ -120,6 +120,13 @@ pub struct AiConfig {
     /// Readable path prefixes (empty = no path restrictions).
     #[serde(default)]
     pub allowed_read_paths: Vec<String>,
+    // ── Vision ──
+    /// Whether auto-look-at-screen is enabled.
+    #[serde(default)]
+    pub vision_auto_enabled: bool,
+    /// Interval in seconds between auto-look triggers (0 = default 120s).
+    #[serde(default)]
+    pub vision_interval_secs: u64,
 }
 
 /// A single entry in the conversation memory store.
@@ -192,6 +199,8 @@ impl Default for AiConfig {
             max_tool_rounds: 10,
             allowed_commands: vec![],
             allowed_read_paths: vec![],
+            vision_auto_enabled: false,
+            vision_interval_secs: 120,
         }
     }
 }

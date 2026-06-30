@@ -1298,7 +1298,10 @@ fn main() -> anyhow::Result<()> {
 
                 // Drain captured frames from the capture thread, keep only the latest
                 #[cfg(feature = "capture")]
-                app.drain_capture_frames();
+                {
+                    app.drain_capture_frames();
+                    app.tick_vision_timer();
+                }
 
                 window.request_redraw();
             }
