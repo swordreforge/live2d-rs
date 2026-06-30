@@ -408,6 +408,8 @@ pub struct AppState {
     /// Last time a vision auto-look was triggered.
     #[cfg(feature = "capture")]
     pub(crate) vision_last_look: Option<std::time::Instant>,
+    #[cfg(feature = "capture")]
+    pub(crate) vision_pending_text: Option<String>,
 }
 
 impl AppState {
@@ -546,6 +548,8 @@ impl AppState {
             capture_rx: None,
             #[cfg(feature = "capture")]
             vision_last_look: None,
+            #[cfg(feature = "capture")]
+            vision_pending_text: None,
         }
     }
 
@@ -1867,7 +1871,9 @@ impl AppState {
                     &gguf_path, &mmproj_path, &b64, &p,
                 ) {
                     Ok(text) => {
-                        let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Token(
+                            text,
+                        ));
                         let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
                     }
                     Err(e) => {
@@ -1877,26 +1883,9 @@ impl AppState {
                 }
             });
         } else {
-            let client = crate::ai::client::AiChatClient::new();
-            let config = self.ai_config.clone();
-            let messages: Vec<crate::ai::types::ChatMessage> = self
-                .ai_messages
-                .iter()
-                .rev()
-                .take(config.context_length)
-                .cloned()
-                .collect();
-            std::thread::spawn(move || {
-                match client.send_vision(&messages, &b64, prompt, &config) {
-                    Ok(text) => {
-                        let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
-                        let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
-                    }
-                    Err(e) => {
-                        let _ = tx.send(crate::ai::types::AiStreamEvent::Error(e));
-                    }
-                }
-            });
+            let _ = tx.send(crate::ai::types::AiStreamEvent::Error(
+                "No local vision model configured. Set vision GGUF path in AI settings.".into(),
+            ));
         }
         self.ai_result_rx = Some(rx);
 
