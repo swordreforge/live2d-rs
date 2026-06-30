@@ -103,6 +103,7 @@ pub fn infer_with_image(
             result.push_str(&s);
         }
     }
+    vm.ctx.clear_kv_cache_seq(Some(0), Some(0), None).ok();
     Ok(result.trim().to_string())
 }
 
