@@ -334,7 +334,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                         if msg.role == ChatRole::Assistant {
                             render_markdown(ui, &cleaned);
                         } else {
-                            ui.label(&cleaned);
+                            ui.selectable_label(false, &cleaned);
                         }
                         ui.add_space(4.0);
                     }
