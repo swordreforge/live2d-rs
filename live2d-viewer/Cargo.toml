@@ -41,7 +41,7 @@ base64 = "0.22"
 dirs = "5"
 pulldown-cmark = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-llama-cpp-2 = { version = "0.1.150", optional = true }
+llama-cpp-2 = { version = "0.1.150", optional = true, features = ["common", "mtmd"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.24", default-features = false }
