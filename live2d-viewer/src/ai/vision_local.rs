@@ -24,29 +24,30 @@ fn decode_base64(b64: &str) -> Result<Vec<u8>, String> {
 }
 
 fn run_vision_cli(gguf: &str, img: &Path, prompt: &str) -> Result<String, String> {
-    for bin in ["llama-llava-cli", "llama-cli"] {
-        let child = Command::new(bin)
-            .arg("-m").arg(gguf)
-            .arg("--image").arg(img)
-            .arg("-p").arg(prompt)
-            .arg("--temp").arg("0.7")
-            .arg("-n").arg("256")
-            .arg("--no-display-prompt")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+    let child = Command::new("llama-cli")
+        .arg("-m").arg(gguf)
+        .arg("--image").arg(img)
+        .arg("-p").arg(prompt)
+        .arg("--temp").arg("0.7")
+        .arg("-n").arg("256")
+        .arg("--no-display-prompt")
+        .arg("--simple-io")
+        .arg("--single-turn")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 
-        match child {
-            Ok(c) => {
-                let out = c.wait_with_output().map_err(|e| format!("{bin}: {e}"))?;
-                if out.status.success() {
-                    return String::from_utf8(out.stdout)
-                        .map(|s| s.trim().to_string())
-                        .map_err(|e| format!("utf8: {e}"));
-                }
+    match child {
+        Ok(c) => {
+            let out = c.wait_with_output().map_err(|e| format!("llama-cli: {e}"))?;
+            if out.status.success() {
+                return String::from_utf8(out.stdout)
+                    .map(|s| s.trim().to_string())
+                    .map_err(|e| format!("utf8: {e}"));
             }
-            Err(_) => continue,
         }
+        Err(e) => return Err(format!("spawn llama-cli: {e}")),
     }
-    Err("No vision CLI found (llama-llava-cli / llama-cli)".into())
+
+    Err("llama-cli failed".into())
 }
