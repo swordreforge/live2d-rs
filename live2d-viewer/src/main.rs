@@ -783,21 +783,6 @@ fn main() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                                let color_image = egui::ColorImage {
-                                    size: [frame.width as usize, frame.height as usize],
-                                    pixels,
-                                };
-                                if let Some(ref mut tex) = app.capture_texture {
-                                    tex.set(color_image, egui::TextureOptions::LINEAR);
-                                } else {
-                                    app.capture_texture = Some(egui_ctx.load_texture(
-                                        "capture_preview",
-                                        color_image,
-                                        egui::TextureOptions::LINEAR,
-                                    ));
-                                }
-                            }
-                        }
 
                         // --- Egui frame (skipped when AlwaysOnTop minimized — 1×1 surface crashes font.rs) ---
                         if app.minimized_to_float && app.pet_mode == PetMode::AlwaysOnTop {
