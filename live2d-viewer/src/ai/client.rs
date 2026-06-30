@@ -272,6 +272,7 @@ impl AiChatClient {
     }
 
     #[cfg(feature = "capture")]
+    #[allow(dead_code)]
     pub fn send_vision(
         &self,
         messages: &[ChatMessage],

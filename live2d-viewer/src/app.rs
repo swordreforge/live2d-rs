@@ -408,8 +408,6 @@ pub struct AppState {
     /// Last time a vision auto-look was triggered.
     #[cfg(feature = "capture")]
     pub(crate) vision_last_look: Option<std::time::Instant>,
-    #[cfg(feature = "capture")]
-    pub(crate) vision_pending_text: Option<String>,
 }
 
 impl AppState {
@@ -548,8 +546,6 @@ impl AppState {
             capture_rx: None,
             #[cfg(feature = "capture")]
             vision_last_look: None,
-            #[cfg(feature = "capture")]
-            vision_pending_text: None,
         }
     }
 
