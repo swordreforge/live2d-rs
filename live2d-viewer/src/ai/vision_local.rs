@@ -45,6 +45,7 @@ fn ensure_loaded(gguf: &str, mmproj: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(deprecated)]
 pub fn infer_with_image(
     gguf_path: &str,
     mmproj_path: &str,
@@ -82,12 +83,10 @@ pub fn infer_with_image(
         vm.ctx.decode(&mut batch).ok();
     }
 
-    #[allow(deprecated)]
     let mut result = String::new();
     for token in &tokens {
-        match model.token_to_str(*token, llama_cpp_2::model::Special::Plaintext) {
-            Ok(s) => result.push_str(&s),
-            Err(_) => {} // skip undecodable tokens
+        if let Ok(s) = model.token_to_str(*token, llama_cpp_2::model::Special::Plaintext) {
+            result.push_str(&s);
         }
     }
     Ok(result.trim().to_string())
