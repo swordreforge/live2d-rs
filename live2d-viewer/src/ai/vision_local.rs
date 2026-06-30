@@ -67,7 +67,7 @@ pub fn infer_with_image(
         parse_special: true,
     };
     let chunks = vm.mtmd.tokenize(text, &[&bitmap]).map_err(|e| format!("tokenize: {e}"))?;
-    chunks.eval_chunks(&vm.mtmd, &vm.ctx, 0, 0, 512, true)
+    let mut n_past = chunks.eval_chunks(&vm.mtmd, &vm.ctx, 0, 0, 512, true)
         .map_err(|e| format!("eval: {e}"))?;
 
     let model = unsafe { &*vm.model };
@@ -79,8 +79,9 @@ pub fn infer_with_image(
         if token == eos { break; }
         tokens.push(token);
         let mut batch = LlamaBatch::new(1, 1);
-        batch.add(token, 0, &[0], true).ok();
+        batch.add(token, n_past, &[0], true).ok();
         vm.ctx.decode(&mut batch).ok();
+        n_past += 1;
     }
 
     let mut result = String::new();
