@@ -297,9 +297,9 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .default_height(300.0)
         .default_pos([4.0, 100.0])
         .resizable(true)
-        .scroll2([false, true])
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
+            ui.set_min_height(200.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("模型: {}", app.ai_config.model)).text_style(egui::TextStyle::Small));
                 if !card_name.is_empty() {
@@ -377,10 +377,10 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.ai_input_buffer)
-                        .hint_text("输入消息...")
-                        .desired_width(240.0),
+                let text_w = (ui.available_width() - 60.0).max(100.0);
+                ui.add_sized(
+                    egui::vec2(text_w, 0.0),
+                    egui::TextEdit::singleline(&mut app.ai_input_buffer).hint_text("输入消息..."),
                 );
                 if ui
                     .add_enabled(!pending, egui::Button::new("发送"))
