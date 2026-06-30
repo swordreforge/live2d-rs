@@ -1072,6 +1072,7 @@ impl AppState {
                     if is_assistant {
                         self.ai_messages.last_mut().unwrap().content.push_str(&t);
                     } else {
+                        log::info!("Vision: creating new assistant message with {} chars", t.len());
                         self.ai_messages.push(crate::ai::types::ChatMessage {
                             role: crate::ai::types::ChatRole::Assistant,
                             content: t,
@@ -1899,6 +1900,10 @@ impl AppState {
                     &gguf_path, &mmproj_path, &b64, &p,
                 ) {
                     Ok(text) => {
+                        log::info!("Vision result: {text}");
+                        if text.is_empty() {
+                            log::warn!("Vision returned empty text");
+                        }
                         let _ = tx.send(crate::ai::types::AiStreamEvent::Token(
                             text,
                         ));
