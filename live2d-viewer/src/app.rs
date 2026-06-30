@@ -1222,6 +1222,24 @@ impl AppState {
             }
             return;
         }
+        #[cfg(feature = "capture")]
+        if self.vision_pending_tool.is_some() {
+            // Tool call vision result arrived — push Tool msg, continue
+            if let Some(tc) = self.vision_pending_tool.take() {
+                let content = self.vision_pending_result.take().unwrap_or_default();
+                self.ai_messages.push(crate::ai::types::ChatMessage {
+                    role: crate::ai::types::ChatRole::Tool,
+                    content,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64()).unwrap_or(0.0),
+                    tool_call_id: Some(tc.id),
+                    tool_calls: None,
+                });
+                self.continue_with_tool_result();
+            }
+            return;
+        }
         // Remove trailing empty assistant placeholder (no content arrived)
         if self.ai_messages.last().is_some_and(|m| {
             m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
