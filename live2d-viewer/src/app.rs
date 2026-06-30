@@ -1660,6 +1660,22 @@ impl AppState {
             .unwrap_or_default();
 
         for tc in tool_calls {
+            if tc.function.name == "look_at_screen" {
+                #[cfg(feature = "capture")]
+                self.trigger_vision_snapshot();
+                self.ai_messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    content: "Screen captured. Analyzing via vision model...".into(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
+                    tool_call_id: Some(tc.id),
+                    tool_calls: None,
+                });
+                continue;
+            }
+
             let args: serde_json::Value =
                 serde_json::from_str(&tc.function.arguments).unwrap_or_default();
 

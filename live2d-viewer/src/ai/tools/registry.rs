@@ -95,6 +95,17 @@ impl ToolRegistry {
             get_env as fn(&Value, &SafetyConfig) -> Result<String, String>,
             SafetyLevel::Safe,
         );
+        reg.register(
+            "look_at_screen",
+            "Capture a screenshot of the user's screen to see what they're doing. Use this when the user asks what you can see, when they ask you to look at something, or when you want to comment on their screen content.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            noop_executor as fn(&Value, &SafetyConfig) -> Result<String, String>,
+            SafetyLevel::Safe,
+        );
         reg
     }
 
@@ -149,6 +160,10 @@ impl ToolRegistry {
             SafetyLevel::Dangerous => SafetyLevel::Dangerous,
         })
     }
+}
+
+fn noop_executor(_args: &Value, _safety: &SafetyConfig) -> Result<String, String> {
+    Ok("look_at_screen handled by application".into())
 }
 
 #[cfg(test)]

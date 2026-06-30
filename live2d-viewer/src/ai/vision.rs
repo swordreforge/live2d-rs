@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use base64::Engine;
 use image::imageops::FilterType;
 
@@ -8,6 +10,23 @@ pub struct VisionSnapshot {
     pub base64: String,
     pub width: u32,
     pub height: u32,
+}
+
+static PENDING_SNAPSHOT: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn store_snapshot(base64: String) {
+    *PENDING_SNAPSHOT.lock().unwrap() = Some(base64);
+}
+
+pub fn take_snapshot() -> Option<String> {
+    PENDING_SNAPSHOT.lock().unwrap().take()
+}
+
+#[cfg(feature = "capture")]
+pub fn store_frame_snapshot(frame: &crate::capture::CapturedFrame) {
+    if let Some(snap) = encode_frame(frame) {
+        store_snapshot(snap.base64);
+    }
 }
 
 #[cfg(feature = "capture")]
