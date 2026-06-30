@@ -1764,8 +1764,17 @@ impl AppState {
                 let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                 #[cfg(feature = "capture")]
                 {
-                    self.vision_pending_tool = Some(tc.clone());
-                    self.trigger_vision_snapshot_force(prompt);
+                    let content = self.vision_tool_call_blocking(prompt);
+                    self.ai_messages.push(ChatMessage {
+                        role: ChatRole::Tool,
+                        content,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0),
+                        tool_call_id: Some(tc.id),
+                        tool_calls: None,
+                    });
                 }
                 continue;
             }
@@ -2009,6 +2018,35 @@ impl AppState {
                 tool_call_id: None,
                 tool_calls: None,
             });
+        }
+    }
+
+    #[cfg(feature = "capture")]
+    fn vision_tool_call_blocking(&mut self, prompt: Option<String>) -> String {
+        let frame = match self.capture_latest_frame.take() {
+            Some(f) => f,
+            None => return "No capture frame available".into(),
+        };
+        let encoded = match crate::ai::vision::encode_frame(&frame) {
+            Some(e) => e,
+            None => return "Failed to encode frame".into(),
+        };
+        let gguf = self.ai_config.vision_gguf_path.clone();
+        let mmproj = self.ai_config.vision_mmproj_path.clone();
+        if gguf.is_empty() || !std::path::Path::new(&gguf).exists() {
+            return "No vision model configured".into();
+        }
+        let p = prompt.unwrap_or_else(|| "Describe what you see in this image.".into());
+        let b64 = encoded.base64;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = crate::ai::vision_local::infer_with_image(&gguf, &mmproj, &b64, &p);
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => format!("Vision error: {e}"),
+            Err(_) => "Vision timed out".into(),
         }
     }
 
