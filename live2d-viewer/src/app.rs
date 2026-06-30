@@ -408,6 +408,8 @@ pub struct AppState {
     /// Last time a vision auto-look was triggered.
     #[cfg(feature = "capture")]
     pub(crate) vision_last_look: Option<std::time::Instant>,
+    #[cfg(feature = "capture")]
+    pub(crate) vision_request_start: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -546,6 +548,8 @@ impl AppState {
             capture_rx: None,
             #[cfg(feature = "capture")]
             vision_last_look: None,
+            #[cfg(feature = "capture")]
+            vision_request_start: None,
         }
     }
 
@@ -1038,6 +1042,16 @@ impl AppState {
     pub fn poll_ai_result(&mut self) {
         use crate::ai::types::{AiState, AiStreamEvent, ToolCall};
 
+        #[cfg(feature = "capture")]
+        if let Some(start) = self.vision_request_start {
+            if start.elapsed() > std::time::Duration::from_secs(90) {
+                self.vision_request_start = None;
+                self.ai_state = AiState::Idle;
+                self.ai_error = Some("Vision request timed out (90s)".into());
+                return;
+            }
+        }
+
         // ── PendingTool state: wait for approval (handled by approve_tool/reject_tool) ──
         if matches!(self.ai_state, AiState::PendingTool { .. }) {
             return;
@@ -1053,8 +1067,21 @@ impl AppState {
         while let Ok(event) = rx.try_recv() {
             match event {
                 AiStreamEvent::Token(t) => {
-                    if let Some(last) = self.ai_messages.last_mut() {
-                        last.content.push_str(&t);
+                    let is_assistant = self.ai_messages.last()
+                        .is_some_and(|m| m.role == crate::ai::types::ChatRole::Assistant);
+                    if is_assistant {
+                        self.ai_messages.last_mut().unwrap().content.push_str(&t);
+                    } else {
+                        self.ai_messages.push(crate::ai::types::ChatMessage {
+                            role: crate::ai::types::ChatRole::Assistant,
+                            content: t,
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs_f64())
+                                .unwrap_or(0.0),
+                            tool_call_id: None,
+                            tool_calls: None,
+                        });
                     }
                 }
                 AiStreamEvent::ToolCall(tc) => {
@@ -1062,6 +1089,8 @@ impl AppState {
                 }
                 AiStreamEvent::Done => {
                     done = true;
+                    #[cfg(feature = "capture")]
+                    { self.vision_request_start = None; }
                 }
                 AiStreamEvent::Error(e) => {
                     self.ai_error = Some(e);
@@ -1847,6 +1876,7 @@ impl AppState {
         };
 
         self.ai_state = crate::ai::types::AiState::Waiting;
+        self.vision_request_start = Some(std::time::Instant::now());
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

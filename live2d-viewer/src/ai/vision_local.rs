@@ -74,14 +74,13 @@ pub fn infer_with_image(
     let eos = model.token_eos();
     let mut tokens = Vec::new();
 
-    for _ in 0..256 {
+    for i in 0..256 {
         let token = vm.ctx.candidates().next().map(|c| c.id()).unwrap_or(eos);
         if token == eos { break; }
         tokens.push(token);
         let mut batch = LlamaBatch::new(1, 1);
-        batch.add(token, n_past, &[0], true).ok();
+        batch.add(token, n_past + i as i32, &[0], true).ok();
         vm.ctx.decode(&mut batch).ok();
-        n_past += 1;
     }
 
     let mut result = String::new();
