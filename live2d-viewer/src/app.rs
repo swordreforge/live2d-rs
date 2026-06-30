@@ -1759,11 +1759,11 @@ impl AppState {
 
         for tc in tool_calls {
             if tc.function.name == "look_at_screen" {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or_default();
-                let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                 #[cfg(feature = "capture")]
                 {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                    let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                     let content = self.vision_tool_call_blocking(prompt);
                     self.ai_messages.push(ChatMessage {
                         role: ChatRole::Tool,
@@ -1932,6 +1932,7 @@ impl AppState {
         self.vision_do_snapshot(None);
     }
 
+    #[cfg(feature = "capture")]
     fn vision_do_snapshot(&mut self, custom_prompt: Option<String>) {
         if self.ai_state != crate::ai::types::AiState::Idle {
             log::warn!("Vision snapshot skipped: AI is busy ({:?})", self.ai_state);
