@@ -9,7 +9,6 @@ default = ["static-link", "ai"]
 static-link = ["live2d-core-sys/static-link"]
 ai = []
 capture = ["wayland-client", "wayland-protocols-wlr", "llama-cpp-2"]
-llama-cpp-2 = ["dep:llama-cpp-2"]
 
 [dependencies]
 live2d-core = { path = "../live2d-core" }
