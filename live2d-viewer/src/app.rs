@@ -410,6 +410,8 @@ pub struct AppState {
     pub(crate) vision_last_look: Option<std::time::Instant>,
     #[cfg(feature = "capture")]
     pub(crate) vision_request_start: Option<std::time::Instant>,
+    #[cfg(feature = "capture")]
+    pub(crate) vision_just_responded: bool,
 }
 
 impl AppState {
@@ -1073,6 +1075,8 @@ impl AppState {
                         self.ai_messages.last_mut().unwrap().content.push_str(&t);
                     } else {
                         log::info!("Vision: creating new assistant message with {} chars", t.len());
+                        #[cfg(feature = "capture")]
+                        { self.vision_just_responded = true; }
                         self.ai_messages.push(crate::ai::types::ChatMessage {
                             role: crate::ai::types::ChatRole::Assistant,
                             content: t,
@@ -1184,6 +1188,11 @@ impl AppState {
 
         // ── Normal completion (text response) ──
         self.ai_state = AiState::Idle;
+        #[cfg(feature = "capture")]
+        if self.vision_just_responded {
+            self.vision_just_responded = false;
+            return;  // skip TTS/emotion for vision responses
+        }
         // Remove trailing empty assistant placeholder (no content arrived)
         if self.ai_messages.last().is_some_and(|m| {
             m.content.is_empty() && m.role == crate::ai::types::ChatRole::Assistant
