@@ -7,7 +7,6 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::mtmd::*;
-use llama_cpp_2::sampling::LlamaSampler;
 
 static MODEL: Mutex<Option<VisionModel>> = Mutex::new(None);
 
@@ -72,11 +71,10 @@ pub fn infer_with_image(
 
     let model = unsafe { &*vm.model };
     let eos = model.token_eos();
-    let mut sampler = LlamaSampler::chain_simple([LlamaSampler::temp(0.7)]);
     let mut tokens = Vec::new();
 
     for _ in 0..256 {
-        let token = sampler.sample(&vm.ctx, -1);
+        let token = vm.ctx.candidates().next().map(|c| c.id()).unwrap_or(eos);
         if token == eos { break; }
         tokens.push(token);
         let mut batch = LlamaBatch::new(1, 1);

@@ -34,3 +34,5 @@ live2d-viewer-dddddddd
 warn.log
 *.swp
 obs-studio/
+error.log
+panic.log
