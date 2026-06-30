@@ -297,6 +297,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .default_height(300.0)
         .default_pos([4.0, 100.0])
         .resizable(true)
+        .scroll2([false, true])
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -314,10 +315,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
             ui.separator();
 
-            let scroll_height = (ui.available_height() - 40.0).max(80.0);
-
             egui::ScrollArea::vertical()
-                .max_height(scroll_height)
                 .auto_shrink([true, true])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -382,7 +380,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                 ui.add(
                     egui::TextEdit::singleline(&mut app.ai_input_buffer)
                         .hint_text("输入消息...")
-                        .desired_width(f32::INFINITY),
+                        .desired_width(240.0),
                 );
                 if ui
                     .add_enabled(!pending, egui::Button::new("发送"))
