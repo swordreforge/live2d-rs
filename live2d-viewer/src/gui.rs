@@ -69,7 +69,7 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
 
     // Toggle buttons in top-right corner
     egui::Area::new("toggle_btns".into())
-        .fixed_pos(egui::pos2(ctx.screen_rect().right() - 110.0, 4.0))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-4.0, 4.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if app.ai_enabled && app.pet_mode == PetMode::Off {
