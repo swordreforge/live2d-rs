@@ -9,6 +9,7 @@ mod gui;
 mod model_loader;
 pub mod motion;
 mod renderer;
+mod theme;
 mod text_renderer;
 mod texture;
 mod toolbar;
@@ -276,6 +277,7 @@ fn main() -> anyhow::Result<()> {
 
     // egui setup
     let egui_ctx = egui::Context::default();
+    theme::apply_aira_dark(&egui_ctx);
 
     // Load CJK font to fix □□□ (tofu) for Chinese/Japanese text
     if let Ok(cjk_data) =
