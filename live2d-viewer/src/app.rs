@@ -1810,6 +1810,10 @@ impl AppState {
             });
         }
 
+        #[cfg(feature = "capture")]
+        if self.vision_pending_tool.is_some() {
+            return;
+        }
         self.continue_with_tool_result();
     }
 
