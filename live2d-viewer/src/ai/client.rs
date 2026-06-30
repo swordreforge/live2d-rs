@@ -271,6 +271,47 @@ impl AiChatClient {
         })
     }
 
+    /// Send a vision request with a base64-encoded image frame.
+    /// The frame is attached as an `image_url` content block in the last user message.
+    pub fn send_vision(
+        &self,
+        messages: &[ChatMessage],
+        frame_base64: &str,
+        prompt: &str,
+        config: &AiConfig,
+    ) -> Result<String, String> {
+        let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+
+        let mut api_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(Self::serialize_message)
+            .collect();
+
+        let vision_msg = serde_json::json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": frame_base64, "detail": "low"}}
+            ]
+        });
+        api_messages.push(vision_msg);
+
+        let body = serde_json::json!({
+            "model": config.model,
+            "messages": api_messages,
+            "max_tokens": config.max_tokens,
+            "temperature": config.temperature,
+            "stream": false,
+        });
+
+        let resp = self.post(&url, &body, config)?;
+        let json: serde_json::Value = resp.json().map_err(|e| format!("JSON: {e}"))?;
+        json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Empty vision response".to_string())
+    }
+
     /// Send a minimal "ping" to verify the provider configuration is working.
     pub fn test_connection(&self, config: &AiConfig) -> Result<String, String> {
         let msg = ChatMessage {

@@ -1077,6 +1077,10 @@ fn main() -> anyhow::Result<()> {
                                                     app.start_capture();
                                                 }
                                             }
+                                            #[cfg(feature = "capture")]
+                                            if code == KeyCode::F10 {
+                                                app.trigger_vision_snapshot();
+                                            }
                                         }
                                     }
                                 }

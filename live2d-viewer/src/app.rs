@@ -1780,6 +1780,68 @@ impl AppState {
         self.capture_session.is_some()
     }
 
+    /// Trigger a vision snapshot: encode the latest frame and send to AI.
+    #[cfg(feature = "capture")]
+    pub fn trigger_vision_snapshot(&mut self) {
+        if self.capture_latest_frame.is_none() {
+            log::warn!("No capture frame available for vision snapshot");
+            return;
+        }
+        if self.ai_state != crate::ai::types::AiState::Idle {
+            return;
+        }
+
+        let frame = self.capture_latest_frame.take().unwrap();
+        let encoded = match crate::ai::vision::encode_frame(&frame) {
+            Some(e) => e,
+            None => {
+                log::error!("Failed to encode frame for vision");
+                return;
+            }
+        };
+
+        self.ai_state = crate::ai::types::AiState::Waiting;
+
+        let client = crate::ai::client::AiChatClient::new();
+        let config = self.ai_config.clone();
+        let messages: Vec<crate::ai::types::ChatMessage> = self
+            .ai_messages
+            .iter()
+            .rev()
+            .take(config.context_length)
+            .cloned()
+            .collect();
+        let base64 = encoded.base64;
+        let prompt = "Look at what's on the screen right now. Describe what you see in a short, conversational sentence.";
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            match client.send_vision(&messages, &base64, prompt, &config) {
+                Ok(text) => {
+                    let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
+                    let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(crate::ai::types::AiStreamEvent::Error(e));
+                }
+            }
+        });
+        self.ai_result_rx = Some(rx);
+
+        self.ai_messages.push(crate::ai::types::ChatMessage {
+            role: crate::ai::types::ChatRole::User,
+            content: "[Looked at screen]".into(),
+            timestamp,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+    }
+
     /// Drain all pending captured frames into `capture_latest_frame`.
     #[cfg(feature = "capture")]
     pub fn drain_capture_frames(&mut self) {

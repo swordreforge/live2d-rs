@@ -6,3 +6,4 @@ pub mod settings_panel;
 pub mod tools;
 pub mod tts;
 pub mod types;
+pub mod vision;

@@ -81,6 +81,11 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
                             app.start_capture();
                         }
                     }
+                    if app.is_capturing() {
+                        if ui.button("\u{1F4F7}").clicked() {
+                            app.trigger_vision_snapshot();
+                        }
+                    }
                 }
                 if ui.button("\u{2699}").clicked() {
                     app.settings_open = !app.settings_open;
