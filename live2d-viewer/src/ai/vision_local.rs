@@ -64,13 +64,15 @@ pub fn infer_with_image(
     let marker = mtmd_default_marker();
     let model = unsafe { &*vm.model };
 
+    let template = model.chat_template(None).map_err(|e| format!("template: {e}"))?;
     let formatted = model.apply_chat_template(
+        &template,
         &[llama_cpp_2::model::LlamaChatMessage::new(
             "user".into(),
             format!("{marker}\n{prompt}"),
         ).map_err(|e| format!("msg: {e}"))?],
         true,
-    ).map_err(|e| format!("template: {e}"))?;
+    ).map_err(|e| format!("apply: {e}"))?;
 
     let text = MtmdInputText {
         text: formatted,
