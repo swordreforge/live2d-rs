@@ -297,6 +297,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
         .default_height(300.0)
         .default_pos([4.0, 100.0])
         .resizable(true)
+        .scroll2([false, true])
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -314,65 +315,62 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
             });
             ui.separator();
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([true, true])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for msg in &app.ai_messages {
-                        let (prefix, color) = match msg.role {
-                            ChatRole::User => ("你", Color32::LIGHT_BLUE),
-                            ChatRole::Assistant => ("AI", Color32::LIGHT_GREEN),
-                            ChatRole::System => ("系统", Color32::GRAY),
-                            ChatRole::Tool => ("工具", Color32::YELLOW),
-                        };
-                        ui.colored_label(color, format!("[{}]", prefix));
+            for msg in &app.ai_messages {
+                let (prefix, color) = match msg.role {
+                    ChatRole::User => ("你", Color32::LIGHT_BLUE),
+                    ChatRole::Assistant => ("AI", Color32::LIGHT_GREEN),
+                    ChatRole::System => ("系统", Color32::GRAY),
+                    ChatRole::Tool => ("工具", Color32::YELLOW),
+                };
+                ui.colored_label(color, format!("[{}]", prefix));
 
-                        let cleaned = strip_system_tags(&msg.content);
-                        if msg.role == ChatRole::Assistant {
-                            render_markdown(ui, &cleaned);
-                        } else {
-                            let _ = ui.selectable_label(false, &cleaned);
+                let cleaned = strip_system_tags(&msg.content);
+                if msg.role == ChatRole::Assistant {
+                    render_markdown(ui, &cleaned);
+                } else {
+                    let _ = ui.selectable_label(false, &cleaned);
+                }
+                if ui.small_button("\u{1F4CB}").on_hover_text("复制").clicked() {
+                    ui.ctx().copy_text(cleaned.clone());
+                }
+                ui.add_space(4.0);
+            }
+
+            // ── Tool approval UI ──
+            if let Some((ref tool_name, ref args_str)) = pending_tool_info {
+                let frame = egui::Frame::none()
+                    .fill(Color32::from_rgba_premultiplied(40, 0, 0, 200))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0));
+                frame.show(ui, |ui| {
+                    ui.colored_label(Color32::RED, "⚠️ 工具调用需要审批");
+                    ui.label(format!("工具: {tool_name}"));
+                    ui.label(format!("参数: {args_str}"));
+                    ui.horizontal(|ui| {
+                        if ui.button("✅ 批准").clicked() {
+                            approve_clicked = true;
                         }
-                        if ui.small_button("\u{1F4CB}").on_hover_text("复制").clicked() {
-                            ui.ctx().copy_text(cleaned.clone());
+                        if ui.button("❌ 拒绝").clicked() {
+                            reject_clicked = true;
                         }
-                        ui.add_space(4.0);
-                    }
-
-                    // ── Tool approval UI (inside scroll area) ──
-                    if let Some((ref tool_name, ref args_str)) = pending_tool_info {
-                        let frame = egui::Frame::none()
-                            .fill(Color32::from_rgba_premultiplied(40, 0, 0, 200))
-                            .inner_margin(egui::Margin::symmetric(8.0, 4.0));
-                        frame.show(ui, |ui| {
-                            ui.colored_label(Color32::RED, "⚠️ 工具调用需要审批");
-                            ui.label(format!("工具: {tool_name}"));
-                            ui.label(format!("参数: {args_str}"));
-                            ui.horizontal(|ui| {
-                                if ui.button("✅ 批准").clicked() {
-                                    approve_clicked = true;
-                                }
-                                if ui.button("❌ 拒绝").clicked() {
-                                    reject_clicked = true;
-                                }
-                            });
-                            if ui.button("📌 记住本次会话（自动批准此工具）").clicked() {
-                                remember_clicked = true;
-                            }
-                        });
-                    }
-
-                    if pending {
-                        ui.colored_label(Color32::YELLOW, "思考中...");
-                    }
-
-                    if let Some(ref err) = app.ai_error {
-                        ui.colored_label(Color32::RED, err);
-                        if ui.button("清除错误").clicked() {
-                            app.ai_error = None;
-                        }
+                    });
+                    if ui.button("📌 记住本次会话（自动批准此工具）").clicked() {
+                        remember_clicked = true;
                     }
                 });
+            }
+
+            if pending {
+                ui.colored_label(Color32::YELLOW, "思考中...");
+            }
+
+            if let Some(ref err) = app.ai_error {
+                ui.colored_label(Color32::RED, err);
+                if ui.button("清除错误").clicked() {
+                    app.ai_error = None;
+                }
+            }
+
+            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
 
             ui.add_space(2.0);
             ui.horizontal(|ui| {
