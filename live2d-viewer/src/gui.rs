@@ -1,8 +1,22 @@
 use crate::app::{AppState, PetMode};
+use crate::theme;
 use egui::{Context, Slider, Window};
 use std::path::PathBuf;
 
 pub fn draw_ui(ctx: &Context, app: &mut AppState) {
+    // Apply theme if preset or dark/light changed
+    if app.theme_needs_refresh {
+        app.theme_needs_refresh = false;
+        let builder = match app.theme_preset {
+            0 => theme::Theme::aira(),
+            1 => theme::Theme::coral(),
+            2 => theme::Theme::mint(),
+            _ => theme::Theme::purple(),
+        };
+        let t = if app.theme_dark { builder.dark() } else { builder.light() };
+        theme::apply_theme(ctx, &t);
+    }
+
     // Poll for AI response (non-blocking, receives from background thread)
     app.poll_ai_result();
     // Play completed TTS audio
@@ -33,7 +47,8 @@ pub fn draw_ui(ctx: &Context, app: &mut AppState) {
     if let Some(err) = app.error_message.clone() {
         Window::new("错误").show(ctx, |ui| {
             ui.colored_label(egui::Color32::RED, &err);
-            if ui.button("关闭").clicked() {
+            let close_btn = theme::button(ui, theme::ButtonVariant::Secondary, "关闭");
+            if ui.add(close_btn).clicked() {
                 app.error_message = None;
             }
         });
@@ -242,7 +257,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             }
 
             ui.separator();
-            if ui.button("Add Model...").clicked() {
+            let btn = theme::button(ui, theme::ButtonVariant::Primary, "Add Model...");
+            if ui.add(btn).clicked() {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     app.add_model_dir(path);
                 }
@@ -256,7 +272,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             }
 
             ui.separator();
-            if ui.button("\u{1f43e} Windowed Pet").clicked() {
+            let pet_btn = theme::button(ui, theme::ButtonVariant::Secondary, "\u{1f43e} Windowed Pet");
+            if ui.add(pet_btn).clicked() {
                 if app.pet_mode == PetMode::Windowed {
                     app.pet_mode = PetMode::Off;
                 } else {
@@ -264,7 +281,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 }
                 app.pet_mode_changed = true;
             }
-            if ui.button("\u{1f43e} Always on Top").clicked() {
+            let top_btn = theme::button(ui, theme::ButtonVariant::Secondary, "\u{1f43e} Always on Top");
+            if ui.add(top_btn).clicked() {
                 if app.pet_mode == PetMode::AlwaysOnTop {
                     app.pet_mode = PetMode::Off;
                 } else {
@@ -276,7 +294,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             // Zoom controls — always visible regardless of model type
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("-").clicked() {
+                let zoom_out = theme::button(ui, theme::ButtonVariant::Secondary, "-");
+                if ui.add(zoom_out).clicked() {
                     if app.is_v2 {
                         app.v2_scale = (app.v2_scale * 0.85).max(0.1);
                         if let Some(ref mut v2) = app.v2_model {
@@ -287,7 +306,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                     app.save_zoom();
                 }
-                if ui.button("Reset").clicked() {
+                let reset_btn = theme::button(ui, theme::ButtonVariant::Secondary, "Reset");
+                if ui.add(reset_btn).clicked() {
                     if app.is_v2 {
                         app.v2_scale = 1.0;
                         if let Some(ref mut v2) = app.v2_model {
@@ -299,7 +319,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                     }
                     app.save_zoom();
                 }
-                if ui.button("+").clicked() {
+                let zoom_in = theme::button(ui, theme::ButtonVariant::Secondary, "+");
+                if ui.add(zoom_in).clicked() {
                     if app.is_v2 {
                         app.v2_scale = (app.v2_scale * 1.15).min(10.0);
                         if let Some(ref mut v2) = app.v2_model {
@@ -319,38 +340,39 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
             .show(ctx, |ui| {
                 ui.label(format!("Parameters: {}", app.parameter_names.len()));
 
-                // Motion status — single queue
-                let total_entries = app.motion_queue.entries.len();
-                if total_entries > 0 {
-                    ui.label(format!("Motions: {}", total_entries));
-                    for (i, entry) in app.motion_queue.entries.iter().enumerate() {
-                        let loop_str = if entry.motion.is_loop {
-                            "循环"
-                        } else {
-                            "一次"
-                        };
-                        let fw = entry.cached_fade_weight;
-                        ui.label(format!(
-                            "  [{}:{}] ({:.1}s, {}, fade={:.2})",
-                            i, i, entry.motion.data.duration, loop_str, fw,
-                        ));
+                theme::collapsible(ui, "状态信息", &mut app.panel_motion_open, |ui| {
+                    let total_entries = app.motion_queue.entries.len();
+                    if total_entries > 0 {
+                        ui.label(format!("Motions: {}", total_entries));
+                        for (i, entry) in app.motion_queue.entries.iter().enumerate() {
+                            let loop_str = if entry.motion.is_loop {
+                                "循环"
+                            } else {
+                                "一次"
+                            };
+                            let fw = entry.cached_fade_weight;
+                            ui.label(format!(
+                                "  [{}:{}] ({:.1}s, {}, fade={:.2})",
+                                i, i, entry.motion.data.duration, loop_str, fw,
+                            ));
+                        }
                     }
-                    ui.separator();
-                }
 
-                // Expression status
-                if app.expression_manager.is_active {
-                    ui.label("表情: 启用");
-                    ui.separator();
-                }
+                    // Expression status
+                    if app.expression_manager.is_active {
+                        ui.label("表情: 启用");
+                    }
+                });
 
                 // Action buttons
                 ui.horizontal(|ui| {
-                    if ui.button("重放待机").clicked() {
-                        app.start_motion("Idle", Some(0));
+                let idle_btn = theme::button(ui, theme::ButtonVariant::Primary, "重放待机");
+                if ui.add(idle_btn).clicked() {
+                    app.start_motion("Idle", Some(0));
                     }
-                    if ui.button("全部停止").clicked() {
-                        app.motion_queue.stop_all_motions();
+                let stop_btn = theme::button(ui, theme::ButtonVariant::Danger, "全部停止");
+                if ui.add(stop_btn).clicked() {
+                    app.motion_queue.stop_all_motions();
                     }
                 });
 
@@ -362,7 +384,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         .get("TapBody")
                         .or_else(|| app.loaded_motions.get(""))
                         .is_some_and(|m| !m.is_empty());
-                if has_tap_motion && ui.button("点击身体").clicked() {
+                let body_btn = theme::button(ui, theme::ButtonVariant::Secondary, "点击身体");
+                if has_tap_motion && ui.add(body_btn).clicked() {
                     if app.is_v2 {
                         // V2: motions are internal to C++ wrapper; cycle through indices
                         let idx = (app.motion_queue.user_time_seconds as usize) % 3;
@@ -386,7 +409,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                             .color(egui::Color32::LIGHT_BLUE)
                             .size(13.0),
                     );
-                    if ui.button("✕").clicked() {
+                    let dismiss_btn = theme::button(ui, theme::ButtonVariant::Danger, "✕");
+                    if ui.add(dismiss_btn).clicked() {
                         app.last_tapped_user_data = None;
                     }
                     ui.separator();
@@ -398,7 +422,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         [120.0, 0.0],
                         egui::TextEdit::singleline(&mut app.preset_name_input).hint_text("预设名"),
                     );
-                    if ui.button("保存预设").clicked() {
+                    let save_btn = theme::button(ui, theme::ButtonVariant::Primary, "保存预设");
+                    if ui.add(save_btn).clicked() {
                         let name = app.preset_name_input.trim().to_string();
                         if !name.is_empty() {
                             app.save_preset(&name);
@@ -416,10 +441,12 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                             for name in &app.preset_list {
                                 ui.horizontal(|ui| {
                                     ui.label(name);
-                                    if ui.button("→").clicked() {
+                                    let load_btn = theme::button(ui, theme::ButtonVariant::Secondary, "→");
+                                    if ui.add(load_btn).clicked() {
                                         to_load = Some(name.clone());
                                     }
-                                    if ui.button("✕").clicked() {
+                                    let del_btn = theme::button(ui, theme::ButtonVariant::Danger, "✕");
+                                    if ui.add(del_btn).clicked() {
                                         to_delete = Some(name.clone());
                                     }
                                 });
@@ -436,7 +463,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                 ui.separator();
 
                 // ── Layout mode toggle ──
-                if ui.button("调整布局").clicked() {
+                let layout_btn = theme::button(ui, theme::ButtonVariant::Secondary, "调整布局");
+                if ui.add(layout_btn).clicked() {
                     app.layout_mode = !app.layout_mode;
                 }
 
@@ -465,15 +493,17 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
                         app.camera.scale_y = sign_y * zm;
                     }
                     ui.horizontal(|ui| {
-                        if ui.button("保存布局").clicked() {
-                            app.save_layout();
-                            app.layout_mode = false;
-                        }
-                        if ui.button("重置布局").clicked() {
-                            app.camera.translate_x = 0.0;
-                            app.camera.translate_y = 0.0;
-                            app.layout_mode = false;
-                        }
+                    let save_l = theme::button(ui, theme::ButtonVariant::Primary, "保存布局");
+                    if ui.add(save_l).clicked() {
+                        app.save_layout();
+                        app.layout_mode = false;
+                    }
+                    let reset_l = theme::button(ui, theme::ButtonVariant::Caution, "重置布局");
+                    if ui.add(reset_l).clicked() {
+                        app.camera.translate_x = 0.0;
+                        app.camera.translate_y = 0.0;
+                        app.layout_mode = false;
+                    }
                     });
                     ui.separator();
                 }
@@ -789,7 +819,8 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
                 for (i, d) in dirs.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(d.to_string_lossy());
-                        if ui.button("✖").clicked() {
+                        let rm_btn = theme::button(ui, theme::ButtonVariant::Danger, "✖");
+                        if ui.add(rm_btn).clicked() {
                             remove_idx = Some(i);
                         }
                     });
@@ -800,7 +831,8 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
                 changed = true;
             }
 
-            if ui.button("+ Add Directory").clicked() {
+            let add_dir_btn = theme::button(ui, theme::ButtonVariant::Primary, "+ Add Directory");
+            if ui.add(add_dir_btn).clicked() {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     let s = path.to_string_lossy().to_string();
                     if !app.scan_dirs.iter().any(|d| d.to_string_lossy() == s) {
@@ -811,7 +843,8 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
             }
 
             ui.separator();
-            if ui.button("\u{1f50d} Scan All").clicked() {
+            let scan_btn = theme::button(ui, theme::ButtonVariant::Primary, "\u{1f50d} Scan All");
+            if ui.add(scan_btn).clicked() {
                 let (added, skipped, invalid) = app.scan_and_add_models();
                 app.scan_result = format!("{added} new, {skipped} skipped, {invalid} invalid");
             }
@@ -821,12 +854,32 @@ fn draw_settings(ctx: &Context, app: &mut AppState) {
 
             ui.separator();
             ui.heading("AI Chat");
-            if ui.button("AI 设置").clicked() {
+            let ai_btn = theme::button(ui, theme::ButtonVariant::Secondary, "AI 设置");
+            if ui.add(ai_btn).clicked() {
                 app.ai_settings_open = !app.ai_settings_open;
             }
             if !app.ai_enabled {
                 ui.colored_label(egui::Color32::GRAY, "AI not enabled");
             }
+
+            // ── Theme settings ──
+            ui.separator();
+            ui.heading("Theme");
+            let mut dark = app.theme_dark;
+            if ui.add(egui::Checkbox::new(&mut dark, "Dark mode")).changed() {
+                app.theme_dark = dark;
+                app.theme_needs_refresh = true;
+            }
+            ui.horizontal(|ui| {
+                ui.label("Preset:");
+                let presets = ["AIRA", "Coral", "Mint", "Purple"];
+                for (i, name) in presets.iter().enumerate() {
+                    if ui.add(egui::SelectableLabel::new(app.theme_preset == i, *name)).clicked() {
+                        app.theme_preset = i;
+                        app.theme_needs_refresh = true;
+                    }
+                }
+            });
         });
     if changed {
         app.save_scan_dirs();

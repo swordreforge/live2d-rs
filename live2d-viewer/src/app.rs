@@ -386,6 +386,12 @@ pub struct AppState {
     /// Character card editor window visibility.
     pub character_card_editor_open: bool,
 
+    // ── Theme ──
+    pub theme_preset: usize,
+    pub theme_dark: bool,
+    pub theme_needs_refresh: bool,
+    pub panel_motion_open: bool,
+
     // ── Screen Capture Preview ──
     /// Latest captured frame from the capture thread (feature: capture).
     #[cfg(feature = "capture")]
@@ -539,6 +545,11 @@ impl AppState {
             tts_refresh_requested: false,
             character_cards: HashMap::new(),
             character_card_editor_open: false,
+
+            theme_preset: 0,
+            theme_dark: true,
+            theme_needs_refresh: false,
+            panel_motion_open: false,
 
             #[cfg(feature = "capture")]
             capture_latest_frame: None,
