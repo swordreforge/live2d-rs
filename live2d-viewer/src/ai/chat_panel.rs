@@ -382,8 +382,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                 ui.add_sized(
                     egui::vec2(ui.available_width() - 60.0, 0.0),
                     egui::TextEdit::singleline(&mut app.ai_input_buffer)
-                        .hint_text("输入消息...")
-                        .desired_width(f32::INFINITY),
+                        .hint_text("输入消息..."),
                 );
                 if ui
                     .add_enabled(!pending, egui::Button::new("发送"))
