@@ -376,9 +376,8 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                let text_w = (ui.available_width() - 60.0).max(100.0);
                 ui.add_sized(
-                    egui::vec2(text_w, 0.0),
+                    egui::vec2(200.0, 0.0),
                     egui::TextEdit::singleline(&mut app.ai_input_buffer).hint_text("输入消息..."),
                 );
                 if ui
