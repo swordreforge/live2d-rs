@@ -295,12 +295,12 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
     Window::new("AI 聊天 💬")
         .default_width(320.0)
         .default_height(300.0)
-        .resizable(true)
         .default_pos([4.0, 100.0])
+        .resizable(true)
         .open(&mut app.ai_chat_open)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(format!("模型: {}", app.ai_config.model));
+                ui.label(egui::RichText::new(format!("模型: {}", app.ai_config.model)).text_style(egui::TextStyle::Small));
                 if !card_name.is_empty() {
                     ui.separator();
                     ui.label(
@@ -318,7 +318,7 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
 
             egui::ScrollArea::vertical()
                 .max_height(scroll_height)
-                .auto_shrink([false, true])
+                .auto_shrink([true, true])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for msg in &app.ai_messages {
