@@ -75,7 +75,11 @@ pub fn infer_with_image(
     let mut tokens = Vec::new();
 
     for i in 0..256 {
-        let token = vm.ctx.candidates().next().map(|c| c.id()).unwrap_or(eos);
+        let logits = vm.ctx.get_logits();
+        let token = logits.iter().enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(idx, _)| llama_cpp_2::token::LlamaToken::new(idx as i32))
+            .unwrap_or(eos);
         if token == eos { break; }
         tokens.push(token);
         let mut batch = LlamaBatch::new(1, 1);
