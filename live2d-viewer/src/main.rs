@@ -799,7 +799,8 @@ fn main() -> anyhow::Result<()> {
                             gui::draw_ui(&egui_ctx, &mut app);
                             let output = egui_ctx.end_frame();
 
-                            if let Some(ref copied) = output.platform_output.copied_text {
+                            let copied = &output.platform_output.copied_text;
+                            if !copied.is_empty() {
                                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                     let _ = clipboard.set_text(copied);
                                 }
