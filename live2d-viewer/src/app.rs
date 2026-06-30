@@ -1997,13 +1997,15 @@ impl AppState {
         }
         self.ai_result_rx = Some(rx);
 
-        self.ai_messages.push(crate::ai::types::ChatMessage {
-            role: crate::ai::types::ChatRole::User,
-            content: "[Looked at screen]".into(),
-            timestamp,
-            tool_call_id: None,
-            tool_calls: None,
-        });
+        if !force {
+            self.ai_messages.push(crate::ai::types::ChatMessage {
+                role: crate::ai::types::ChatRole::User,
+                content: "[Looked at screen]".into(),
+                timestamp,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
     }
 
     /// Drain all pending captured frames into `capture_latest_frame`.
