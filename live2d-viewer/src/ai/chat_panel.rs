@@ -336,6 +336,9 @@ pub fn draw_chat_panel(ctx: &egui::Context, app: &mut AppState) {
                         } else {
                             ui.selectable_label(false, &cleaned);
                         }
+                        if ui.small_button("\u{1F4CB}").on_hover_text("复制").clicked() {
+                            ui.ctx().copy_text(cleaned.clone());
+                        }
                         ui.add_space(4.0);
                     }
 

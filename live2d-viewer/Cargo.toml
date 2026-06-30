@@ -39,6 +39,7 @@ wayland-protocols-wlr = { version = "0.3", optional = true }
 libc = "0.2"
 base64 = "0.22"
 fastrand = "2"
+arboard = "3"
 dirs = "5"
 pulldown-cmark = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

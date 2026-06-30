@@ -799,6 +799,12 @@ fn main() -> anyhow::Result<()> {
                             gui::draw_ui(&egui_ctx, &mut app);
                             let output = egui_ctx.end_frame();
 
+                            if let Some(ref copied) = output.platform_output.copied_text {
+                                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                    let _ = clipboard.set_text(copied);
+                                }
+                            }
+
                             // Always process textures
                             for (id, delta) in &output.textures_delta.set {
                                 painter.set_texture(*id, delta);
