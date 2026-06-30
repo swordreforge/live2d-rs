@@ -2331,6 +2331,7 @@ dependencies = [
  "egui-winit",
  "egui_glow",
  "env_logger",
+ "fastrand",
  "glow",
  "glutin",
  "image",

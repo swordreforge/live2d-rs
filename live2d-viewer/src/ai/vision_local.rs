@@ -77,10 +77,7 @@ pub fn infer_with_image(
 
     for i in 0..256 {
         let logits = vm.ctx.get_logits();
-        let token = logits.iter().enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| llama_cpp_2::token::LlamaToken::new(idx as i32))
-            .unwrap_or(eos);
+        let token = sample_token(logits, 0.7).unwrap_or(eos);
         if token == eos { break; }
         tokens.push(token);
         let mut batch = LlamaBatch::new(1, 1);
@@ -101,4 +98,24 @@ fn decode_base64(b64: &str) -> Result<Vec<u8>, String> {
     let data = b64.strip_prefix("data:image/jpeg;base64,").unwrap_or(b64);
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| format!("b64: {e}"))
+}
+
+fn sample_token(logits: &[f32], temp: f32) -> Option<llama_cpp_2::token::LlamaToken> {
+    use llama_cpp_2::token::LlamaToken;
+    if logits.is_empty() { return None; }
+    let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let mut sum = 0.0f64;
+    let mut probs: Vec<f64> = Vec::with_capacity(logits.len());
+    for &logit in logits {
+        let p = ((logit - max_logit) as f64 / temp as f64).exp();
+        probs.push(p); sum += p;
+    }
+    if sum <= 0.0 { return None; }
+    let r = fastrand::f64() * sum;
+    let mut cumulative = 0.0;
+    for (idx, &p) in probs.iter().enumerate() {
+        cumulative += p;
+        if r < cumulative { return Some(LlamaToken::new(idx as i32)); }
+    }
+    Some(LlamaToken::new((probs.len() - 1) as i32))
 }
