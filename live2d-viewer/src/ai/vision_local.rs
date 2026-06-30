@@ -67,7 +67,7 @@ pub fn infer_with_image(
         parse_special: true,
     };
     let chunks = vm.mtmd.tokenize(text, &[&bitmap]).map_err(|e| format!("tokenize: {e}"))?;
-    let mut n_past = chunks.eval_chunks(&vm.mtmd, &vm.ctx, 0, 0, 512, true)
+    let n_past = chunks.eval_chunks(&vm.mtmd, &vm.ctx, 0, 0, 512, true)
         .map_err(|e| format!("eval: {e}"))?;
 
     let model = unsafe { &*vm.model };
