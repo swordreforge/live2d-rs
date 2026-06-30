@@ -1819,10 +1819,6 @@ impl AppState {
             });
         }
 
-        #[cfg(feature = "capture")]
-        if self.vision_pending_tool.is_some() {
-            return;
-        }
         self.continue_with_tool_result();
     }
 
@@ -1933,15 +1929,11 @@ impl AppState {
     /// Trigger a vision snapshot: encode the latest frame and send to AI.
     #[cfg(feature = "capture")]
     pub fn trigger_vision_snapshot(&mut self) {
-        self.trigger_vision_snapshot_with_prompt(None, false);
+        self.vision_do_snapshot(None);
     }
 
-    pub fn trigger_vision_snapshot_force(&mut self, prompt: Option<String>) {
-        self.trigger_vision_snapshot_with_prompt(prompt, true);
-    }
-
-    pub fn trigger_vision_snapshot_with_prompt(&mut self, custom_prompt: Option<String>, force: bool) {
-        if !force && self.ai_state != crate::ai::types::AiState::Idle {
+    fn vision_do_snapshot(&mut self, custom_prompt: Option<String>) {
+        if self.ai_state != crate::ai::types::AiState::Idle {
             log::warn!("Vision snapshot skipped: AI is busy ({:?})", self.ai_state);
             return;
         }
@@ -2010,15 +2002,13 @@ impl AppState {
         }
         self.ai_result_rx = Some(rx);
 
-        if !force {
-            self.ai_messages.push(crate::ai::types::ChatMessage {
-                role: crate::ai::types::ChatRole::User,
-                content: "[Looked at screen]".into(),
-                timestamp,
-                tool_call_id: None,
-                tool_calls: None,
-            });
-        }
+        self.ai_messages.push(crate::ai::types::ChatMessage {
+            role: crate::ai::types::ChatRole::User,
+            content: "[Looked at screen]".into(),
+            timestamp,
+            tool_call_id: None,
+            tool_calls: None,
+        });
     }
 
     #[cfg(feature = "capture")]
