@@ -127,6 +127,9 @@ pub struct AiConfig {
     /// Interval in seconds between auto-look triggers (0 = default 120s).
     #[serde(default)]
     pub vision_interval_secs: u64,
+    /// Path to local vision GGUF model. Empty = use API fallback.
+    #[serde(default)]
+    pub vision_gguf_path: String,
 }
 
 /// A single entry in the conversation memory store.
@@ -202,6 +205,7 @@ impl Default for AiConfig {
             allowed_read_paths: vec![],
             vision_auto_enabled: false,
             vision_interval_secs: 120,
+            vision_gguf_path: String::new(),
         }
     }
 }

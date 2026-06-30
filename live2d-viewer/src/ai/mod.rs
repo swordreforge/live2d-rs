@@ -7,3 +7,5 @@ pub mod tools;
 pub mod tts;
 pub mod types;
 pub mod vision;
+#[cfg(feature = "capture")]
+pub mod vision_local;

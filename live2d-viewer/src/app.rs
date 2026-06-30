@@ -1847,35 +1847,54 @@ impl AppState {
 
         self.ai_state = crate::ai::types::AiState::Waiting;
 
-        let client = crate::ai::client::AiChatClient::new();
-        let config = self.ai_config.clone();
-        let messages: Vec<crate::ai::types::ChatMessage> = self
-            .ai_messages
-            .iter()
-            .rev()
-            .take(config.context_length)
-            .cloned()
-            .collect();
-        let base64 = encoded.base64;
-        let prompt = "Look at what's on the screen right now. Describe what you see in a short, conversational sentence.";
-
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
 
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            match client.send_vision(&messages, &base64, prompt, &config) {
-                Ok(text) => {
-                    let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
-                    let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
+        let b64 = encoded.base64;
+        let prompt = "Look at what's on the screen right now. Describe what you see in a short, conversational sentence.";
+
+        let gguf_path = self.ai_config.vision_gguf_path.clone();
+        if !gguf_path.is_empty()
+            && std::path::Path::new(&gguf_path).exists()
+        {
+            let p = prompt.to_string();
+            std::thread::spawn(move || {
+                match crate::ai::vision_local::infer_with_image(&gguf_path, &b64, &p) {
+                    Ok(text) => {
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
+                    }
+                    Err(e) => {
+                        log::error!("Local vision failed: {e}");
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Error(e));
+                    }
                 }
-                Err(e) => {
-                    let _ = tx.send(crate::ai::types::AiStreamEvent::Error(e));
+            });
+        } else {
+            let client = crate::ai::client::AiChatClient::new();
+            let config = self.ai_config.clone();
+            let messages: Vec<crate::ai::types::ChatMessage> = self
+                .ai_messages
+                .iter()
+                .rev()
+                .take(config.context_length)
+                .cloned()
+                .collect();
+            std::thread::spawn(move || {
+                match client.send_vision(&messages, &b64, prompt, &config) {
+                    Ok(text) => {
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(crate::ai::types::AiStreamEvent::Error(e));
+                    }
                 }
-            }
-        });
+            });
+        }
         self.ai_result_rx = Some(rx);
 
         self.ai_messages.push(crate::ai::types::ChatMessage {

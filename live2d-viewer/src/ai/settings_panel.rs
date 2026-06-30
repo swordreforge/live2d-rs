@@ -217,6 +217,16 @@ pub fn draw_settings_panel(ctx: &egui::Context, app: &mut AppState) {
                         *dirty = true;
                     }
                 }
+
+                ui.add_space(4.0);
+                ui.label("本地视觉模型 (GGUF)");
+                ui.label("留空则使用 API 视觉模型");
+                let path_changed = ui
+                    .text_edit_singleline(&mut app.ai_config.vision_gguf_path)
+                    .changed();
+                if path_changed {
+                    *dirty = true;
+                }
             }
 
             ui.add_space(8.0);
