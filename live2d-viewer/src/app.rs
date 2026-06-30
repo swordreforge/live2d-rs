@@ -412,6 +412,8 @@ pub struct AppState {
     pub(crate) vision_request_start: Option<std::time::Instant>,
     #[cfg(feature = "capture")]
     pub(crate) vision_just_responded: bool,
+    #[cfg(feature = "capture")]
+    pub(crate) vision_pending_tool: Option<crate::ai::types::ToolCall>,
 }
 
 impl AppState {
@@ -1193,7 +1195,20 @@ impl AppState {
         #[cfg(feature = "capture")]
         if self.vision_just_responded {
             self.vision_just_responded = false;
-            return;  // skip TTS/emotion for vision responses
+            if let Some(tc) = self.vision_pending_tool.take() {
+                self.ai_messages.push(crate::ai::types::ChatMessage {
+                    role: crate::ai::types::ChatRole::Tool,
+                    content: self.ai_messages.last()
+                        .map(|m| m.content.clone()).unwrap_or_default(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64()).unwrap_or(0.0),
+                    tool_call_id: Some(tc.id),
+                    tool_calls: None,
+                });
+                self.continue_with_tool_result();
+            }
+            return;
         }
         // Remove trailing empty assistant placeholder (no content arrived)
         if self.ai_messages.last().is_some_and(|m| {
@@ -1556,7 +1571,11 @@ impl AppState {
                 Err(_) => {
                     self.ai_error =
                         Some(format!("invalid tool args: {}", tc.function.arguments));
-                    self.continue_with_tool_result();
+        #[cfg(feature = "capture")]
+        if self.vision_pending_tool.is_some() {
+            return; // wait for vision result before continuing tool flow
+        }
+        self.continue_with_tool_result();
                 }
             }
         } else {
@@ -1706,17 +1725,10 @@ impl AppState {
                     serde_json::from_str(&tc.function.arguments).unwrap_or_default();
                 let prompt = args.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
                 #[cfg(feature = "capture")]
-                self.trigger_vision_snapshot_force(prompt);
-                self.ai_messages.push(ChatMessage {
-                    role: ChatRole::Tool,
-                    content: "Screen captured. Analyzing via vision model...".into(),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0),
-                    tool_call_id: Some(tc.id),
-                    tool_calls: None,
-                });
+                {
+                    self.vision_pending_tool = Some(tc.clone());
+                    self.trigger_vision_snapshot_force(prompt);
+                }
                 continue;
             }
 
