@@ -414,6 +414,8 @@ pub struct AppState {
     pub(crate) vision_just_responded: bool,
     #[cfg(feature = "capture")]
     pub(crate) vision_pending_tool: Option<crate::ai::types::ToolCall>,
+    #[cfg(feature = "capture")]
+    pub(crate) vision_pending_result: Option<String>,
 }
 
 impl AppState {
@@ -558,6 +560,8 @@ impl AppState {
             vision_just_responded: false,
             #[cfg(feature = "capture")]
             vision_pending_tool: None,
+            #[cfg(feature = "capture")]
+            vision_pending_result: None,
         }
     }
 
@@ -1080,6 +1084,12 @@ impl AppState {
                     if is_assistant {
                         self.ai_messages.last_mut().unwrap().content.push_str(&t);
                     } else {
+                        #[cfg(feature = "capture")]
+                        if self.vision_pending_tool.is_some() {
+                            // Vision result for tool call — store for later Tool message
+                            self.vision_pending_result = Some(t);
+                            continue;
+                        }
                         log::info!("Vision: creating new assistant message with {} chars", t.len());
                         #[cfg(feature = "capture")]
                         { self.vision_just_responded = true; }
@@ -1198,10 +1208,10 @@ impl AppState {
         if self.vision_just_responded {
             self.vision_just_responded = false;
             if let Some(tc) = self.vision_pending_tool.take() {
+                let content = self.vision_pending_result.take().unwrap_or_default();
                 self.ai_messages.push(crate::ai::types::ChatMessage {
                     role: crate::ai::types::ChatRole::Tool,
-                    content: self.ai_messages.last()
-                        .map(|m| m.content.clone()).unwrap_or_default(),
+                    content,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs_f64()).unwrap_or(0.0),
