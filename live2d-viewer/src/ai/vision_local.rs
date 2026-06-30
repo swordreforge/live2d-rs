@@ -3,6 +3,7 @@ use std::process::Command;
 
 pub fn infer_with_image(
     gguf_path: &str,
+    mmproj_path: &str,
     jpeg_base64: &str,
     prompt: &str,
 ) -> Result<String, String> {
@@ -10,7 +11,7 @@ pub fn infer_with_image(
     let tmp = std::env::temp_dir().join("lv2_vis.jpg");
     std::fs::write(&tmp, &raw).map_err(|e| format!("write: {e}"))?;
 
-    let result = run_vision_cli(gguf_path, &tmp, prompt);
+    let result = run_vision_cli(gguf_path, mmproj_path, &tmp, prompt);
     let _ = std::fs::remove_file(&tmp);
     result
 }
@@ -23,9 +24,13 @@ fn decode_base64(b64: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("b64: {e}"))
 }
 
-fn run_vision_cli(gguf: &str, img: &Path, prompt: &str) -> Result<String, String> {
-    let child = Command::new("llama-cli")
-        .arg("-m").arg(gguf)
+fn run_vision_cli(gguf: &str, mmproj: &str, img: &Path, prompt: &str) -> Result<String, String> {
+    let mut cmd = Command::new("llama-cli");
+    cmd.arg("-m").arg(gguf);
+    if !mmproj.is_empty() {
+        cmd.arg("--mmproj").arg(mmproj);
+    }
+    let child = cmd
         .arg("--image").arg(img)
         .arg("-p").arg(prompt)
         .arg("--temp").arg("0.7")

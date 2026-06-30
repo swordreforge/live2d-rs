@@ -1857,12 +1857,15 @@ impl AppState {
         let prompt = "Look at what's on the screen right now. Describe what you see in a short, conversational sentence.";
 
         let gguf_path = self.ai_config.vision_gguf_path.clone();
+        let mmproj_path = self.ai_config.vision_mmproj_path.clone();
         if !gguf_path.is_empty()
             && std::path::Path::new(&gguf_path).exists()
         {
             let p = prompt.to_string();
             std::thread::spawn(move || {
-                match crate::ai::vision_local::infer_with_image(&gguf_path, &b64, &p) {
+                match crate::ai::vision_local::infer_with_image(
+                    &gguf_path, &mmproj_path, &b64, &p,
+                ) {
                     Ok(text) => {
                         let _ = tx.send(crate::ai::types::AiStreamEvent::Token(text));
                         let _ = tx.send(crate::ai::types::AiStreamEvent::Done);
