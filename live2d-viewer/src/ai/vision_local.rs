@@ -62,8 +62,18 @@ pub fn infer_with_image(
         .map_err(|e| format!("bitmap: {e}"))?;
 
     let marker = mtmd_default_marker();
+    let model = unsafe { &*vm.model };
+
+    let formatted = model.apply_chat_template(
+        &[llama_cpp_2::model::LlamaChatMessage::new(
+            "user".into(),
+            format!("{marker}\n{prompt}"),
+        ).map_err(|e| format!("msg: {e}"))?],
+        true,
+    ).map_err(|e| format!("template: {e}"))?;
+
     let text = MtmdInputText {
-        text: format!("{marker}\n{prompt}"),
+        text: formatted,
         add_special: true,
         parse_special: true,
     };
