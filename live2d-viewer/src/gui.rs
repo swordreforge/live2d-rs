@@ -146,6 +146,8 @@ fn draw_normal_ui(ctx: &Context, app: &mut AppState) {
 
     Window::new("Model List")
         .default_width(280.0)
+        .default_height(360.0)
+        .scroll2([false, true])
         .show(ctx, |ui| {
             ui.set_max_width(260.0);
             let mut deleted_idx = None;
