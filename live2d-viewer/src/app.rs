@@ -556,6 +556,8 @@ impl AppState {
             vision_request_start: None,
             #[cfg(feature = "capture")]
             vision_just_responded: false,
+            #[cfg(feature = "capture")]
+            vision_pending_tool: None,
         }
     }
 
