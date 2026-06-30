@@ -57,6 +57,7 @@ pub fn infer_with_image(
     let vm = guard.as_mut().ok_or("model not loaded")?;
 
     let jpeg_data = decode_base64(jpeg_base64)?;
+    let _ = std::fs::write("/tmp/lv2_debug.jpg", &jpeg_data);
     let bitmap = MtmdBitmap::from_buffer(&vm.mtmd, &jpeg_data, false)
         .map_err(|e| format!("bitmap: {e}"))?;
 
